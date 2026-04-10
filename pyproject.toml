@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unitysvc-core"
-version = "0.5.0"
+version = "0.1.0"
 description = "Shared data models and validation helpers for UnitySVC packages"
 readme = "README.md"
 authors = [{ name = "Bo Peng", email = "bo.peng@unitysvc.com" }]
