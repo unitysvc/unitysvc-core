@@ -1,0 +1,94 @@
+{
+  "$defs": {
+    "ServiceGroupStatusEnum": {
+      "enum": [
+        "draft",
+        "active",
+        "private",
+        "archived"
+      ],
+      "title": "ServiceGroupStatusEnum",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Service group file model with schema version validation.\n\nExample file:\n```json\n{\n    \"schema\": \"service_group_v1\",\n    \"name\": \"my-llm-services\",\n    \"display_name\": \"My LLM Services\",\n    \"description\": \"LLM services for targeted promotions\",\n    \"membership_rules\": {\n        \"expression\": \"service_type == 'llm'\"\n    },\n    \"status\": \"private\"\n}\n```",
+  "properties": {
+    "description": {
+      "anyOf": [
+        {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Detailed description of the group",
+      "title": "Description"
+    },
+    "display_name": {
+      "description": "Human-readable name for UI display",
+      "maxLength": 200,
+      "title": "Display Name",
+      "type": "string"
+    },
+    "membership_rules": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Rules for automatic service membership. Format: {\"expression\": \"<python_expression>\"}\nAvailable variables: service_id, seller_id, provider_id, seller_name, provider_name, name, display_name, service_type, status, listing_type, tags, is_featured",
+      "title": "Membership Rules"
+    },
+    "name": {
+      "description": "URL-friendly slug (unique per owner, e.g., 'my-llm-services')",
+      "maxLength": 100,
+      "title": "Name",
+      "type": "string"
+    },
+    "parent_group_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Parent group name for hierarchy (resolved to ancestor_path)",
+      "title": "Parent Group Name"
+    },
+    "schema": {
+      "default": "service_group_v1",
+      "description": "Schema identifier for validation",
+      "title": "Schema",
+      "type": "string"
+    },
+    "sort_order": {
+      "default": 0,
+      "description": "Display order within parent level",
+      "title": "Sort Order",
+      "type": "integer"
+    },
+    "status": {
+      "$ref": "#/$defs/ServiceGroupStatusEnum",
+      "default": "draft",
+      "description": "Group status (draft, active, private, archived)"
+    }
+  },
+  "required": [
+    "name",
+    "display_name"
+  ],
+  "title": "ServiceGroupV1",
+  "type": "object"
+}

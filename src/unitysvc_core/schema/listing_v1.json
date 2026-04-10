@@ -1,0 +1,2108 @@
+{
+  "$defs": {
+    "AccessInterfaceData": {
+      "additionalProperties": false,
+      "description": "User-facing access interface data (customer side).\n\nNote: The interface name is NOT stored here - it's the key in the interfaces dict.\nWhen stored in the database, the backend extracts the key as the name field.",
+      "properties": {
+        "access_method": {
+          "$ref": "#/$defs/AccessMethodEnum",
+          "default": "http",
+          "description": "Type of access method"
+        },
+        "api_key": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "API key if required",
+          "title": "Api Key"
+        },
+        "base_url": {
+          "description": "Base URL for api access",
+          "maxLength": 500,
+          "title": "Base Url",
+          "type": "string"
+        },
+        "constraints": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServiceConstraints"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Service constraints and conditions"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Interface description",
+          "title": "Description"
+        },
+        "is_active": {
+          "default": true,
+          "description": "Whether interface is active",
+          "title": "Is Active",
+          "type": "boolean"
+        },
+        "is_primary": {
+          "default": false,
+          "description": "Whether this is the primary interface",
+          "title": "Is Primary",
+          "type": "boolean"
+        },
+        "rate_limits": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/RateLimit"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Rate limit",
+          "title": "Rate Limits"
+        },
+        "request_transformer": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "propertyNames": {
+                "$ref": "#/$defs/RequestTransformEnum"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request transformation configuration",
+          "title": "Request Transformer"
+        },
+        "response_rules": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Response evaluation rules keyed by rule name. Values are either a rule dict or a Jinja2 template string. Validated by the backend.",
+          "title": "Response Rules"
+        },
+        "routing_key": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request routing key for matching (e.g., {'model': 'gpt-4'})",
+          "title": "Routing Key"
+        },
+        "sort_order": {
+          "default": 0,
+          "description": "Display order",
+          "title": "Sort Order",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "base_url"
+      ],
+      "title": "AccessInterfaceData",
+      "type": "object"
+    },
+    "AccessMethodEnum": {
+      "enum": [
+        "http",
+        "websocket",
+        "grpc",
+        "smtp"
+      ],
+      "title": "AccessMethodEnum",
+      "type": "string"
+    },
+    "AddPriceData": {
+      "additionalProperties": false,
+      "description": "Composite pricing that sums multiple price components.\n\nAllows combining different pricing types, e.g., base token cost + fixed fee.\n\nExample:\n    {\n        \"type\": \"add\",\n        \"prices\": [\n            {\"type\": \"one_million_tokens\", \"input\": \"0.50\", \"output\": \"1.50\"},\n            {\"type\": \"constant\", \"amount\": \"-5.00\", \"description\": \"Platform fee\"}\n        ]\n    }",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "prices": {
+          "description": "List of pricing components to sum together",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "minItems": 1,
+          "title": "Prices",
+          "type": "array"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "add",
+          "default": "add",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prices"
+      ],
+      "title": "AddPriceData",
+      "type": "object"
+    },
+    "AuthMethodEnum": {
+      "enum": [
+        "api_key",
+        "oauth",
+        "jwt",
+        "bearer_token",
+        "basic_auth"
+      ],
+      "title": "AuthMethodEnum",
+      "type": "string"
+    },
+    "ConstantPriceData": {
+      "additionalProperties": false,
+      "description": "Price data for a constant/fixed price.\n\nUsed for fixed fees, discounts, or adjustments that don't depend on usage.\nPrice can be positive (charge) or negative (discount/credit).",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "price": {
+          "description": "Fixed price (positive for charge, negative for discount)",
+          "title": "Price",
+          "type": "string"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "constant",
+          "default": "constant",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "price"
+      ],
+      "title": "ConstantPriceData",
+      "type": "object"
+    },
+    "ContentFilterEnum": {
+      "enum": [
+        "adult",
+        "violence",
+        "hate_speech",
+        "profanity",
+        "pii"
+      ],
+      "title": "ContentFilterEnum",
+      "type": "string"
+    },
+    "CountPriceData": {
+      "additionalProperties": false,
+      "description": "Price data for count-scaled pricing (API calls, events, requests).\n\nSupported types: ``one_thousand``, ``one_million``.  The ``count``\nequivalence-group field is the base unit.\n\nUsage can be provided as ``count``, ``one_thousand``, or\n``one_million`` — cross-unit conversion is automatic.\n\nNote: ``image`` and ``step`` pricing types also use ``count`` but have\ntheir own dedicated classes (``ImagePriceData``, ``StepPriceData``).",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "price": {
+          "description": "Price per one unit of the specified type",
+          "title": "Price",
+          "type": "string"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "default": "one_thousand",
+          "enum": [
+            "one_thousand",
+            "one_million"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "price"
+      ],
+      "title": "CountPriceData",
+      "type": "object"
+    },
+    "CurrencyEnum": {
+      "description": "Supported currency codes for pricing.",
+      "enum": [
+        "USD",
+        "EUR",
+        "GBP",
+        "JPY",
+        "CNY",
+        "CAD",
+        "AUD",
+        "CHF",
+        "INR",
+        "KRW",
+        "BTC",
+        "ETH",
+        "USDT",
+        "USDC",
+        "TAO",
+        "CREDITS"
+      ],
+      "title": "CurrencyEnum",
+      "type": "string"
+    },
+    "DataPriceData": {
+      "additionalProperties": false,
+      "description": "Price data for data-volume pricing (bandwidth, storage, transfer).\n\nSupported types: ``one_byte``, ``one_kilobyte``, ``one_megabyte``,\n``one_gigabyte``.  Uses binary units (1 KB = 1024 bytes).\n\nUsage can be provided in **any** data unit — cross-unit conversion is\nhandled automatically via equivalence groups.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "price": {
+          "description": "Price per one unit of the specified type",
+          "title": "Price",
+          "type": "string"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "default": "one_megabyte",
+          "enum": [
+            "one_byte",
+            "one_kilobyte",
+            "one_megabyte",
+            "one_gigabyte"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "price"
+      ],
+      "title": "DataPriceData",
+      "type": "object"
+    },
+    "DocumentCategoryEnum": {
+      "enum": [
+        "getting_started",
+        "api_reference",
+        "tutorial",
+        "code_example",
+        "code_example_output",
+        "connectivity_test",
+        "request_template",
+        "use_case",
+        "troubleshooting",
+        "changelog",
+        "best_practice",
+        "specification",
+        "service_level_agreement",
+        "terms_of_service",
+        "statement",
+        "invoice",
+        "logo",
+        "avatar",
+        "blog_content",
+        "blog_banner",
+        "attachment",
+        "other"
+      ],
+      "title": "DocumentCategoryEnum",
+      "type": "string"
+    },
+    "DocumentData": {
+      "additionalProperties": false,
+      "description": "Document data for SDK/API payloads.\n\nNote: The document title is NOT stored here - it's the key in the documents dict.\nWhen stored in the database, the backend extracts the key as the title field.",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/DocumentCategoryEnum",
+          "description": "Document category for organization and filtering"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Document description",
+          "title": "Description"
+        },
+        "external_url": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "External URL for the document (mutually exclusive with object_key)",
+          "title": "External Url"
+        },
+        "file_path": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Path to file to upload (mutually exclusive with external_url)",
+          "title": "File Path"
+        },
+        "is_active": {
+          "default": true,
+          "description": "Whether document is active",
+          "title": "Is Active",
+          "type": "boolean"
+        },
+        "is_public": {
+          "default": false,
+          "description": "Whether document is publicly accessible without authentication",
+          "title": "Is Public",
+          "type": "boolean"
+        },
+        "meta": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JSON containing operation stats",
+          "title": "Meta"
+        },
+        "mime_type": {
+          "$ref": "#/$defs/MimeTypeEnum",
+          "description": "Document MIME type"
+        },
+        "sort_order": {
+          "default": 0,
+          "description": "Sort order within category",
+          "title": "Sort Order",
+          "type": "integer"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "maxLength": 50,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Document version",
+          "title": "Version"
+        }
+      },
+      "required": [
+        "mime_type",
+        "category"
+      ],
+      "title": "DocumentData",
+      "type": "object"
+    },
+    "ExprPriceData": {
+      "additionalProperties": false,
+      "description": "Expression-based pricing that evaluates an arithmetic expression using usage metrics.\n\n**IMPORTANT: This pricing type should only be used for `payout_price`.**\nIt is NOT suitable for `list_price` because:\n1. List pricing should be predictable and transparent\n2. Expression-based pricing can lead to confusing or unexpected charges\n3. Customers should be able to easily calculate their costs before using a service\n\nFor payout pricing, expressions are useful when the cost from an upstream provider\ninvolves complex calculations that can't be expressed with basic pricing types.\n\nThe expression can use any available metrics and arithmetic operators (+, -, *, /).\n\nAvailable metrics:\n- input_tokens, output_tokens, total_tokens (token counts)\n- seconds (time-based usage)\n- count (images, steps, etc.)\n- request_count (number of API requests)\n- customer_charge (what the customer paid, for revenue share calculations)\n\nExample:\n    {\n        \"type\": \"expr\",\n        \"expr\": \"input_tokens / 1000000 * 0.50 + output_tokens / 1000000 * 1.50\"\n    }",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "expr": {
+          "description": "Arithmetic expression using usage metrics (e.g., 'input_tokens / 1000000 * 2.5')",
+          "title": "Expr",
+          "type": "string"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "expr",
+          "default": "expr",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "expr"
+      ],
+      "title": "ExprPriceData",
+      "type": "object"
+    },
+    "FirstPriceData": {
+      "additionalProperties": false,
+      "description": "Composite pricing that returns the cost from the **first** applicable child.\n\nTries each child in order.  The first one that doesn't raise ``ValueError``\nwins.  Useful when pricing should adapt to whatever metric the caller\nprovides (duration OR count, etc.).\n\nExample — charge by duration if available, otherwise by count:\n\n    {\n        \"type\": \"first\",\n        \"prices\": [\n            {\"type\": \"one_second\", \"price\": \"0.01\"},\n            {\"type\": \"image\", \"price\": \"0.05\"}\n        ]\n    }",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "prices": {
+          "description": "List of pricing components — the first successful result is used",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "minItems": 1,
+          "title": "Prices",
+          "type": "array"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "first",
+          "default": "first",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prices"
+      ],
+      "title": "FirstPriceData",
+      "type": "object"
+    },
+    "GraduatedPriceData": {
+      "additionalProperties": false,
+      "description": "Graduated tiered pricing where each tier's units are priced at that tier's rate.\n\nLike AWS pricing - first N units at price A, next M units at price B, etc.\n`based_on` can be 'request_count', 'customer_charge', or any UsageData field.\n\nExample (graduated pricing - different rates per tier):\n    {\n        \"type\": \"graduated\",\n        \"based_on\": \"request_count\",\n        \"tiers\": [\n            {\"up_to\": 1000, \"unit_price\": \"0.01\"},\n            {\"up_to\": 10000, \"unit_price\": \"0.008\"},\n            {\"up_to\": null, \"unit_price\": \"0.005\"}\n        ]\n    }\nIf request_count is 5000:\n    - First 1000 at $0.01 = $10.00\n    - Next 4000 at $0.008 = $32.00\n    - Total = $42.00",
+      "properties": {
+        "based_on": {
+          "description": "Metric for graduated calc: 'request_count', 'customer_charge', or UsageData field",
+          "title": "Based On",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "tiers": {
+          "description": "List of tiers, ordered by up_to (ascending). Last tier should have up_to=null.",
+          "items": {
+            "$ref": "#/$defs/GraduatedTier"
+          },
+          "minItems": 1,
+          "title": "Tiers",
+          "type": "array"
+        },
+        "type": {
+          "const": "graduated",
+          "default": "graduated",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "based_on",
+        "tiers"
+      ],
+      "title": "GraduatedPriceData",
+      "type": "object"
+    },
+    "GraduatedTier": {
+      "additionalProperties": false,
+      "description": "A single tier in graduated pricing with per-unit price.",
+      "properties": {
+        "unit_price": {
+          "description": "Price per unit in this tier",
+          "title": "Unit Price",
+          "type": "string"
+        },
+        "up_to": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Upper limit for this tier (None for unlimited)",
+          "title": "Up To"
+        }
+      },
+      "required": [
+        "up_to",
+        "unit_price"
+      ],
+      "title": "GraduatedTier",
+      "type": "object"
+    },
+    "ImagePriceData": {
+      "additionalProperties": false,
+      "description": "Price data for per-image pricing (image generation, processing).\n\nPrice values use Decimal for precision. In JSON/TOML, specify as strings\n(e.g., \"0.04\") to avoid floating-point precision issues.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "price": {
+          "description": "Price per image",
+          "title": "Price",
+          "type": "string"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "image",
+          "default": "image",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "price"
+      ],
+      "title": "ImagePriceData",
+      "type": "object"
+    },
+    "ListingStatusEnum": {
+      "description": "Status values that sellers can set for listings.\n\nSeller-accessible statuses:\n- draft: Work in progress, skipped during publish (won't be sent to backend)\n- ready: Complete and ready for admin review/testing\n- deprecated: Retired/end of life, no longer offered\n\nNote: Admin-managed workflow statuses (upstream_ready, downstream_ready, in_service)\nare set by the backend admin after testing and validation. These are not included in this\nenum since sellers cannot set them through the CLI tool.",
+      "enum": [
+        "draft",
+        "ready",
+        "deprecated"
+      ],
+      "title": "ListingStatusEnum",
+      "type": "string"
+    },
+    "MaxPriceData": {
+      "additionalProperties": false,
+      "description": "Composite pricing that charges the **maximum** of multiple pricing calculations.\n\nLenient: children that raise ``ValueError`` (e.g., missing usage metric)\nare silently skipped.  At least one child must succeed.\n\nExample — charge per-count OR per-duration, whichever is higher:\n\n    {\n        \"type\": \"max\",\n        \"prices\": [\n            {\"type\": \"one_second\", \"price\": \"0.01\"},\n            {\"type\": \"constant\", \"price\": \"0.50\"}\n        ]\n    }",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "prices": {
+          "description": "List of pricing components — the highest result is used",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "minItems": 1,
+          "title": "Prices",
+          "type": "array"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "max",
+          "default": "max",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prices"
+      ],
+      "title": "MaxPriceData",
+      "type": "object"
+    },
+    "MimeTypeEnum": {
+      "enum": [
+        "markdown",
+        "python",
+        "javascript",
+        "bash",
+        "html",
+        "json",
+        "text",
+        "pdf",
+        "jpeg",
+        "png",
+        "svg",
+        "url"
+      ],
+      "title": "MimeTypeEnum",
+      "type": "string"
+    },
+    "MinPriceData": {
+      "additionalProperties": false,
+      "description": "Composite pricing that charges the **minimum** of multiple pricing calculations.\n\nUseful for price caps — charge usage-based pricing but never more than a\nflat rate.\n\nLenient: children that raise ``ValueError`` are silently skipped.\n\nExample — usage-based pricing capped at $100:\n\n    {\n        \"type\": \"min\",\n        \"prices\": [\n            {\"type\": \"one_second\", \"price\": \"0.10\"},\n            {\"type\": \"constant\", \"price\": \"100.00\"}\n        ]\n    }",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "prices": {
+          "description": "List of pricing components — the lowest result is used",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "minItems": 1,
+          "title": "Prices",
+          "type": "array"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "min",
+          "default": "min",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prices"
+      ],
+      "title": "MinPriceData",
+      "type": "object"
+    },
+    "MultiplyPriceData": {
+      "additionalProperties": false,
+      "description": "Composite pricing that multiplies a base price by a factor.\n\nUseful for applying percentage-based adjustments to a base price.\n\nExample:\n    {\n        \"type\": \"multiply\",\n        \"factor\": \"0.70\",\n        \"base\": {\"type\": \"one_million_tokens\", \"input\": \"0.50\", \"output\": \"1.50\"}\n    }",
+      "properties": {
+        "base": {
+          "additionalProperties": true,
+          "description": "Base pricing to multiply",
+          "title": "Base",
+          "type": "object"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "factor": {
+          "description": "Multiplication factor (e.g., '0.70' for 70%)",
+          "title": "Factor",
+          "type": "string"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "multiply",
+          "default": "multiply",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "factor",
+        "base"
+      ],
+      "title": "MultiplyPriceData",
+      "type": "object"
+    },
+    "OveragePolicyEnum": {
+      "enum": [
+        "block",
+        "throttle",
+        "charge",
+        "queue"
+      ],
+      "title": "OveragePolicyEnum",
+      "type": "string"
+    },
+    "PriceTier": {
+      "additionalProperties": false,
+      "description": "A single tier in tiered pricing.",
+      "properties": {
+        "price": {
+          "additionalProperties": true,
+          "description": "Price configuration for this tier",
+          "title": "Price",
+          "type": "object"
+        },
+        "up_to": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Upper limit for this tier (None for unlimited)",
+          "title": "Up To"
+        }
+      },
+      "required": [
+        "up_to",
+        "price"
+      ],
+      "title": "PriceTier",
+      "type": "object"
+    },
+    "QuotaResetCycleEnum": {
+      "enum": [
+        "daily",
+        "weekly",
+        "monthly",
+        "yearly"
+      ],
+      "title": "QuotaResetCycleEnum",
+      "type": "string"
+    },
+    "RateLimit": {
+      "additionalProperties": false,
+      "description": "Store rate limiting rules for services.",
+      "properties": {
+        "burst_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Short-term burst allowance",
+          "title": "Burst Limit"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 255,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description",
+          "title": "Description"
+        },
+        "is_active": {
+          "default": true,
+          "description": "Whether rate limit is active",
+          "title": "Is Active",
+          "type": "boolean"
+        },
+        "limit": {
+          "description": "Maximum allowed in the time window",
+          "title": "Limit",
+          "type": "integer"
+        },
+        "unit": {
+          "$ref": "#/$defs/RateLimitUnitEnum",
+          "description": "What is being limited"
+        },
+        "window": {
+          "$ref": "#/$defs/TimeWindowEnum",
+          "description": "Time window for the limit"
+        }
+      },
+      "required": [
+        "limit",
+        "unit",
+        "window"
+      ],
+      "title": "RateLimit",
+      "type": "object"
+    },
+    "RateLimitUnitEnum": {
+      "enum": [
+        "requests",
+        "tokens",
+        "input_tokens",
+        "output_tokens",
+        "bytes",
+        "concurrent"
+      ],
+      "title": "RateLimitUnitEnum",
+      "type": "string"
+    },
+    "RequestTransformEnum": {
+      "enum": [
+        "proxy_rewrite",
+        "body_transformer",
+        "set_body"
+      ],
+      "title": "RequestTransformEnum",
+      "type": "string"
+    },
+    "RevenueSharePriceData": {
+      "additionalProperties": false,
+      "description": "Price data for revenue share pricing (payout_price only).\n\nThis pricing type is used exclusively for payout_price when the seller\nreceives a percentage of what the customer pays. It cannot be used for\nlist_price since the list price must be a concrete amount.\n\nThe percentage represents the seller's share of the customer charge.\nFor example, if percentage is \"70\" and the customer pays $10, the seller\nreceives $7.\n\nPercentage values must be strings (e.g., \"70.00\") to avoid floating-point\nprecision issues.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "percentage": {
+          "description": "Percentage of customer charge that goes to the seller (0-100)",
+          "title": "Percentage",
+          "type": "string"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "revenue_share",
+          "default": "revenue_share",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "percentage"
+      ],
+      "title": "RevenueSharePriceData",
+      "type": "object"
+    },
+    "ServiceConstraints": {
+      "additionalProperties": false,
+      "properties": {
+        "auth_methods": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/AuthMethodEnum"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Supported authentication methods",
+          "title": "Auth Methods"
+        },
+        "connection_timeout_seconds": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Connection timeout in seconds",
+          "title": "Connection Timeout Seconds"
+        },
+        "content_filters": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ContentFilterEnum"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Active content filtering policies",
+          "title": "Content Filters"
+        },
+        "daily_quota": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Daily usage quota (requests, tokens, etc.)",
+          "title": "Daily Quota"
+        },
+        "input_languages": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Supported input languages (ISO 639-1 codes)",
+          "title": "Input Languages"
+        },
+        "ip_whitelist_required": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Whether IP whitelisting is required",
+          "title": "Ip Whitelist Required"
+        },
+        "maintenance_windows": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Scheduled maintenance windows",
+          "title": "Maintenance Windows"
+        },
+        "max_batch_size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum number of items in batch requests",
+          "title": "Max Batch Size"
+        },
+        "max_concurrent_requests": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum concurrent requests allowed",
+          "title": "Max Concurrent Requests"
+        },
+        "max_connections_per_ip": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum connections per IP address",
+          "title": "Max Connections Per Ip"
+        },
+        "max_context_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum context length in tokens",
+          "title": "Max Context Length"
+        },
+        "max_request_size_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum request payload size in bytes",
+          "title": "Max Request Size Bytes"
+        },
+        "max_response_size_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum response payload size in bytes",
+          "title": "Max Response Size Bytes"
+        },
+        "monthly_quota": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Monthly usage quota (requests, tokens, etc.)",
+          "title": "Monthly Quota"
+        },
+        "output_languages": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Supported output languages (ISO 639-1 codes)",
+          "title": "Output Languages"
+        },
+        "overage_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OveragePolicyEnum"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What happens when quota is exceeded"
+        },
+        "quota_reset_cycle": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuotaResetCycleEnum"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How often quotas reset"
+        },
+        "quota_unit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RateLimitUnitEnum"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Unit for quota limits"
+        },
+        "region_restrictions": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Geographic restrictions (ISO country codes)",
+          "title": "Region Restrictions"
+        },
+        "response_time_sla_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Response time SLA in milliseconds",
+          "title": "Response Time Sla Ms"
+        },
+        "timeout_seconds": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request timeout in seconds",
+          "title": "Timeout Seconds"
+        },
+        "tls_version_min": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Minimum TLS version required",
+          "title": "Tls Version Min"
+        },
+        "uptime_sla_percent": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Uptime SLA percentage (e.g., 99.9)",
+          "title": "Uptime Sla Percent"
+        }
+      },
+      "title": "ServiceConstraints",
+      "type": "object"
+    },
+    "StepPriceData": {
+      "additionalProperties": false,
+      "description": "Price data for per-step pricing (diffusion steps, iterations).\n\nPrice values use Decimal for precision. In JSON/TOML, specify as strings\n(e.g., \"0.001\") to avoid floating-point precision issues.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "price": {
+          "description": "Price per step/iteration",
+          "title": "Price",
+          "type": "string"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "step",
+          "default": "step",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "price"
+      ],
+      "title": "StepPriceData",
+      "type": "object"
+    },
+    "TieredPriceData": {
+      "additionalProperties": false,
+      "description": "Volume-based tiered pricing where the tier determines price for ALL units.\n\nThe tier is determined by the `based_on` metric, and ALL units are priced\nat that tier's rate. `based_on` can be 'request_count', 'customer_charge',\nor any field from UsageData (e.g., 'input_tokens', 'seconds', 'count').\n\nExample (volume pricing - all units at same rate):\n    {\n        \"type\": \"tiered\",\n        \"based_on\": \"request_count\",\n        \"tiers\": [\n            {\"up_to\": 1000, \"price\": {\"type\": \"constant\", \"amount\": \"10.00\"}},\n            {\"up_to\": 10000, \"price\": {\"type\": \"constant\", \"amount\": \"80.00\"}},\n            {\"up_to\": null, \"price\": {\"type\": \"constant\", \"amount\": \"500.00\"}}\n        ]\n    }\nIf request_count is 5000, the price is $80.00 (falls in 1001-10000 tier).",
+      "properties": {
+        "based_on": {
+          "description": "Metric for tier selection: 'request_count', 'customer_charge', or UsageData field",
+          "title": "Based On",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "tiers": {
+          "description": "List of tiers, ordered by up_to (ascending). Last tier should have up_to=null.",
+          "items": {
+            "$ref": "#/$defs/PriceTier"
+          },
+          "minItems": 1,
+          "title": "Tiers",
+          "type": "array"
+        },
+        "type": {
+          "const": "tiered",
+          "default": "tiered",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "based_on",
+        "tiers"
+      ],
+      "title": "TieredPriceData",
+      "type": "object"
+    },
+    "TimePriceData": {
+      "additionalProperties": false,
+      "description": "Price data for time-based pricing (audio/video, compute time, alias duration).\n\nSupported types: ``one_second``, ``one_minute``, ``one_hour``,\n``one_day``, ``one_month`` (30 days).\n\nUsage can be provided in **any** time unit — cross-unit conversion is\nhandled automatically via equivalence groups.  For example, pricing of\n``{\"type\": \"one_hour\", \"price\": \"1.00\"}`` with\n``UsageData(one_minute=120)`` converts 120 minutes → 2 hours → $2.00.\n\nPrice values use Decimal for precision. In JSON/TOML, specify as strings\n(e.g., \"0.006\") to avoid floating-point precision issues.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "price": {
+          "description": "Price per one unit of the specified type",
+          "title": "Price",
+          "type": "string"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "default": "one_second",
+          "enum": [
+            "one_second",
+            "one_minute",
+            "one_hour",
+            "one_day",
+            "one_month"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "price"
+      ],
+      "title": "TimePriceData",
+      "type": "object"
+    },
+    "TimeWindowEnum": {
+      "enum": [
+        "second",
+        "minute",
+        "hour",
+        "day",
+        "month"
+      ],
+      "title": "TimeWindowEnum",
+      "type": "string"
+    },
+    "TokenPriceData": {
+      "additionalProperties": false,
+      "description": "Price data for token-based pricing (LLMs).\n\nSupports two modes:\n1. **Unified pricing**: Set ``price`` only — same rate for all token types.\n2. **Separate pricing**: Set ``input`` and ``output`` (and optionally ``cached_input``)\n   for different rates per token type.\n\nIn separate pricing mode, ``price`` serves as a **summary price for marketplace\ncomparison**. If not explicitly set by the seller, the backend calculates it\nduring service ingestion using: ``price = (input + 4*output) / 5``.\n\nPrice values use Decimal for precision. In JSON/TOML, specify as strings\n(e.g., \"0.50\") to avoid floating-point precision issues.",
+      "properties": {
+        "cached_input": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Price per million cached input tokens (optional, for discounted cached rates)",
+          "title": "Cached Input"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "input": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Price per million input tokens",
+          "title": "Input"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Price per million output tokens",
+          "title": "Output"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price per million tokens for marketplace comparison. For unified pricing, this is the billing rate. For separate input/output pricing, this is a representative price for sorting/filtering.",
+          "title": "Price"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "default": "one_million_tokens",
+          "enum": [
+            "one_million_tokens",
+            "one_thousand_tokens",
+            "one_token"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "TokenPriceData",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Service listing model for file-based definitions (listing_v1 schema).\n\nExtends ServiceListingData with:\n- schema_version: Schema identifier for file validation\n- time_created: Timestamp for file creation\n- Typed models (AccessInterface, Document, Pricing) instead of dicts\n- Field validators for name format\n\nThis model is used for validating listing.json/listing.toml files\ncreated by the CLI tool.",
+  "properties": {
+    "currency": {
+      "$ref": "#/$defs/CurrencyEnum",
+      "default": "USD",
+      "description": "Currency for list_price (indexed for filtering)"
+    },
+    "display_name": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Human-readable listing name (e.g., 'Premium GPT-4 Access', 'Enterprise AI Services')",
+      "title": "Display Name"
+    },
+    "documents": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/DocumentData"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Documents associated with the listing, keyed by title (e.g. service level agreements)",
+      "title": "Documents"
+    },
+    "list_price": {
+      "anyOf": [
+        {
+          "discriminator": {
+            "mapping": {
+              "add": "#/$defs/AddPriceData",
+              "constant": "#/$defs/ConstantPriceData",
+              "expr": "#/$defs/ExprPriceData",
+              "first": "#/$defs/FirstPriceData",
+              "graduated": "#/$defs/GraduatedPriceData",
+              "image": "#/$defs/ImagePriceData",
+              "max": "#/$defs/MaxPriceData",
+              "min": "#/$defs/MinPriceData",
+              "multiply": "#/$defs/MultiplyPriceData",
+              "one_byte": "#/$defs/DataPriceData",
+              "one_day": "#/$defs/TimePriceData",
+              "one_gigabyte": "#/$defs/DataPriceData",
+              "one_hour": "#/$defs/TimePriceData",
+              "one_kilobyte": "#/$defs/DataPriceData",
+              "one_megabyte": "#/$defs/DataPriceData",
+              "one_million": "#/$defs/CountPriceData",
+              "one_million_tokens": "#/$defs/TokenPriceData",
+              "one_minute": "#/$defs/TimePriceData",
+              "one_month": "#/$defs/TimePriceData",
+              "one_second": "#/$defs/TimePriceData",
+              "one_thousand": "#/$defs/CountPriceData",
+              "one_thousand_tokens": "#/$defs/TokenPriceData",
+              "one_token": "#/$defs/TokenPriceData",
+              "revenue_share": "#/$defs/RevenueSharePriceData",
+              "step": "#/$defs/StepPriceData",
+              "tiered": "#/$defs/TieredPriceData"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/TokenPriceData"
+            },
+            {
+              "$ref": "#/$defs/TimePriceData"
+            },
+            {
+              "$ref": "#/$defs/DataPriceData"
+            },
+            {
+              "$ref": "#/$defs/CountPriceData"
+            },
+            {
+              "$ref": "#/$defs/ImagePriceData"
+            },
+            {
+              "$ref": "#/$defs/StepPriceData"
+            },
+            {
+              "$ref": "#/$defs/RevenueSharePriceData"
+            },
+            {
+              "$ref": "#/$defs/ConstantPriceData"
+            },
+            {
+              "$ref": "#/$defs/AddPriceData"
+            },
+            {
+              "$ref": "#/$defs/MultiplyPriceData"
+            },
+            {
+              "$ref": "#/$defs/MaxPriceData"
+            },
+            {
+              "$ref": "#/$defs/MinPriceData"
+            },
+            {
+              "$ref": "#/$defs/FirstPriceData"
+            },
+            {
+              "$ref": "#/$defs/TieredPriceData"
+            },
+            {
+              "$ref": "#/$defs/GraduatedPriceData"
+            },
+            {
+              "$ref": "#/$defs/ExprPriceData"
+            }
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "List price: Listed price for customers",
+      "title": "List Price"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "maxLength": 255,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Name identifier for the service listing (defaults to offering name if not provided)",
+      "title": "Name"
+    },
+    "schema": {
+      "default": "listing_v1",
+      "description": "Schema identifier",
+      "title": "Schema",
+      "type": "string"
+    },
+    "service_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Service ID from previous publish. If provided, updates existing service. Stored in override file (e.g., listing.override.json) by SDK after first publish.",
+      "title": "Service Id"
+    },
+    "service_options": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Service-specific options that modify backend behavior. Keys are option names, values are option configurations. The backend decides which options it supports.",
+      "title": "Service Options"
+    },
+    "status": {
+      "$ref": "#/$defs/ListingStatusEnum",
+      "default": "draft",
+      "description": "Listing status: draft (skip publish), ready (ready for admin review), or deprecated (retired)"
+    },
+    "time_created": {
+      "format": "date-time",
+      "title": "Time Created",
+      "type": "string"
+    },
+    "user_access_interfaces": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/AccessInterfaceData"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "User access interfaces for the listing, keyed by name",
+      "title": "User Access Interfaces"
+    },
+    "user_parameters_schema": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "JSON Schema for user parameters",
+      "title": "User Parameters Schema"
+    },
+    "user_parameters_ui_schema": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "UI schema for user parameters form rendering",
+      "title": "User Parameters Ui Schema"
+    }
+  },
+  "required": [
+    "time_created"
+  ],
+  "title": "ListingV1",
+  "type": "object"
+}

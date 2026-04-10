@@ -1,0 +1,705 @@
+"""Tests for the data validator."""
+
+from pathlib import Path
+
+import pytest
+
+from unitysvc_core.validator import DataValidator
+
+
+@pytest.fixture
+def schema_dir():
+    """Get the schema directory path."""
+    pkg_path = Path(__file__).parent.parent / "src" / "unitysvc_core"
+    return pkg_path / "schema"
+
+
+@pytest.fixture
+def example_data_dir():
+    """Get the example data directory path."""
+    return Path(__file__).parent / "example_data"
+
+
+def test_validator_loads_schemas(schema_dir, example_data_dir):
+    """Test that the validator can load all schemas."""
+    validator = DataValidator(example_data_dir, schema_dir)
+
+    # Check that schemas were loaded
+    assert len(validator.schemas) > 0
+    assert "base" in validator.schemas
+    assert "provider_v1" in validator.schemas
+    assert "offering_v1" in validator.schemas
+    assert "listing_v1" in validator.schemas
+
+
+def test_validate_provider_toml(schema_dir, example_data_dir):
+    """Test validation of provider TOML file."""
+    validator = DataValidator(example_data_dir, schema_dir)
+
+    provider_file = example_data_dir / "provider1" / "provider.toml"
+    is_valid, errors = validator.validate_data_file(provider_file)
+
+    if not is_valid:
+        print(f"Validation errors for {provider_file}:")
+        for error in errors:
+            print(f"  - {error}")
+
+    assert is_valid, f"Provider TOML validation failed: {errors}"
+
+
+def test_validate_provider_json(schema_dir, example_data_dir):
+    """Test validation of provider JSON file."""
+    validator = DataValidator(example_data_dir, schema_dir)
+
+    provider_file = example_data_dir / "provider2" / "provider.json"
+    is_valid, errors = validator.validate_data_file(provider_file)
+
+    if not is_valid:
+        print(f"Validation errors for {provider_file}:")
+        for error in errors:
+            print(f"  - {error}")
+
+    assert is_valid, f"Provider JSON validation failed: {errors}"
+
+
+def test_validate_service_toml(schema_dir, example_data_dir):
+    """Test validation of service TOML file."""
+    validator = DataValidator(example_data_dir, schema_dir)
+
+    service_file = example_data_dir / "provider1" / "services" / "service1" / "offering.toml"
+    is_valid, errors = validator.validate_data_file(service_file)
+
+    if not is_valid:
+        print(f"Validation errors for {service_file}:")
+        for error in errors:
+            print(f"  - {error}")
+
+    assert is_valid, f"Service TOML validation failed: {errors}"
+
+
+def test_validate_service_json(schema_dir, example_data_dir):
+    """Test validation of service JSON file."""
+    validator = DataValidator(example_data_dir, schema_dir)
+
+    service_file = example_data_dir / "provider2" / "services" / "service2" / "offering.json"
+    is_valid, errors = validator.validate_data_file(service_file)
+
+    if not is_valid:
+        print(f"Validation errors for {service_file}:")
+        for error in errors:
+            print(f"  - {error}")
+
+    assert is_valid, f"Service JSON validation failed: {errors}"
+
+
+def test_validate_listing_toml(schema_dir, example_data_dir):
+    """Test validation of listing TOML file."""
+    validator = DataValidator(example_data_dir, schema_dir)
+
+    listing_file = example_data_dir / "provider1" / "services" / "service1" / "listing.toml"
+    is_valid, errors = validator.validate_data_file(listing_file)
+
+    if not is_valid:
+        print(f"Validation errors for {listing_file}:")
+        for error in errors:
+            print(f"  - {error}")
+
+    assert is_valid, f"Listing TOML validation failed: {errors}"
+
+
+def test_validate_listing_json(schema_dir, example_data_dir):
+    """Test validation of listing JSON file."""
+    validator = DataValidator(example_data_dir, schema_dir)
+
+    listing_file = example_data_dir / "provider2" / "services" / "service2" / "listing.json"
+    is_valid, errors = validator.validate_data_file(listing_file)
+
+    if not is_valid:
+        print(f"Validation errors for {listing_file}:")
+        for error in errors:
+            print(f"  - {error}")
+
+    assert is_valid, f"Listing JSON validation failed: {errors}"
+
+
+def test_validate_jinja2_files(schema_dir, example_data_dir, tmp_path):
+    """Test validation of Jinja2 template files."""
+    validator = DataValidator(example_data_dir, schema_dir)
+
+    # Create valid Jinja2 template files for testing
+    valid_template = tmp_path / "valid.md.j2"
+    valid_template.write_text("# {{ listing.service_name }}\n\nProvider: {{ provider.provider_name }}")
+
+    invalid_template = tmp_path / "invalid.py.j2"
+    invalid_template.write_text("# {{ listing.service_name\n")  # Missing closing braces
+
+    # Test valid template
+    is_valid, errors = validator.validate_jinja2_file(valid_template)
+    assert is_valid, f"Valid Jinja2 template failed validation: {errors}"
+
+    # Test invalid template
+    is_valid, errors = validator.validate_jinja2_file(invalid_template)
+    assert not is_valid, "Invalid Jinja2 template should fail validation"
+    assert len(errors) > 0, "Should have validation errors for invalid template"
+    assert "Jinja2 syntax error" in errors[0], f"Error should mention Jinja2 syntax: {errors}"
+
+
+def test_validate_all_files(schema_dir, example_data_dir):
+    """Test validation of all files in example_data."""
+    validator = DataValidator(example_data_dir, schema_dir)
+
+    results = validator.validate_all()
+
+    # Should have found multiple files
+    assert len(results) > 0
+
+    # Count valid vs invalid
+    valid_count = sum(1 for is_valid, _ in results.values() if is_valid)
+    invalid_count = len(results) - valid_count
+
+    # Print summary
+    print("\nValidation Summary:")
+    print(f"  Total files: {len(results)}")
+    print(f"  Valid: {valid_count}")
+    print(f"  Invalid: {invalid_count}")
+
+    if invalid_count > 0:
+        print("\nInvalid files:")
+        for file_path, (is_valid, errors) in results.items():
+            if not is_valid:
+                print(f"\n  {file_path}:")
+                for error in errors:
+                    print(f"    - {error}")
+
+    # All files should be valid
+    assert invalid_count == 0, f"{invalid_count} files failed validation"
+
+
+def test_file_reference_validation(schema_dir, example_data_dir):
+    """Test that file references are properly validated."""
+    validator = DataValidator(example_data_dir, schema_dir)
+
+    # This should validate that referenced files (like logo, documents) exist
+    results = validator.validate_all()
+
+    # Check for file reference errors
+    file_ref_errors = []
+    for file_path, (_is_valid, errors) in results.items():
+        for error in errors:
+            if "does not exist" in error or "file reference" in error.lower():
+                file_ref_errors.append((file_path, error))
+
+    if file_ref_errors:
+        print("\nFile reference errors found:")
+        for file_path, error in file_ref_errors:
+            print(f"  {file_path}: {error}")
+
+    # Should have no file reference errors in example data
+    assert len(file_ref_errors) == 0, "File reference validation failed"
+
+
+class TestRequiredParameterDefaults:
+    """Tests for validate_required_parameter_defaults method."""
+
+    def test_no_user_parameters_schema(self, schema_dir, example_data_dir):
+        """Test validation passes when user_parameters_schema is not present."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"schema": "listing_v1"}
+        errors = validator.validate_required_parameter_defaults(data, "listing_v1")
+        assert len(errors) == 0
+
+    def test_no_required_parameters(self, schema_dir, example_data_dir):
+        """Test validation passes when user_parameters_schema has no required field."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {
+            "schema": "listing_v1",
+            "user_parameters_schema": {
+                "type": "object",
+                "properties": {"param1": {"type": "string"}},
+            },
+        }
+        errors = validator.validate_required_parameter_defaults(data, "listing_v1")
+        assert len(errors) == 0
+
+    def test_empty_required_parameters(self, schema_dir, example_data_dir):
+        """Test validation passes when required is an empty list."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {
+            "schema": "listing_v1",
+            "user_parameters_schema": {
+                "type": "object",
+                "properties": {"param1": {"type": "string"}},
+                "required": [],
+            },
+        }
+        errors = validator.validate_required_parameter_defaults(data, "listing_v1")
+        assert len(errors) == 0
+
+    def test_required_params_with_defaults(self, schema_dir, example_data_dir):
+        """Test validation passes when all required params have defaults."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {
+            "schema": "listing_v1",
+            "user_parameters_schema": {
+                "type": "object",
+                "properties": {
+                    "param1": {"type": "string"},
+                    "param2": {"type": "integer"},
+                },
+                "required": ["param1", "param2"],
+            },
+            "service_options": {
+                "ops_testing_parameters": {
+                    "param1": "default_value",
+                    "param2": 42,
+                }
+            },
+        }
+        errors = validator.validate_required_parameter_defaults(data, "listing_v1")
+        assert len(errors) == 0
+
+    def test_required_params_missing_service_options(self, schema_dir, example_data_dir):
+        """Test validation fails when required params exist but service_options is missing."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {
+            "schema": "listing_v1",
+            "user_parameters_schema": {
+                "type": "object",
+                "properties": {"param1": {"type": "string"}},
+                "required": ["param1"],
+            },
+        }
+        errors = validator.validate_required_parameter_defaults(data, "listing_v1")
+        assert len(errors) == 1
+        assert "service_options is missing" in errors[0]
+
+    def test_required_params_missing_ops_testing_parameters(self, schema_dir, example_data_dir):
+        """Test validation fails when required params exist but ops_testing_parameters is missing."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {
+            "schema": "listing_v1",
+            "user_parameters_schema": {
+                "type": "object",
+                "properties": {"param1": {"type": "string"}},
+                "required": ["param1"],
+            },
+            "service_options": {"other_option": "value"},
+        }
+        errors = validator.validate_required_parameter_defaults(data, "listing_v1")
+        assert len(errors) == 1
+        assert "ops_testing_parameters is missing" in errors[0]
+
+    def test_required_params_missing_some_defaults(self, schema_dir, example_data_dir):
+        """Test validation fails when some required params are missing defaults."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {
+            "schema": "listing_v1",
+            "user_parameters_schema": {
+                "type": "object",
+                "properties": {
+                    "param1": {"type": "string"},
+                    "param2": {"type": "integer"},
+                    "param3": {"type": "boolean"},
+                },
+                "required": ["param1", "param2", "param3"],
+            },
+            "service_options": {
+                "ops_testing_parameters": {
+                    "param1": "default_value",
+                    # param2 and param3 are missing
+                }
+            },
+        }
+        errors = validator.validate_required_parameter_defaults(data, "listing_v1")
+        assert len(errors) == 1
+        assert "param2" in errors[0]
+        assert "param3" in errors[0]
+        assert "missing default values" in errors[0]
+
+    def test_non_listing_schema_skipped(self, schema_dir, example_data_dir):
+        """Test validation is skipped for non-listing_v1 schemas."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        # This data would fail if validated, but should be skipped for offering_v1
+        data = {
+            "schema": "offering_v1",
+            "user_parameters_schema": {
+                "type": "object",
+                "required": ["param1"],
+            },
+        }
+        errors = validator.validate_required_parameter_defaults(data, "offering_v1")
+        assert len(errors) == 0
+
+
+class TestApiKeySecretsValidation:
+    """Tests for validate_api_key_secrets method."""
+
+    def test_valid_secrets_format_with_spaces(self, schema_dir, example_data_dir):
+        """Test that api_key with spaces in secrets format is valid."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"upstream_access_config": {"API": {"api_key": "${ secrets.MY_API_KEY }"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 0
+
+    def test_valid_secrets_format_without_spaces(self, schema_dir, example_data_dir):
+        """Test that api_key without spaces in secrets format is valid."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"upstream_access_config": {"API": {"api_key": "${secrets.MY_API_KEY}"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 0
+
+    def test_valid_secrets_format_with_underscore_prefix(self, schema_dir, example_data_dir):
+        """Test that api_key with underscore prefix is valid."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"upstream_access_config": {"API": {"api_key": "${ secrets._PRIVATE_KEY }"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 0
+
+    def test_valid_secrets_format_with_numbers(self, schema_dir, example_data_dir):
+        """Test that api_key with numbers in name is valid."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"upstream_access_config": {"API": {"api_key": "${ secrets.API_KEY_V2 }"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 0
+
+    def test_invalid_plain_text_api_key(self, schema_dir, example_data_dir):
+        """Test that plain text api_key is invalid."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"upstream_access_config": {"API": {"api_key": "sk-abc123xyz"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 1
+        assert "secrets reference format" in errors[0]
+        assert "upstream_access_config.API.api_key" in errors[0]
+
+    def test_invalid_placeholder_api_key(self, schema_dir, example_data_dir):
+        """Test that placeholder api_key is invalid."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"upstream_access_config": {"API": {"api_key": "your_api_key_here"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 1
+        assert "secrets reference format" in errors[0]
+
+    def test_invalid_secrets_format_missing_secrets(self, schema_dir, example_data_dir):
+        """Test that missing 'secrets.' prefix is invalid."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"upstream_access_config": {"API": {"api_key": "${ MY_API_KEY }"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 1
+        assert "secrets reference format" in errors[0]
+
+    def test_invalid_secrets_format_wrong_braces(self, schema_dir, example_data_dir):
+        """Test that wrong brace format is invalid."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"upstream_access_config": {"API": {"api_key": "{{ secrets.MY_API_KEY }}"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 1
+        assert "secrets reference format" in errors[0]
+
+    def test_invalid_secrets_starting_with_number(self, schema_dir, example_data_dir):
+        """Test that secret name starting with number is invalid."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"upstream_access_config": {"API": {"api_key": "${ secrets.123_KEY }"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 1
+        assert "secrets reference format" in errors[0]
+
+    def test_null_api_key_is_valid(self, schema_dir, example_data_dir):
+        """Test that null/None api_key is valid (optional field)."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"upstream_access_config": {"API": {"api_key": None}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 0
+
+    def test_missing_api_key_is_valid(self, schema_dir, example_data_dir):
+        """Test that missing api_key field is valid (optional field)."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"upstream_access_config": {"API": {"base_url": "https://api.example.com"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 0
+
+    def test_service_options_ops_testing_parameters_api_key(self, schema_dir, example_data_dir):
+        """Test that api_key in service_options.ops_testing_parameters is validated."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"service_options": {"ops_testing_parameters": {"api_key": "plain_text_key"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 1
+        assert "service_options.ops_testing_parameters.api_key" in errors[0]
+
+    def test_service_options_ops_testing_parameters_api_key_valid(self, schema_dir, example_data_dir):
+        """Test that valid api_key in service_options.ops_testing_parameters passes."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"service_options": {"ops_testing_parameters": {"api_key": "${ secrets.USER_API_KEY }"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 0
+
+    def test_user_access_interfaces_api_key(self, schema_dir, example_data_dir):
+        """Test that api_key in user_access_interfaces is validated."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {"user_access_interfaces": {"User API": {"api_key": "invalid_key"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 1
+        assert "user_access_interfaces.User API.api_key" in errors[0]
+
+    def test_multiple_invalid_api_keys(self, schema_dir, example_data_dir):
+        """Test that multiple invalid api_keys are all reported."""
+        validator = DataValidator(example_data_dir, schema_dir)
+
+        data = {
+            "upstream_access_config": {"API1": {"api_key": "invalid1"}, "API2": {"api_key": "invalid2"}},
+            "service_options": {"ops_testing_parameters": {"api_key": "invalid3"}},
+        }
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 3
+
+
+class TestServiceOptionsValidation:
+    """Tests for service_options key and value type validation."""
+
+    def test_valid_options_pass(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {
+                "enrollment_limit": 10,
+                "enrollment_limit_per_customer": 2,
+                "enrollment_limit_per_user": 3,
+                "ops_testing_parameters": {"model": "gpt-4"},
+            },
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert errors == []
+
+    def test_unrecognized_key_produces_error(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"enrollment_limt": 5},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "Unrecognized service_option 'enrollment_limt'" in errors[0]
+        assert "Supported options:" in errors[0]
+
+    def test_wrong_type_enrollment_limit(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"enrollment_limit": "five"},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "must be int, got str" in errors[0]
+
+    def test_wrong_type_ops_testing_parameters(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"ops_testing_parameters": "not a dict"},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "must be dict, got str" in errors[0]
+
+    def test_non_positive_enrollment_limit(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"enrollment_limit": 0},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "must be a positive integer, got 0" in errors[0]
+
+    def test_negative_enrollment_limit(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"enrollment_limit_per_user": -1},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "must be a positive integer, got -1" in errors[0]
+
+    def test_boolean_enrollment_limit_rejected(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"enrollment_limit": True},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "must be int, got bool" in errors[0]
+
+    def test_none_service_options_passes(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {"schema": "listing_v1", "service_options": None}
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert errors == []
+
+    def test_missing_service_options_passes(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {"schema": "listing_v1"}
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert errors == []
+
+    def test_non_listing_schema_skipped(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "offering_v1",
+            "service_options": {"bogus_key": 123},
+        }
+        errors = validator.validate_service_options_keys(data, "offering_v1")
+        assert errors == []
+
+    def test_multiple_errors_at_once(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {
+                "enrollment_limt": 5,
+                "enrollment_limit": "bad",
+            },
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 2
+
+    def test_valid_recurrence_options(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {
+                "recurrence_min_interval_seconds": 300,
+                "recurrence_max_interval_seconds": 86400,
+                "recurrence_allow_cron": True,
+            },
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert errors == []
+
+    def test_recurrence_interval_wrong_type_str(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"recurrence_min_interval_seconds": "fast"},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "must be int, got str" in errors[0]
+
+    def test_recurrence_interval_wrong_type(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"recurrence_min_interval_seconds": 5.0},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "must be int, got float" in errors[0]
+
+    def test_recurrence_interval_zero(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"recurrence_min_interval_seconds": 0},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "must be >= 1" in errors[0]
+
+    def test_recurrence_min_exceeds_max(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {
+                "recurrence_min_interval_seconds": 1000,
+                "recurrence_max_interval_seconds": 500,
+            },
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "must be <= recurrence_max_interval_seconds" in errors[0]
+
+    def test_recurrence_interval_bool_rejected(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"recurrence_min_interval_seconds": True},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "must be int, got bool" in errors[0]
+
+    def test_valid_env_option(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {
+                "enrollment_vars": {"user_id": "{{ enrollment_code(6) }}"},
+            },
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert errors == []
+
+    def test_enrollment_vars_empty_dict_valid(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"enrollment_vars": {}},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert errors == []
+
+    def test_enrollment_vars_wrong_type(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"enrollment_vars": "not a dict"},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "must be dict, got str" in errors[0]
+
+    def test_enrollment_vars_value_must_be_string(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"enrollment_vars": {"count": 42}},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "service_options.enrollment_vars.count must be str" in errors[0]
+
+    def test_enrollment_vars_with_other_options(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {
+                "enrollment_vars": {"topic": "{{ enrollment_code() }}"},
+                "enrollment_limit_per_customer": 5,
+            },
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert errors == []
+

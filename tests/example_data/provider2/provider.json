@@ -1,0 +1,16 @@
+{
+  "contact_email": "support@openai.com",
+  "homepage": "https://openai.com/",
+  "name": "provider2",
+  "schema": "provider_v1",
+  "secondary_contact_email": "enterprise@openai.com",
+  "services_populator": {
+    "command": "scripts/update_openai_services.py --force",
+    "envs": {
+      "UNITYSVC_API_KEY": "sk_example_key",
+      "UNITYSVC_BASE_URL": "https://api.openai.com/v1"
+    }
+  },
+  "terms_of_service": "https://openai.com/policies/terms-of-use",
+  "time_created": "2024-03-15T10:30:00.000Z"
+}

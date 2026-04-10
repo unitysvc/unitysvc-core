@@ -1,0 +1,379 @@
+{
+  "$defs": {
+    "DocumentCategoryEnum": {
+      "enum": [
+        "getting_started",
+        "api_reference",
+        "tutorial",
+        "code_example",
+        "code_example_output",
+        "connectivity_test",
+        "request_template",
+        "use_case",
+        "troubleshooting",
+        "changelog",
+        "best_practice",
+        "specification",
+        "service_level_agreement",
+        "terms_of_service",
+        "statement",
+        "invoice",
+        "logo",
+        "avatar",
+        "blog_content",
+        "blog_banner",
+        "attachment",
+        "other"
+      ],
+      "title": "DocumentCategoryEnum",
+      "type": "string"
+    },
+    "DocumentData": {
+      "additionalProperties": false,
+      "description": "Document data for SDK/API payloads.\n\nNote: The document title is NOT stored here - it's the key in the documents dict.\nWhen stored in the database, the backend extracts the key as the title field.",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/DocumentCategoryEnum",
+          "description": "Document category for organization and filtering"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Document description",
+          "title": "Description"
+        },
+        "external_url": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "External URL for the document (mutually exclusive with object_key)",
+          "title": "External Url"
+        },
+        "file_path": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Path to file to upload (mutually exclusive with external_url)",
+          "title": "File Path"
+        },
+        "is_active": {
+          "default": true,
+          "description": "Whether document is active",
+          "title": "Is Active",
+          "type": "boolean"
+        },
+        "is_public": {
+          "default": false,
+          "description": "Whether document is publicly accessible without authentication",
+          "title": "Is Public",
+          "type": "boolean"
+        },
+        "meta": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JSON containing operation stats",
+          "title": "Meta"
+        },
+        "mime_type": {
+          "$ref": "#/$defs/MimeTypeEnum",
+          "description": "Document MIME type"
+        },
+        "sort_order": {
+          "default": 0,
+          "description": "Sort order within category",
+          "title": "Sort Order",
+          "type": "integer"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "maxLength": 50,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Document version",
+          "title": "Version"
+        }
+      },
+      "required": [
+        "mime_type",
+        "category"
+      ],
+      "title": "DocumentData",
+      "type": "object"
+    },
+    "MimeTypeEnum": {
+      "enum": [
+        "markdown",
+        "python",
+        "javascript",
+        "bash",
+        "html",
+        "json",
+        "text",
+        "pdf",
+        "jpeg",
+        "png",
+        "svg",
+        "url"
+      ],
+      "title": "MimeTypeEnum",
+      "type": "string"
+    },
+    "ProviderStatusEnum": {
+      "description": "Status values that sellers can set for providers.\n\nSeller-accessible statuses:\n- draft: Work in progress, skipped during publish\n- ready: Complete and ready for admin review\n- deprecated: Provider is retired/end of life",
+      "enum": [
+        "draft",
+        "ready",
+        "deprecated"
+      ],
+      "title": "ProviderStatusEnum",
+      "type": "string"
+    },
+    "ServicesPopulator": {
+      "additionalProperties": false,
+      "description": "Configuration for automatically populating service data.",
+      "properties": {
+        "command": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Command to execute for populating services (string or list of arguments). Comment out to disable.",
+          "title": "Command"
+        },
+        "envs": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Environment variables to set when executing the command (values converted to strings)",
+          "title": "Envs"
+        },
+        "requirements": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Python packages to install before executing the command (e.g., ['any-llm-sdk[anthropic]'])",
+          "title": "Requirements"
+        }
+      },
+      "title": "ServicesPopulator",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Provider information for service providers (provider_v1 schema).\n\nExtends ProviderData with:\n- schema_version: Schema identifier for file validation\n- time_created: Timestamp for file creation\n- services_populator: How to automatically populate service data (with envs)\n- logo, terms_of_service: Convenience fields (converted to documents during import)\n- Typed Document model instead of dict for file validation\n- Field validators for name format",
+  "properties": {
+    "contact_email": {
+      "description": "Primary contact email for the provider",
+      "format": "email",
+      "title": "Contact Email",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Brief description of the provider",
+      "title": "Description"
+    },
+    "display_name": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Human-readable provider name (e.g., 'Fireworks AI', 'Anthropic')",
+      "title": "Display Name"
+    },
+    "documents": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/DocumentData"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Documents associated with the provider, keyed by title (e.g. logo)",
+      "title": "Documents"
+    },
+    "homepage": {
+      "description": "Provider's homepage URL",
+      "format": "uri",
+      "maxLength": 2083,
+      "minLength": 1,
+      "title": "Homepage",
+      "type": "string"
+    },
+    "logo": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Logo"
+    },
+    "name": {
+      "description": "Unique provider identifier (URL-friendly, e.g., 'fireworks', 'anthropic')",
+      "maxLength": 100,
+      "minLength": 2,
+      "title": "Name",
+      "type": "string"
+    },
+    "schema": {
+      "default": "provider_v1",
+      "description": "Schema identifier",
+      "title": "Schema",
+      "type": "string"
+    },
+    "secondary_contact_email": {
+      "anyOf": [
+        {
+          "format": "email",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Secondary contact email",
+      "title": "Secondary Contact Email"
+    },
+    "services_populator": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ServicesPopulator"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "status": {
+      "$ref": "#/$defs/ProviderStatusEnum",
+      "default": "draft",
+      "description": "Provider status: draft (skip publish), ready (for review), or deprecated (retired)"
+    },
+    "terms_of_service": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Either a path to a .md file or a URL to terms of service",
+      "title": "Terms Of Service"
+    },
+    "time_created": {
+      "format": "date-time",
+      "title": "Time Created",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "contact_email",
+    "homepage",
+    "time_created"
+  ],
+  "title": "ProviderV1",
+  "type": "object"
+}

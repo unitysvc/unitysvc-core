@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "PriceRuleApplyAtEnum": {
+      "description": "When the price rule is applied.",
+      "enum": [
+        "request",
+        "statement"
+      ],
+      "title": "PriceRuleApplyAtEnum",
+      "type": "string"
+    },
+    "PriceRuleStatusEnum": {
+      "description": "Seller-facing status values for promotions.\n\nThe backend may define additional statuses (scheduled, expired,\ncancelled) for internal lifecycle management, but sellers only\ninteract with these three.",
+      "enum": [
+        "draft",
+        "active",
+        "paused"
+      ],
+      "title": "PriceRuleStatusEnum",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Promotion model for file-based definitions (promotion_v1 schema).\n\nExtends PromotionData with:\n- schema_version: Schema identifier for file validation\n- extra=\"forbid\" to catch typos in promotion files\n\nThis model is used for validating promotion TOML/JSON files\ncreated by the CLI tool.\n\nNote: pricing stays as dict[str, Any] because promotion pricing\n(e.g., {\"type\": \"multiply\", \"factor\": \"0.80\"}) uses a simplified\nformat without a base field — the base is implicit (existing price).",
+  "properties": {
+    "apply_at": {
+      "$ref": "#/$defs/PriceRuleApplyAtEnum",
+      "default": "request",
+      "description": "When to apply: 'request' or 'statement'"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Human-readable description",
+      "title": "Description"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "When the promotion expires (code-based only)",
+      "title": "Expires At"
+    },
+    "max_uses": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Maximum total redemptions (code-based only)",
+      "title": "Max Uses"
+    },
+    "name": {
+      "description": "Display name of the promotion (unique per seller)",
+      "maxLength": 100,
+      "title": "Name",
+      "type": "string"
+    },
+    "pricing": {
+      "additionalProperties": true,
+      "description": "Pricing specification (e.g., multiply, constant, add)",
+      "title": "Pricing",
+      "type": "object"
+    },
+    "priority": {
+      "default": 0,
+      "description": "Higher priority rules are applied first",
+      "title": "Priority",
+      "type": "integer"
+    },
+    "schema": {
+      "default": "promotion_v1",
+      "description": "Schema identifier",
+      "title": "Schema",
+      "type": "string"
+    },
+    "scope": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Customer and service targeting. null = all customers, all services (blanket promotion).",
+      "title": "Scope"
+    },
+    "status": {
+      "$ref": "#/$defs/PriceRuleStatusEnum",
+      "default": "draft",
+      "description": "Lifecycle status: draft, active, paused"
+    }
+  },
+  "required": [
+    "name",
+    "pricing"
+  ],
+  "title": "PromotionV1",
+  "type": "object"
+}

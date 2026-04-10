@@ -1,0 +1,796 @@
+{
+  "$defs": {
+    "AddPriceData": {
+      "additionalProperties": false,
+      "description": "Composite pricing that sums multiple price components.\n\nAllows combining different pricing types, e.g., base token cost + fixed fee.\n\nExample:\n    {\n        \"type\": \"add\",\n        \"prices\": [\n            {\"type\": \"one_million_tokens\", \"input\": \"0.50\", \"output\": \"1.50\"},\n            {\"type\": \"constant\", \"amount\": \"-5.00\", \"description\": \"Platform fee\"}\n        ]\n    }",
+      "properties": {
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "add",
+          "default": "add",
+          "title": "Type",
+          "type": "string"
+        },
+        "prices": {
+          "description": "List of pricing components to sum together",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "minItems": 1,
+          "title": "Prices",
+          "type": "array"
+        }
+      },
+      "required": [
+        "prices"
+      ],
+      "title": "AddPriceData",
+      "type": "object"
+    },
+    "ConstantPriceData": {
+      "additionalProperties": false,
+      "description": "Price data for a constant/fixed price.\n\nUsed for fixed fees, discounts, or adjustments that don't depend on usage.\nPrice can be positive (charge) or negative (discount/credit).",
+      "properties": {
+        "price": {
+          "description": "Fixed price (positive for charge, negative for discount)",
+          "title": "Price",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "constant",
+          "default": "constant",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "price"
+      ],
+      "title": "ConstantPriceData",
+      "type": "object"
+    },
+    "ExprPriceData": {
+      "additionalProperties": false,
+      "description": "Expression-based pricing that evaluates an arithmetic expression using usage metrics.\n\n**IMPORTANT: This pricing type should only be used for `payout_price`.**\nIt is NOT suitable for `list_price` because:\n1. List pricing should be predictable and transparent\n2. Expression-based pricing can lead to confusing or unexpected charges\n3. Customers should be able to easily calculate their costs before using a service\n\nFor payout pricing, expressions are useful when the cost from an upstream provider\ninvolves complex calculations that can't be expressed with basic pricing types.\n\nThe expression can use any available metrics and arithmetic operators (+, -, *, /).\n\nAvailable metrics:\n- input_tokens, output_tokens, total_tokens (token counts)\n- seconds (time-based usage)\n- count (images, steps, etc.)\n- request_count (number of API requests)\n- customer_charge (what the customer paid, for revenue share calculations)\n\nExample:\n    {\n        \"type\": \"expr\",\n        \"expr\": \"input_tokens / 1000000 * 0.50 + output_tokens / 1000000 * 1.50\"\n    }",
+      "properties": {
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "expr",
+          "default": "expr",
+          "title": "Type",
+          "type": "string"
+        },
+        "expr": {
+          "description": "Arithmetic expression using usage metrics (e.g., 'input_tokens / 1000000 * 2.5')",
+          "title": "Expr",
+          "type": "string"
+        }
+      },
+      "required": [
+        "expr"
+      ],
+      "title": "ExprPriceData",
+      "type": "object"
+    },
+    "GraduatedPriceData": {
+      "additionalProperties": false,
+      "description": "Graduated tiered pricing where each tier's units are priced at that tier's rate.\n\nLike AWS pricing - first N units at price A, next M units at price B, etc.\n`based_on` can be 'request_count', 'customer_charge', or any UsageData field.\n\nExample (graduated pricing - different rates per tier):\n    {\n        \"type\": \"graduated\",\n        \"based_on\": \"request_count\",\n        \"tiers\": [\n            {\"up_to\": 1000, \"unit_price\": \"0.01\"},\n            {\"up_to\": 10000, \"unit_price\": \"0.008\"},\n            {\"up_to\": null, \"unit_price\": \"0.005\"}\n        ]\n    }\nIf request_count is 5000:\n    - First 1000 at $0.01 = $10.00\n    - Next 4000 at $0.008 = $32.00\n    - Total = $42.00",
+      "properties": {
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "graduated",
+          "default": "graduated",
+          "title": "Type",
+          "type": "string"
+        },
+        "based_on": {
+          "description": "Metric for graduated calc: 'request_count', 'customer_charge', or UsageData field",
+          "title": "Based On",
+          "type": "string"
+        },
+        "tiers": {
+          "description": "List of tiers, ordered by up_to (ascending). Last tier should have up_to=null.",
+          "items": {
+            "$ref": "#/$defs/GraduatedTier"
+          },
+          "minItems": 1,
+          "title": "Tiers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "based_on",
+        "tiers"
+      ],
+      "title": "GraduatedPriceData",
+      "type": "object"
+    },
+    "GraduatedTier": {
+      "additionalProperties": false,
+      "description": "A single tier in graduated pricing with per-unit price.",
+      "properties": {
+        "up_to": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Upper limit for this tier (None for unlimited)",
+          "title": "Up To"
+        },
+        "unit_price": {
+          "description": "Price per unit in this tier",
+          "title": "Unit Price",
+          "type": "string"
+        }
+      },
+      "required": [
+        "up_to",
+        "unit_price"
+      ],
+      "title": "GraduatedTier",
+      "type": "object"
+    },
+    "ImagePriceData": {
+      "additionalProperties": false,
+      "description": "Price data for per-image pricing (image generation, processing).\n\nPrice values use Decimal for precision. In JSON/TOML, specify as strings\n(e.g., \"0.04\") to avoid floating-point precision issues.",
+      "properties": {
+        "price": {
+          "description": "Price per image",
+          "title": "Price",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "image",
+          "default": "image",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "price"
+      ],
+      "title": "ImagePriceData",
+      "type": "object"
+    },
+    "MultiplyPriceData": {
+      "additionalProperties": false,
+      "description": "Composite pricing that multiplies a base price by a factor.\n\nUseful for applying percentage-based adjustments to a base price.\n\nExample:\n    {\n        \"type\": \"multiply\",\n        \"factor\": \"0.70\",\n        \"base\": {\"type\": \"one_million_tokens\", \"input\": \"0.50\", \"output\": \"1.50\"}\n    }",
+      "properties": {
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "multiply",
+          "default": "multiply",
+          "title": "Type",
+          "type": "string"
+        },
+        "factor": {
+          "description": "Multiplication factor (e.g., '0.70' for 70%)",
+          "title": "Factor",
+          "type": "string"
+        },
+        "base": {
+          "additionalProperties": true,
+          "description": "Base pricing to multiply",
+          "title": "Base",
+          "type": "object"
+        }
+      },
+      "required": [
+        "factor",
+        "base"
+      ],
+      "title": "MultiplyPriceData",
+      "type": "object"
+    },
+    "PriceTier": {
+      "additionalProperties": false,
+      "description": "A single tier in tiered pricing.",
+      "properties": {
+        "up_to": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Upper limit for this tier (None for unlimited)",
+          "title": "Up To"
+        },
+        "price": {
+          "additionalProperties": true,
+          "description": "Price configuration for this tier",
+          "title": "Price",
+          "type": "object"
+        }
+      },
+      "required": [
+        "up_to",
+        "price"
+      ],
+      "title": "PriceTier",
+      "type": "object"
+    },
+    "RevenueSharePriceData": {
+      "additionalProperties": false,
+      "description": "Price data for revenue share pricing (payout_price only).\n\nThis pricing type is used exclusively for payout_price when the seller\nreceives a percentage of what the customer pays. It cannot be used for\nlist_price since the list price must be a concrete amount.\n\nThe percentage represents the seller's share of the customer charge.\nFor example, if percentage is \"70\" and the customer pays $10, the seller\nreceives $7.\n\nPercentage values must be strings (e.g., \"70.00\") to avoid floating-point\nprecision issues.",
+      "properties": {
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "revenue_share",
+          "default": "revenue_share",
+          "title": "Type",
+          "type": "string"
+        },
+        "percentage": {
+          "description": "Percentage of customer charge that goes to the seller (0-100)",
+          "title": "Percentage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "percentage"
+      ],
+      "title": "RevenueSharePriceData",
+      "type": "object"
+    },
+    "StepPriceData": {
+      "additionalProperties": false,
+      "description": "Price data for per-step pricing (diffusion steps, iterations).\n\nPrice values use Decimal for precision. In JSON/TOML, specify as strings\n(e.g., \"0.001\") to avoid floating-point precision issues.",
+      "properties": {
+        "price": {
+          "description": "Price per step/iteration",
+          "title": "Price",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "step",
+          "default": "step",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "price"
+      ],
+      "title": "StepPriceData",
+      "type": "object"
+    },
+    "TieredPriceData": {
+      "additionalProperties": false,
+      "description": "Volume-based tiered pricing where the tier determines price for ALL units.\n\nThe tier is determined by the `based_on` metric, and ALL units are priced\nat that tier's rate. `based_on` can be 'request_count', 'customer_charge',\nor any field from UsageData (e.g., 'input_tokens', 'seconds', 'count').\n\nExample (volume pricing - all units at same rate):\n    {\n        \"type\": \"tiered\",\n        \"based_on\": \"request_count\",\n        \"tiers\": [\n            {\"up_to\": 1000, \"price\": {\"type\": \"constant\", \"amount\": \"10.00\"}},\n            {\"up_to\": 10000, \"price\": {\"type\": \"constant\", \"amount\": \"80.00\"}},\n            {\"up_to\": null, \"price\": {\"type\": \"constant\", \"amount\": \"500.00\"}}\n        ]\n    }\nIf request_count is 5000, the price is $80.00 (falls in 1001-10000 tier).",
+      "properties": {
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "tiered",
+          "default": "tiered",
+          "title": "Type",
+          "type": "string"
+        },
+        "based_on": {
+          "description": "Metric for tier selection: 'request_count', 'customer_charge', or UsageData field",
+          "title": "Based On",
+          "type": "string"
+        },
+        "tiers": {
+          "description": "List of tiers, ordered by up_to (ascending). Last tier should have up_to=null.",
+          "items": {
+            "$ref": "#/$defs/PriceTier"
+          },
+          "minItems": 1,
+          "title": "Tiers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "based_on",
+        "tiers"
+      ],
+      "title": "TieredPriceData",
+      "type": "object"
+    },
+    "TimePriceData": {
+      "additionalProperties": false,
+      "description": "Price data for time-based pricing (audio/video processing, compute time).\n\nPrice values use Decimal for precision. In JSON/TOML, specify as strings\n(e.g., \"0.006\") to avoid floating-point precision issues.",
+      "properties": {
+        "price": {
+          "description": "Price per second of usage",
+          "title": "Price",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "one_second",
+          "default": "one_second",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "price"
+      ],
+      "title": "TimePriceData",
+      "type": "object"
+    },
+    "TokenPriceData": {
+      "additionalProperties": false,
+      "description": "Price data for token-based pricing (LLMs).\n\nSupports two modes:\n1. **Unified pricing**: Set ``price`` only \u2014 same rate for all token types.\n2. **Separate pricing**: Set ``input`` and ``output`` (and optionally ``cached_input``)\n   for different rates per token type.\n\nIn separate pricing mode, ``price`` serves as a **summary price for marketplace\ncomparison**. If not explicitly set by the seller, the backend calculates it\nduring service ingestion using: ``price = (input + 4*output) / 5``.\n\nPrice values use Decimal for precision. In JSON/TOML, specify as strings\n(e.g., \"0.50\") to avoid floating-point precision issues.",
+      "properties": {
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price per million tokens for marketplace comparison. For unified pricing, this is the billing rate. For separate input/output pricing, this is a representative price for sorting/filtering.",
+          "title": "Price"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "one_million_tokens",
+          "default": "one_million_tokens",
+          "title": "Type",
+          "type": "string"
+        },
+        "input": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Price per million input tokens",
+          "title": "Input"
+        },
+        "cached_input": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Price per million cached input tokens (optional, for discounted cached rates)",
+          "title": "Cached Input"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Price per million output tokens",
+          "title": "Output"
+        }
+      },
+      "title": "TokenPriceData",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "add": "#/$defs/AddPriceData",
+      "constant": "#/$defs/ConstantPriceData",
+      "expr": "#/$defs/ExprPriceData",
+      "graduated": "#/$defs/GraduatedPriceData",
+      "image": "#/$defs/ImagePriceData",
+      "multiply": "#/$defs/MultiplyPriceData",
+      "one_million_tokens": "#/$defs/TokenPriceData",
+      "one_second": "#/$defs/TimePriceData",
+      "revenue_share": "#/$defs/RevenueSharePriceData",
+      "step": "#/$defs/StepPriceData",
+      "tiered": "#/$defs/TieredPriceData"
+    },
+    "propertyName": "type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/TokenPriceData"
+    },
+    {
+      "$ref": "#/$defs/TimePriceData"
+    },
+    {
+      "$ref": "#/$defs/ImagePriceData"
+    },
+    {
+      "$ref": "#/$defs/StepPriceData"
+    },
+    {
+      "$ref": "#/$defs/RevenueSharePriceData"
+    },
+    {
+      "$ref": "#/$defs/ConstantPriceData"
+    },
+    {
+      "$ref": "#/$defs/AddPriceData"
+    },
+    {
+      "$ref": "#/$defs/MultiplyPriceData"
+    },
+    {
+      "$ref": "#/$defs/TieredPriceData"
+    },
+    {
+      "$ref": "#/$defs/GraduatedPriceData"
+    },
+    {
+      "$ref": "#/$defs/ExprPriceData"
+    }
+  ]
+}

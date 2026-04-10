@@ -1,0 +1,30 @@
+schema = "listing_v1"
+status = "ready"
+display_name = "Service 1 Listing"
+time_created = "2024-02-29T05:52:38.739683Z"
+currency = "USD"
+
+[user_access_interfaces."Provider API"]
+access_method = "http"
+base_url = "${API_GATEWAY_BASE_URL}/p/example-provider1"
+
+[documents."Python Code Example"]
+description = "Example code to use the model"
+mime_type = "python"
+category = "code_example"
+file_path = "code-example.md"
+is_active = true
+is_public = true
+
+[documents."Connectivity Test"]
+description = "Connectivity test script"
+mime_type = "bash"
+category = "connectivity_test"
+file_path = "connectivity.sh"
+is_active = true
+is_public = false
+
+[list_price]
+type = "one_million_tokens"
+price = "0.2"
+description = "Pricing Per 1M Tokens"

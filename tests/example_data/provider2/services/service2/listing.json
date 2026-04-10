@@ -1,0 +1,37 @@
+{
+  "status": "ready",
+  "schema": "listing_v1",
+  "display_name": "Service 2 Listing",
+  "time_created": "2024-02-29T05:52:38.739683Z",
+  "user_access_interfaces": {
+    "Provider API": {
+      "access_method": "http",
+      "base_url": "${API_GATEWAY_BASE_URL}/p/example-provider2",
+      "api_key": null
+    }
+  },
+  "documents": {
+    "Python Code Example": {
+      "category": "code_example",
+      "description": "Example code to use the model",
+      "file_path": "code-example.md",
+      "is_active": true,
+      "is_public": true,
+      "mime_type": "python"
+    },
+    "Connectivity Test": {
+      "category": "connectivity_test",
+      "description": "Connectivity test script",
+      "file_path": "connectivity.sh",
+      "is_active": true,
+      "is_public": false,
+      "mime_type": "bash"
+    }
+  },
+  "currency": "USD",
+  "list_price": {
+    "type": "one_million_tokens",
+    "price": "0.15",
+    "description": "Pricing Per 1M Tokens"
+  }
+}

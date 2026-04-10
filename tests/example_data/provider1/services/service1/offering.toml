@@ -1,0 +1,86 @@
+schema = "offering_v1"
+time_created = "2024-02-29T05:52:38.739683Z"
+name = "service1"
+service_type = "llm"
+description = "(chronos-13b-v2 + Nous-Hermes-Llama2-13b) 75/25 merge. This offers the imaginative writing style of chronos while still retaining coherency and being capable. Outputs are long and utilize exceptional prose."
+status = "ready"
+currency = "USD"
+
+[details]
+calibrated = false
+checkpointFormat = "HUGGINGFACE"
+cluster = ""
+contextLength = 4096
+defaultDraftModel = ""
+defaultDraftTokenCount = 0
+defaultPrecision = "FP16"
+fineTuningJob = ""
+githubUrl = ""
+huggingFaceUrl = "https://huggingface.co/Austism/chronos-hermes-13b-v2"
+importedFrom = ""
+kind = "HF_BASE_MODEL"
+modelType = "llama"
+moe = false
+parameterCount = "13016192000"
+rlTunable = false
+supportsFireattention = true
+supportsImageInput = false
+supportsLora = true
+supportsMtp = false
+supportsTools = false
+# teftDetails = null  # commented out as TOML doesn't handle null well
+trainingContextLength = 131072
+tunable = false
+useHfApplyChatTemplate = false
+worldSize = 1
+supportedPrecisions = ["FP16"]
+supportedPrecisionsWithCalibration = [
+    "FP8_MM",
+    "FP8",
+    "FP8_AR",
+    "FP8_MM_KV_ATTN",
+    "FP8_KV",
+    "FP8_MM_V2",
+    "FP8_V2",
+    "FP8_MM_KV_ATTN_V2",
+]
+deployedModelRefs = []
+
+[details.conversationConfig]
+style = "alpaca"
+system = ""
+template = ""
+
+[details.defaultSamplingParams]
+temperature = 0.9
+top_k = 50
+top_p = 0.6
+
+[details.peftDetails]
+baseModel = ""
+baseModelType = ""
+mergeAddonModelName = ""
+r = 0
+targetModules = []
+
+[details.status]
+code = "OK"
+message = ""
+
+[upstream_access_config."Fireworks API"]
+access_method = "http"
+base_url = "https://api.fireworks.ai/inference/v1"
+api_key = "${ secrets.FIREWORKS_API_KEY }"
+
+[documents."Python Code Example"]
+description = "Example code to use the model"
+mime_type = "python"
+category = "code_example"
+file_path = "code-example.md"
+is_active = true
+is_public = true
+
+[payout_price]
+type = "one_million_tokens"
+price = "0.2"
+description = "Pricing Per 1M Tokens"

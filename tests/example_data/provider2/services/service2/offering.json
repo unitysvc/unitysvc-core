@@ -1,0 +1,44 @@
+{
+  "description": "State-of-the-art image generation model with exceptional quality and prompt adherence. Capable of producing photorealistic images, artwork, and creative visuals.",
+  "details": {
+    "contextLength": 512,
+    "defaultPrecision": "FP16",
+    "defaultSamplingSteps": 25,
+    "guidanceScale": 7.5,
+    "maxResolution": "2048x2048",
+    "modelType": "diffusion",
+    "parameterCount": "12000000000",
+    "supportedFormats": ["PNG", "JPEG", "WEBP"],
+    "supportedSchedulers": ["DDIM", "DDPM", "DPMSolverMultistep"],
+    "supportsImageInput": false,
+    "supportsTools": false
+  },
+  "name": "service2",
+  "schema": "offering_v1",
+  "service_type": "image_generation",
+  "time_created": "2024-03-15T10:30:00.000Z",
+  "upstream_access_config": {
+    "Fireworks Image API": {
+      "access_method": "http",
+      "base_url": "https://api.fireworks.ai/inference/v1/image/generation",
+      "api_key": "${ secrets.FIREWORKS_API_KEY }"
+    }
+  },
+  "documents": {
+    "Python Code Example": {
+      "category": "code_example",
+      "description": "Example code to use the model",
+      "file_path": "code-example.md",
+      "is_active": true,
+      "is_public": true,
+      "mime_type": "python"
+    }
+  },
+  "currency": "USD",
+  "payout_price": {
+    "type": "image",
+    "price": "0.04",
+    "description": "Pricing Per Image"
+  },
+  "status": "ready"
+}

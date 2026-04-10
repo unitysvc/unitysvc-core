@@ -1,0 +1,14 @@
+schema = "provider_v1"
+time_created = "2025-08-17T10:55:04.976433Z"
+name = "provider1"
+terms_of_service = "https://fireworks.ai/terms-of-service"
+contact_email = "support@fireworks.ai"
+homepage = "https://fireworks.ai/"
+secondary_contact_email = "inquiries@fireworks.ai"
+
+[services_populator]
+command = "scripts/update_fireworks_services.py --force"
+
+[services_populator.envs]
+UNITYSVC_API_KEY = "sk_example_key"
+SERVICE_BASE_URL = "https://api.fireworks.ai/inference/v1"
