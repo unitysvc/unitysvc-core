@@ -246,6 +246,12 @@ class ServiceTypeEnum(StrEnum):
     # === Compute services ===
     compute = "compute"  # GPU instances, dev environments (SSH/WireGuard)
 
+    # === Proxy services ===
+    # Protocol-level passthrough to a customer-owned upstream. Platform relays
+    # or proxies requests without interpreting their content (e.g. http-relay,
+    # smtp-relay, s3-relay, s3-proxy-multi).
+    proxy = "proxy"
+
     # === Infrastructure services ===
     database = "database"  # Managed DB/cache access (SSH tunnel)
     monitoring = "monitoring"  # Uptime checks, health monitoring
