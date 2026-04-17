@@ -1435,6 +1435,7 @@
         "content",
         "streaming",
         "compute",
+        "proxy",
         "database",
         "monitoring",
         "analytics"
