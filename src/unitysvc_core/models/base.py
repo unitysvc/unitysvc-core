@@ -258,6 +258,19 @@ class ServiceTypeEnum(StrEnum):
     analytics = "analytics"  # Recommendation, anomaly detection, forecasting
 
 
+class ServiceVisibilityEnum(StrEnum):
+    """Visibility of a service in the catalog.
+
+    - unlisted: Live and routable, not in catalog, accessible via direct link
+    - public: In catalog, fully discoverable
+    - private: Live and routable, ops/internal use only
+    """
+
+    unlisted = "unlisted"
+    public = "public"
+    private = "private"
+
+
 class TimeWindowEnum(StrEnum):
     second = "second"
     minute = "minute"

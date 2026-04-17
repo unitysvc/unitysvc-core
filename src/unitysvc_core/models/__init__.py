@@ -19,6 +19,7 @@ from .base import (
     SellerTypeEnum,
     ServiceGroupStatusEnum,
     ServiceTypeEnum,
+    ServiceVisibilityEnum,
     TimeWindowEnum,
     UpstreamStatusEnum,  # Backwards compatibility alias for OfferingStatusEnum
 )
@@ -124,6 +125,7 @@ __all__ = [
     "SellerTypeEnum",
     "ServiceGroupStatusEnum",
     "ServiceTypeEnum",
+    "ServiceVisibilityEnum",
     "TimeWindowEnum",
     "UpstreamStatusEnum",  # Backwards compatibility alias for OfferingStatusEnum
     # Pricing — primitives
