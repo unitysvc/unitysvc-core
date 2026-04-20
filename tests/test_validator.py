@@ -703,3 +703,196 @@ class TestServiceOptionsValidation:
         errors = validator.validate_service_options_keys(data, "listing_v1")
         assert errors == []
 
+
+class TestSecretReferencesValidation:
+    """Tests for validate_secret_references.
+
+    Each test writes a small offering + (optional) listing pair into a
+    tmp_path and invokes the validator against the offering. The
+    validator locates the sibling listing itself.
+    """
+
+    def _write_pair(
+        self,
+        tmp_path: Path,
+        offering: dict,
+        listing: dict | None,
+    ) -> Path:
+        import json
+
+        svc_dir = tmp_path / "services" / "demo"
+        svc_dir.mkdir(parents=True, exist_ok=True)
+        offering_path = svc_dir / "offering.json"
+        offering_path.write_text(json.dumps({"schema": "offering_v1", **offering}))
+        if listing is not None:
+            (svc_dir / "listing.json").write_text(
+                json.dumps({"schema": "listing_v1", **listing})
+            )
+        return offering_path
+
+    def test_literal_identifier_is_ok(self, schema_dir, example_data_dir, tmp_path):
+        validator = DataValidator(example_data_dir, schema_dir)
+        offering_path = self._write_pair(
+            tmp_path,
+            offering={
+                "upstream_access_config": {
+                    "API": {"api_key": "${ customer_secrets.ECHO_API_KEY }"}
+                }
+            },
+            listing={"service_options": {}},
+        )
+        import json
+
+        data = json.loads(offering_path.read_text())
+        errors = validator.validate_secret_references(data, "offering_v1", offering_path)
+        assert errors == []
+
+    def test_jinja_params_expansion_is_ok(self, schema_dir, example_data_dir, tmp_path):
+        """`{{ params.KEY }}` that resolves to an identifier is accepted."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        offering_path = self._write_pair(
+            tmp_path,
+            offering={
+                "upstream_access_config": {
+                    "S3": {
+                        "access_key": "${ customer_secrets.{{ params.s3_access_key_secret }} }"
+                    }
+                }
+            },
+            listing={
+                "service_options": {
+                    "ops_testing_parameters": {
+                        "s3_access_key_secret": "SVCMARKET_S3_ACCESS_KEY_ID"
+                    }
+                }
+            },
+        )
+        import json
+
+        data = json.loads(offering_path.read_text())
+        errors = validator.validate_secret_references(data, "offering_v1", offering_path)
+        assert errors == []
+
+    def test_jinja_routing_vars_and_enrollment_vars(self, schema_dir, example_data_dir, tmp_path):
+        """`routing_vars` and `enrollment_vars` namespaces are also accepted."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        offering_path = self._write_pair(
+            tmp_path,
+            offering={
+                "upstream_access_config": {
+                    "A": {"api_key": "${ secrets.{{ routing_vars.region }}_KEY }"},
+                    "B": {"api_key": "${ secrets.{{ enrollment_vars.env }}_KEY }"},
+                }
+            },
+            listing={
+                "service_options": {
+                    "routing_vars": {"region": "US"},
+                    "enrollment_vars": {"env": "PROD"},
+                }
+            },
+        )
+        import json
+
+        data = json.loads(offering_path.read_text())
+        errors = validator.validate_secret_references(data, "offering_v1", offering_path)
+        assert errors == []
+
+    def test_bracket_lookup_is_rejected(self, schema_dir, example_data_dir, tmp_path):
+        """Bracket syntax like `customer_secrets[params.X]` is not a valid form."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        offering_path = self._write_pair(
+            tmp_path,
+            offering={
+                "upstream_access_config": {
+                    "S3": {
+                        "access_key": (
+                            "${ customer_secrets[enrollment_params.s3_access_key_secret] }"
+                        )
+                    }
+                }
+            },
+            listing={"service_options": {"ops_testing_parameters": {}}},
+        )
+        import json
+
+        data = json.loads(offering_path.read_text())
+        errors = validator.validate_secret_references(data, "offering_v1", offering_path)
+        assert len(errors) == 1
+        assert "upstream_access_config.S3.access_key" in errors[0]
+        assert "not a valid form" in errors[0]
+
+    def test_undefined_jinja_variable_is_rejected(self, schema_dir, example_data_dir, tmp_path):
+        """Referencing `params.MISSING` when ops_testing_parameters has no such key."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        offering_path = self._write_pair(
+            tmp_path,
+            offering={
+                "upstream_access_config": {
+                    "S3": {"access_key": "${ customer_secrets.{{ params.missing_key }} }"}
+                }
+            },
+            listing={
+                "service_options": {"ops_testing_parameters": {"other_key": "VALUE"}}
+            },
+        )
+        import json
+
+        data = json.loads(offering_path.read_text())
+        errors = validator.validate_secret_references(data, "offering_v1", offering_path)
+        assert len(errors) == 1
+        assert "Jinja expansion failed" in errors[0]
+        assert "upstream_access_config.S3.access_key" in errors[0]
+
+    def test_rendered_name_with_hyphen_is_rejected(self, schema_dir, example_data_dir, tmp_path):
+        """Composition that yields an invalid identifier (e.g., hyphen) fails."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        offering_path = self._write_pair(
+            tmp_path,
+            offering={
+                "upstream_access_config": {
+                    "API": {"api_key": "${ customer_secrets.{{ params.a }}-{{ params.b }} }"}
+                }
+            },
+            listing={
+                "service_options": {
+                    "ops_testing_parameters": {"a": "FOO", "b": "BAR"}
+                }
+            },
+        )
+        import json
+
+        data = json.loads(offering_path.read_text())
+        errors = validator.validate_secret_references(data, "offering_v1", offering_path)
+        assert len(errors) == 1
+        assert "FOO-BAR" in errors[0]
+        assert "not a valid form" in errors[0]
+
+    def test_missing_sibling_listing_is_tolerated(self, schema_dir, example_data_dir, tmp_path):
+        """An offering without a sibling listing still validates literal refs."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        # No listing written — only offering.
+        offering_path = self._write_pair(
+            tmp_path,
+            offering={
+                "upstream_access_config": {
+                    "API": {"api_key": "${ secrets.MY_KEY }"}
+                }
+            },
+            listing=None,
+        )
+        import json
+
+        data = json.loads(offering_path.read_text())
+        errors = validator.validate_secret_references(data, "offering_v1", offering_path)
+        assert errors == []
+
+    def test_non_offering_schema_skipped(self, schema_dir, example_data_dir, tmp_path):
+        """`validate_secret_references` is a no-op for non-offering schemas."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        errors = validator.validate_secret_references(
+            {"upstream_access_config": {"X": {"api_key": "${ customer_secrets[bad] }"}}},
+            "listing_v1",
+            tmp_path / "whatever.json",
+        )
+        assert errors == []
+
