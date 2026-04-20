@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from jinja2 import Environment, TemplateSyntaxError
+from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedError
 from jsonschema.validators import Draft7Validator
 
 from .utils import load_data_file
@@ -245,6 +245,134 @@ class DataValidator:
                         check_api_key(item, f"{path}[{i}]")
 
         check_api_key(data)
+        return errors
+
+    # Matches any ${ secrets... } or ${ customer_secrets... } expression —
+    # capturing everything after the namespace so unsupported forms
+    # (bracket lookup, whitespace-only, missing dot) also surface as errors
+    # rather than being silently ignored.
+    _SECRET_REF_RE = re.compile(r"\$\{\s*(secrets|customer_secrets)(.*?)\s*\}")
+    # After the namespace, the only valid tail is `.IDENTIFIER`.
+    _SECRET_TAIL_RE = re.compile(r"^\.([A-Za-z_][A-Za-z0-9_]*)$")
+
+    def _load_sibling_listing(self, offering_file: Path) -> dict[str, Any] | None:
+        """Load the paired ``listing*.json`` from the same directory as the offering.
+
+        Returns ``None`` if no sibling listing exists (e.g., offering-only
+        fixture directories in tests).
+        """
+        for candidate in sorted(offering_file.parent.glob("listing*.json")):
+            data, _ = load_data_file(candidate)
+            if isinstance(data, dict) and data.get("schema") == "listing_v1":
+                return data
+        return None
+
+    def validate_secret_references(
+        self,
+        data: dict[str, Any],
+        schema_name: str,
+        file_path: Path,
+    ) -> list[str]:
+        """Validate that every ``${ secrets.X }`` / ``${ customer_secrets.X }``
+        in an offering's ``upstream_access_config`` resolves to a plain
+        identifier after Jinja expansion.
+
+        Only two forms are valid for the identifier ``X``:
+
+        1. A literal name (letters, digits, underscores only) such as
+           ``${ customer_secrets.ECHO_API_KEY }``.
+        2. A Jinja substitution that references the listing's
+           ``service_options``, rendered with the context
+           ``{ params, routing_vars, enrollment_vars }`` — where each
+           namespace maps to the corresponding ``service_options`` key
+           (``ops_testing_parameters``, ``routing_vars``,
+           ``enrollment_vars``). After expansion, the result must also be
+           a plain identifier.
+
+        Anything else — bracket lookup (``customer_secrets[X]``),
+        undefined Jinja variables, expressions that don't resolve to a
+        simple identifier — is a validation error.
+
+        Args:
+            data: The offering data being validated.
+            schema_name: The schema name (only ``offering_v1`` is checked).
+            file_path: The offering file path, used to locate the sibling
+                ``listing.json`` for the Jinja context.
+
+        Returns:
+            List of validation error messages.
+        """
+        if schema_name != "offering_v1":
+            return []
+
+        upstream = data.get("upstream_access_config") or {}
+        if not isinstance(upstream, dict) or not upstream:
+            return []
+
+        # Build the Jinja context from the sibling listing's service_options.
+        # Falling back to {} keeps the validator useful even for fixture
+        # directories that only have an offering — references to undefined
+        # variables will still surface as clear errors from StrictUndefined.
+        listing_data = self._load_sibling_listing(file_path) or {}
+        service_options = listing_data.get("service_options") or {}
+        context = {
+            "params": service_options.get("ops_testing_parameters") or {},
+            "routing_vars": service_options.get("routing_vars") or {},
+            "enrollment_vars": service_options.get("enrollment_vars") or {},
+        }
+
+        jinja_env = Environment(undefined=StrictUndefined, autoescape=False)
+        errors: list[str] = []
+
+        for iface_name, iface in upstream.items():
+            if not isinstance(iface, dict):
+                continue
+            for field, value in iface.items():
+                if not isinstance(value, str) or "${" not in value:
+                    continue
+                field_path = f"upstream_access_config.{iface_name}.{field}"
+
+                # First, Jinja-expand so `{{ params.X }}` style substitutions
+                # land before we look at the secret references. Undefined
+                # variables are a hard error — they'd silently render empty at
+                # runtime, turning "${ customer_secrets.{{ params.X }} }" into
+                # "${ customer_secrets. }" which fails the secret resolver's
+                # regex and causes a confusing skip.
+                try:
+                    rendered = jinja_env.from_string(value).render(**context)
+                except UndefinedError as exc:
+                    errors.append(
+                        f"{field_path}: Jinja expansion failed — {exc.message}. "
+                        f"Check that the listing's service_options provides the "
+                        f"referenced namespace "
+                        f"(params / routing_vars / enrollment_vars)."
+                    )
+                    continue
+                except TemplateSyntaxError as exc:
+                    errors.append(
+                        f"{field_path}: Jinja syntax error in '{value}' — {exc.message}."
+                    )
+                    continue
+
+                # Then scan the rendered form for secret references. Every
+                # `${ secrets... }` / `${ customer_secrets... }` must be
+                # followed by `.IDENTIFIER` with nothing else; bracket
+                # lookup, empty tails, hyphens, etc. are all rejected.
+                for match in self._SECRET_REF_RE.finditer(rendered):
+                    namespace, raw_tail = match.group(1), match.group(2)
+                    tail = raw_tail.strip()
+                    if not self._SECRET_TAIL_RE.match(tail):
+                        errors.append(
+                            f"{field_path}: secret reference '{match.group(0)}' "
+                            f"is not a valid form. Use "
+                            f"'${{ {namespace}.NAME }}' (literal) or "
+                            f"'${{ {namespace}.{{{{ params.KEY }}}} }}' "
+                            f"(with KEY from "
+                            f"service_options.ops_testing_parameters). "
+                            f"Bracket lookup and composite expressions are "
+                            f"not supported."
+                        )
+
         return errors
 
     def validate_required_parameter_defaults(self, data: dict[str, Any], schema_name: str) -> list[str]:
@@ -532,6 +660,11 @@ class DataValidator:
         # Validate api_key fields use secrets format
         api_key_errors = self.validate_api_key_secrets(data)
         errors.extend(api_key_errors)
+
+        # Validate every ${ secrets.X } / ${ customer_secrets.X } in an
+        # offering's upstream_access_config resolves to a plain identifier.
+        secret_ref_errors = self.validate_secret_references(data, schema_name, file_path)
+        errors.extend(secret_ref_errors)
 
         # Validate service_options keys and value types (listing_v1 only)
         service_options_errors = self.validate_service_options_keys(data, schema_name)
