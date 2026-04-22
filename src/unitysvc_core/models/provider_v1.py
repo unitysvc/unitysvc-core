@@ -4,8 +4,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from .documents import DocumentData
-from .validators import validate_name
 from .provider_data import ProviderData
+from .validators import validate_name
 
 
 class ServicesPopulator(BaseModel):

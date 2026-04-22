@@ -3,10 +3,10 @@ from datetime import datetime
 from pydantic import ConfigDict, Field, field_validator
 
 from .documents import DocumentData
+from .listing_data import ServiceListingData
 from .pricing import Pricing
 from .service import AccessInterfaceData
 from .validators import validate_name
-from .listing_data import ServiceListingData
 
 
 class ListingV1(ServiceListingData):

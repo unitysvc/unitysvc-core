@@ -3,9 +3,13 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from unitysvc_core.utils import (
+    DEFAULT_PRESET_FNS,
     compute_file_hash,
     deep_merge_dicts,
+    expand_presets,
     find_files_by_schema,
     generate_content_based_key,
     get_basename,
@@ -15,7 +19,6 @@ from unitysvc_core.utils import (
     read_override_file,
     write_override_file,
 )
-
 
 # =============================================================================
 # File hashing / content-addressable key generation
@@ -194,3 +197,132 @@ def test_find_files_by_schema(tmp_path: Path) -> None:
     offering_files = find_files_by_schema(tmp_path, "offering_v1")
     offering_paths = {Path(fp).name for fp, _fmt, _data in offering_files}
     assert offering_paths == {"b.json"}
+
+
+# =============================================================================
+# $preset sentinel expansion
+# =============================================================================
+
+
+
+def test_expand_presets_bare_string_doc_preset(tmp_path: Path) -> None:
+    node = {"Connectivity": {"$doc_preset": "s3_connectivity"}}
+    result = expand_presets(node)
+    record = result["Connectivity"]
+    assert record["category"] == "connectivity_test"
+    assert record["mime_type"] == "python"
+    assert Path(record["file_path"]).is_file()
+
+
+def test_expand_presets_flat_form_with_overrides() -> None:
+    node = {
+        "$doc_preset": {
+            "name": "s3_code_example",
+            "description": "ours",
+            "is_public": False,
+        }
+    }
+    record = expand_presets(node)
+    assert record["description"] == "ours"
+    assert record["is_public"] is False
+    assert record["category"] == "code_example"
+
+
+def test_expand_presets_file_preset_returns_raw_content() -> None:
+    content = expand_presets({"$file_preset": "s3_connectivity_v1"})
+    assert isinstance(content, str)
+    assert "boto3" in content
+
+
+def test_expand_presets_walks_recursively() -> None:
+    data = {
+        "documents": {
+            "a": {"$doc_preset": "s3_connectivity_v1"},
+            "b": {"category": "custom"},
+        },
+        "snippets": [{"$file_preset": "s3_connectivity_v1"}, "plain"],
+    }
+    result = expand_presets(data)
+    assert result["documents"]["a"]["category"] == "connectivity_test"
+    assert isinstance(result["snippets"][0], str)
+    assert result["snippets"][1] == "plain"
+    assert result["documents"]["b"] == {"category": "custom"}
+
+
+def test_expand_presets_does_not_mutate_input() -> None:
+    original = {"a": {"$doc_preset": "s3_connectivity_v1"}}
+    before = json.dumps(original, sort_keys=True)
+    expand_presets(original)
+    assert json.dumps(original, sort_keys=True) == before
+
+
+def test_expand_presets_rejects_mixed_sentinel_keys() -> None:
+    node = {"$doc_preset": "s3_connectivity", "category": "extra"}
+    with pytest.raises(ValueError, match="must appear alone in its dict"):
+        expand_presets(node)
+
+
+def test_expand_presets_leaves_unknown_dollar_keys_alone() -> None:
+    node = {"$eq": "foo"}
+    assert expand_presets(node) == {"$eq": "foo"}
+
+
+def test_file_preset_rejects_overrides() -> None:
+    with pytest.raises(ValueError, match="does not accept per-field overrides"):
+        expand_presets({"$file_preset": {"name": "s3_connectivity_v1", "desc": "x"}})
+
+
+def test_load_data_file_expands_presets_by_default(tmp_path: Path) -> None:
+    listing = tmp_path / "listing.json"
+    listing.write_text(json.dumps({
+        "schema": "listing_v1",
+        "documents": {"Test": {"$doc_preset": "s3_connectivity_v1"}},
+    }))
+    data, _ = load_data_file(listing)
+    record = data["documents"]["Test"]
+    assert record["category"] == "connectivity_test"
+    assert "$doc_preset" not in record
+
+
+def test_load_data_file_preset_fns_none_preserves_sentinel(tmp_path: Path) -> None:
+    listing = tmp_path / "listing.json"
+    listing.write_text(json.dumps({
+        "schema": "listing_v1",
+        "documents": {"Test": {"$doc_preset": "s3_connectivity_v1"}},
+    }))
+    data, _ = load_data_file(listing, preset_fns=None)
+    assert data["documents"]["Test"] == {"$doc_preset": "s3_connectivity_v1"}
+
+
+def test_load_data_file_expands_after_override_merge(tmp_path: Path) -> None:
+    base = tmp_path / "listing.json"
+    base.write_text(json.dumps({
+        "schema": "listing_v1",
+        "documents": {"Test": {
+            "$doc_preset": {"name": "s3_connectivity_v1", "is_active": True},
+        }},
+    }))
+    override = tmp_path / "listing.override.json"
+    override.write_text(json.dumps({"name": "from-override"}))
+
+    data, _ = load_data_file(base)
+    assert data["name"] == "from-override"
+    assert data["documents"]["Test"]["category"] == "connectivity_test"
+
+
+def test_find_files_by_schema_returns_expanded_data(tmp_path: Path) -> None:
+    """find_files_by_schema goes through load_data_file; sentinels are expanded."""
+    listing = tmp_path / "listing.json"
+    listing.write_text(json.dumps({
+        "schema": "listing_v1",
+        "documents": {"T": {"$doc_preset": "s3_connectivity_v1"}},
+    }))
+    results = find_files_by_schema(tmp_path, "listing_v1")
+    assert len(results) == 1
+    _, _, data = results[0]
+    assert data["documents"]["T"]["category"] == "connectivity_test"
+    assert "$doc_preset" not in data["documents"]["T"]
+
+
+def test_default_preset_fns_exports_doc_and_file() -> None:
+    assert set(DEFAULT_PRESET_FNS) == {"doc_preset", "file_preset"}

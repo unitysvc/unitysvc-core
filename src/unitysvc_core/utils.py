@@ -5,18 +5,23 @@ and unitysvc backend, including:
 - Content hashing and content-addressable storage key generation
 - File extension and MIME type utilities
 - Data file loading and merging
+- ``$preset`` sentinel expansion via :func:`expand_presets` and
+  :func:`load_data_file`'s ``preset_fns`` parameter
 """
 
 import hashlib
 import json
 import os
 import tomllib
+from collections.abc import Callable, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import json5
 import tomli_w
+from unitysvc_data import doc_preset as _doc_preset_raw
+from unitysvc_data import file_preset as _file_preset_raw
 
 # =============================================================================
 # Content Hashing and File Utilities
@@ -148,6 +153,116 @@ def mime_type_to_extension(mime_type: str) -> str:
 # Data File Operations
 # =============================================================================
 
+# -----------------------------------------------------------------------------
+# $preset sentinel expansion
+#
+# Catalog data files may embed ``{"$doc_preset": ...}`` or
+# ``{"$file_preset": ...}`` sentinels that reference bundled examples
+# shipped in ``unitysvc-data``. ``load_data_file`` walks the parsed
+# payload after the override merge and replaces each sentinel with the
+# corresponding function's return value; every downstream consumer —
+# upload, validate, show, run-tests — sees the fully-expanded shape
+# without needing to opt in.
+#
+# Pass ``preset_fns=None`` to disable expansion (e.g. for raw round-trip
+# tooling that wants to preserve the sentinel on disk).
+# -----------------------------------------------------------------------------
+
+
+def _unwrap_flat_preset_form(source: Any) -> tuple[Any, dict[str, Any]]:
+    """Split a flat sentinel value into ``(preset_name, overrides)``.
+
+    Catalog data uses a flat shape — ``name`` is the preset identifier;
+    every other key is a per-field override forwarded as a kwarg::
+
+        {"name": "s3_code_example", "description": "ours"}
+        -> ("s3_code_example", {"description": "ours"})
+
+    Any other value passes through untouched in the first slot with an
+    empty override dict; the preset function handles bare strings and
+    its own internal sentinel shapes natively.
+    """
+    if isinstance(source, dict) and isinstance(source.get("name"), str):
+        name = source["name"]
+        return name, {k: v for k, v in source.items() if k != "name"}
+    return source, {}
+
+
+def _doc_preset_sentinel(source: Any) -> dict[str, Any]:
+    arg, overrides = _unwrap_flat_preset_form(source)
+    return _doc_preset_raw(arg, **overrides)
+
+
+def _file_preset_sentinel(source: Any) -> str:
+    arg, overrides = _unwrap_flat_preset_form(source)
+    if overrides:
+        raise ValueError(
+            "$file_preset does not accept per-field overrides — the file "
+            "content is immutable. Unexpected keys alongside 'name': "
+            f"{sorted(overrides)!r}."
+        )
+    return _file_preset_raw(arg)
+
+
+#: Preset functions recognised as ``$<fn>`` sentinel keys. Callers that
+#: need a custom set can pass their own mapping to ``load_data_file``
+#: or :func:`expand_presets`.
+DEFAULT_PRESET_FNS: Mapping[str, Callable[[Any], Any]] = {
+    "doc_preset": _doc_preset_sentinel,
+    "file_preset": _file_preset_sentinel,
+}
+
+
+def expand_presets(
+    data: Any,
+    preset_fns: Mapping[str, Callable[[Any], Any]] = DEFAULT_PRESET_FNS,
+) -> Any:
+    """Recursively replace preset sentinel nodes with their expanded values.
+
+    A **preset sentinel** is a dict containing exactly one ``$<fn_name>``
+    key where ``<fn_name>`` matches an entry in ``preset_fns``. The
+    value under that key is passed as the single positional argument
+    to the function; the return value replaces the whole sentinel
+    node.
+
+    - Non-sentinel dicts and lists are walked recursively.
+    - Scalars pass through unchanged.
+    - ``$``-prefixed keys that do not match a registered function are
+      treated as ordinary data (so Mongo-style operators etc. do not
+      collide with the walker).
+    - A dict carrying a ``$<fn>`` key *alongside* other keys is a
+      footgun — raise :class:`ValueError` instead of silently
+      ignoring the preset call.
+
+    The input is never mutated; a new structure is returned.
+    """
+    if isinstance(data, dict):
+        if len(data) == 1:
+            (only_key,) = data.keys()
+            if isinstance(only_key, str) and only_key.startswith("$"):
+                fn_name = only_key[1:]
+                fn = preset_fns.get(fn_name)
+                if fn is not None:
+                    return fn(expand_presets(data[only_key], preset_fns))
+
+        for key in data:
+            if isinstance(key, str) and key.startswith("$"):
+                fn_name = key[1:]
+                if fn_name in preset_fns:
+                    raise ValueError(
+                        f"Preset sentinel key {key!r} must appear alone in its "
+                        f"dict — found alongside {sorted(k for k in data if k != key)!r}. "
+                        "If you meant per-field overrides, nest them inside the "
+                        f"sentinel value: {{{key!r}: {{'name': '<preset>', <override>: ...}}}}."
+                    )
+
+        return {key: expand_presets(value, preset_fns) for key, value in data.items()}
+
+    if isinstance(data, list):
+        return [expand_presets(item, preset_fns) for item in data]
+
+    return data
+
 
 def deep_merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """
@@ -176,7 +291,12 @@ def deep_merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str
     return result
 
 
-def load_data_file(file_path: Path, *, skip_override: bool = False) -> tuple[dict[str, Any], str]:
+def load_data_file(
+    file_path: Path,
+    *,
+    skip_override: bool = False,
+    preset_fns: Mapping[str, Callable[[Any], Any]] | None = DEFAULT_PRESET_FNS,
+) -> tuple[dict[str, Any], str]:
     """
     Load a data file (JSON/JSON5 or TOML) and return (data, format).
 
@@ -189,9 +309,19 @@ def load_data_file(file_path: Path, *, skip_override: bool = False) -> tuple[dic
     If an override file exists, it is deep-merged on top of the base file,
     with override values taking precedence.
 
+    After the merge, :func:`expand_presets` walks the result and replaces
+    every ``$doc_preset`` / ``$file_preset`` sentinel with the matching
+    preset record from ``unitysvc-data``. Pass ``preset_fns=None`` to
+    skip the walk entirely (useful for tooling that wants to preserve
+    sentinels on round-trip).
+
     Args:
         file_path: Path to the data file
         skip_override: If True, skip loading and merging override files.
+        preset_fns: Mapping of sentinel key → callable for
+            :func:`expand_presets`. Defaults to :data:`DEFAULT_PRESET_FNS`
+            (``doc_preset`` and ``file_preset`` from ``unitysvc-data``).
+            ``None`` disables expansion.
 
     Returns:
         Tuple of (data dict, format string "json" or "toml")
@@ -222,6 +352,9 @@ def load_data_file(file_path: Path, *, skip_override: bool = False) -> tuple[dic
             else:
                 override_data = {}
             data = deep_merge_dicts(data, override_data)
+
+    if preset_fns:
+        data = expand_presets(data, preset_fns)
 
     return data, file_format
 

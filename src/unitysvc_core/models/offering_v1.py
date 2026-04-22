@@ -4,10 +4,10 @@ from typing import Any
 from pydantic import ConfigDict, Field, HttpUrl, field_validator
 
 from .documents import DocumentData
+from .offering_data import ServiceOfferingData
 from .pricing import Pricing
 from .service import UpstreamAccessConfigData
 from .validators import validate_name
-from .offering_data import ServiceOfferingData
 
 
 class OfferingV1(ServiceOfferingData):

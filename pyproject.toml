@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unitysvc-core"
-version = "0.1.3"
+version = "0.1.4"
 description = "Shared data models and validation helpers for UnitySVC packages"
 readme = "README.md"
 authors = [{ name = "Bo Peng", email = "bo.peng@unitysvc.com" }]
@@ -23,6 +23,11 @@ dependencies = [
   "jinja2",
   "json5",
   "tomli-w",
+  # Default preset functions exposed under $doc_preset / $file_preset
+  # sentinels that load_data_file expands transparently after parse +
+  # override-merge. Consumers that don't want expansion can pass
+  # preset_fns=None to load_data_file.
+  "unitysvc-data>=0.1.3",
 ]
 requires-python = ">= 3.11"
 
