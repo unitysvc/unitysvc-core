@@ -268,7 +268,11 @@ def test_expand_presets_leaves_unknown_dollar_keys_alone() -> None:
 
 
 def test_file_preset_rejects_overrides() -> None:
-    with pytest.raises(ValueError, match="does not accept per-field overrides"):
+    # file_preset takes only ``source`` — no **kwargs. The decorator's
+    # wrapper unpacks the flat form and delegates directly, so extra
+    # keys surface as Python's native TypeError on the call, which
+    # is as helpful as a custom message (names the bad kwargs).
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
         expand_presets({"$file_preset": {"name": "s3_connectivity_v1", "desc": "x"}})
 
 

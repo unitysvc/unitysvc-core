@@ -20,8 +20,12 @@ from typing import Any
 
 import json5
 import tomli_w
-from unitysvc_data import doc_preset as _doc_preset_raw
-from unitysvc_data import file_preset as _file_preset_raw
+
+# Presets discovered dynamically from unitysvc-data's registry. Any
+# function decorated with ``@preset`` there is available here under
+# its ``__name__`` — adding a new preset type is a one-line change in
+# unitysvc-data; this module stays unchanged.
+from unitysvc_data import PRESET_FNS as _UNITYSVC_DATA_PRESET_FNS
 
 # =============================================================================
 # Content Hashing and File Utilities
@@ -169,48 +173,19 @@ def mime_type_to_extension(mime_type: str) -> str:
 # -----------------------------------------------------------------------------
 
 
-def _unwrap_flat_preset_form(source: Any) -> tuple[Any, dict[str, Any]]:
-    """Split a flat sentinel value into ``(preset_name, overrides)``.
-
-    Catalog data uses a flat shape — ``name`` is the preset identifier;
-    every other key is a per-field override forwarded as a kwarg::
-
-        {"name": "s3_code_example", "description": "ours"}
-        -> ("s3_code_example", {"description": "ours"})
-
-    Any other value passes through untouched in the first slot with an
-    empty override dict; the preset function handles bare strings and
-    its own internal sentinel shapes natively.
-    """
-    if isinstance(source, dict) and isinstance(source.get("name"), str):
-        name = source["name"]
-        return name, {k: v for k, v in source.items() if k != "name"}
-    return source, {}
-
-
-def _doc_preset_sentinel(source: Any) -> dict[str, Any]:
-    arg, overrides = _unwrap_flat_preset_form(source)
-    return _doc_preset_raw(arg, **overrides)
-
-
-def _file_preset_sentinel(source: Any) -> str:
-    arg, overrides = _unwrap_flat_preset_form(source)
-    if overrides:
-        raise ValueError(
-            "$file_preset does not accept per-field overrides — the file "
-            "content is immutable. Unexpected keys alongside 'name': "
-            f"{sorted(overrides)!r}."
-        )
-    return _file_preset_raw(arg)
-
-
-#: Preset functions recognised as ``$<fn>`` sentinel keys. Callers that
-#: need a custom set can pass their own mapping to ``load_data_file``
-#: or :func:`expand_presets`.
-DEFAULT_PRESET_FNS: Mapping[str, Callable[[Any], Any]] = {
-    "doc_preset": _doc_preset_sentinel,
-    "file_preset": _file_preset_sentinel,
-}
+#: Preset functions recognised as ``$<fn>`` sentinel keys. Populated
+#: from :data:`unitysvc_data.PRESET_FNS` — every function decorated
+#: with ``@preset`` in ``unitysvc-data`` appears here automatically,
+#: so new preset types ship without any change to this module. The
+#: flat seller-facing form ``{"name": "<preset>", <override>: ...}``
+#: is unpacked by the wrappers that live *inside* ``unitysvc-data``'s
+#: decorator; callers of :func:`expand_presets` or
+#: :func:`load_data_file` don't need to think about it.
+#:
+#: A copy is taken on import so downstream mutation of
+#: :data:`unitysvc_data.PRESET_FNS` doesn't retroactively change the
+#: default behaviour here.
+DEFAULT_PRESET_FNS: Mapping[str, Callable[[Any], Any]] = dict(_UNITYSVC_DATA_PRESET_FNS)
 
 
 def expand_presets(
