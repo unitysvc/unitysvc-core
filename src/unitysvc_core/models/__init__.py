@@ -81,7 +81,10 @@ from .service_group_v1 import ServiceGroupV1
 from .validators import (
     SUPPORTED_SERVICE_OPTIONS,
     suggest_valid_name,
+    validate_listing_s3_base_urls,
+    validate_listing_smtp_base_urls,
     validate_name,
+    validate_s3_gateway_alias,
     validate_service_options,
 )
 
@@ -159,6 +162,9 @@ __all__ = [
     "SUPPORTED_SERVICE_OPTIONS",
     "validate_name",
     "validate_service_options",
+    "validate_s3_gateway_alias",
+    "validate_listing_s3_base_urls",
+    "validate_listing_smtp_base_urls",
     "suggest_valid_name",
     # Promotions
     "PROMOTION_SCHEMA_VERSION",

@@ -172,6 +172,124 @@ def validate_service_options(service_options: dict[str, Any] | None) -> list[str
     return errors
 
 
+# S3 bucket name rules: https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
+_S3_BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
+_S3_GATEWAY_PREFIX = "${S3_GATEWAY_BASE_URL}/"
+
+
+def validate_s3_gateway_alias(alias: str, field: str) -> list[str]:
+    """Validate the alias portion of an S3 gateway base_url.
+
+    ``alias`` is the part after ``${S3_GATEWAY_BASE_URL}/``.  Jinja2 template
+    aliases (containing ``{{`` or ``{%``) must be skipped by the caller.
+
+    Returns a list of error messages (empty if valid).
+    """
+    errors: list[str] = []
+
+    if not alias:
+        errors.append(f"{field}: S3 gateway alias is empty (must be a valid S3 bucket name)")
+        return errors
+
+    if not _S3_BUCKET_RE.match(alias):
+        errors.append(
+            f"{field}: S3 gateway alias '{alias}' is not a valid S3 bucket name — "
+            f"must be 3-63 characters, lowercase letters/digits/hyphens only, "
+            f"and must start and end with a letter or digit "
+            f"(see https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html)"
+        )
+        return errors
+
+    if alias.startswith("xn--"):
+        errors.append(
+            f"{field}: S3 gateway alias '{alias}' cannot start with 'xn--' (reserved prefix)"
+        )
+    elif alias.endswith("-s3alias") or alias.endswith("--ol-s3"):
+        errors.append(f"{field}: S3 gateway alias '{alias}' uses a reserved suffix")
+
+    return errors
+
+
+def validate_listing_s3_base_urls(user_access_interfaces: dict[str, Any] | None) -> list[str]:
+    """Validate S3 gateway aliases across all user_access_interfaces.
+
+    For each interface whose base_url starts with ``${S3_GATEWAY_BASE_URL}/``,
+    the alias must satisfy AWS S3 bucket naming rules.  Jinja2 template aliases
+    (containing ``{{`` or ``{%``) are skipped.
+
+    Returns a list of error messages (empty if all valid).
+    """
+    if not user_access_interfaces or not isinstance(user_access_interfaces, dict):
+        return []
+
+    errors: list[str] = []
+    for iface_name, iface in user_access_interfaces.items():
+        if not isinstance(iface, dict):
+            continue
+        base_url = iface.get("base_url", "")
+        if not isinstance(base_url, str) or not base_url.startswith(_S3_GATEWAY_PREFIX):
+            continue
+        alias = base_url[len(_S3_GATEWAY_PREFIX):]
+        if "{{" in alias or "{%" in alias:
+            continue
+        field = f"user_access_interfaces.{iface_name}.base_url"
+        errors.extend(validate_s3_gateway_alias(alias, field))
+
+    return errors
+
+
+_SMTP_GATEWAY_BASE_URL = "${SMTP_GATEWAY_BASE_URL}"
+
+
+def validate_listing_smtp_base_urls(user_access_interfaces: dict[str, Any] | None) -> list[str]:
+    """Validate SMTP gateway interfaces in listing_v1 user_access_interfaces.
+
+    For each interface whose base_url is or starts with ``${SMTP_GATEWAY_BASE_URL}``:
+
+    - ``base_url`` must be exactly ``${SMTP_GATEWAY_BASE_URL}`` — no path suffix.
+    - ``routing_key`` must be a dict with a non-empty ``username`` key.
+
+    Returns a list of error messages (empty if all valid).
+    """
+    if not user_access_interfaces or not isinstance(user_access_interfaces, dict):
+        return []
+
+    errors: list[str] = []
+    for iface_name, iface in user_access_interfaces.items():
+        if not isinstance(iface, dict):
+            continue
+        base_url = iface.get("base_url", "")
+        if not isinstance(base_url, str):
+            continue
+        if not (base_url == _SMTP_GATEWAY_BASE_URL or base_url.startswith(_SMTP_GATEWAY_BASE_URL + "/")):
+            continue
+
+        field = f"user_access_interfaces.{iface_name}"
+
+        if base_url != _SMTP_GATEWAY_BASE_URL:
+            errors.append(
+                f"{field}.base_url: SMTP gateway base_url must be exactly "
+                f"'${{SMTP_GATEWAY_BASE_URL}}' with no path suffix — "
+                f"SMTP routing uses routing_key.username, not URL path"
+            )
+
+        routing_key = iface.get("routing_key")
+        if not isinstance(routing_key, dict):
+            errors.append(
+                f"{field}.routing_key: SMTP gateway interface requires a "
+                f"'routing_key' dict with a 'username' entry"
+            )
+        else:
+            username = routing_key.get("username")
+            if not username or not isinstance(username, str):
+                errors.append(
+                    f"{field}.routing_key.username: SMTP gateway interface requires "
+                    f"a non-empty 'username' in routing_key"
+                )
+
+    return errors
+
+
 def suggest_valid_name(display_name: str, *, allow_slash: bool = False) -> str:
     """
     Suggest a valid name based on a display name.

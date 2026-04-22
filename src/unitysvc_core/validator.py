@@ -683,6 +683,13 @@ class DataValidator:
         connectivity_errors = self.validate_connectivity_test_exists(data, schema_name)
         errors.extend(connectivity_errors)
 
+        # Validate S3 and SMTP gateway interfaces (listing_v1 only)
+        if schema_name == "listing_v1":
+            from .models.validators import validate_listing_s3_base_urls, validate_listing_smtp_base_urls
+
+            errors.extend(validate_listing_s3_base_urls(data.get("user_access_interfaces")))
+            errors.extend(validate_listing_smtp_base_urls(data.get("user_access_interfaces")))
+
         return len(errors) == 0, errors
 
     def validate_jinja2_file(self, file_path: Path) -> tuple[bool, list[str]]:
