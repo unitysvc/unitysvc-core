@@ -683,12 +683,12 @@ class DataValidator:
         connectivity_errors = self.validate_connectivity_test_exists(data, schema_name)
         errors.extend(connectivity_errors)
 
-        # Validate S3 gateway bucket aliases (listing_v1 only)
+        # Validate S3 and SMTP gateway interfaces (listing_v1 only)
         if schema_name == "listing_v1":
-            from .models.validators import validate_listing_s3_base_urls
+            from .models.validators import validate_listing_s3_base_urls, validate_listing_smtp_base_urls
 
-            s3_errors = validate_listing_s3_base_urls(data.get("user_access_interfaces"))
-            errors.extend(s3_errors)
+            errors.extend(validate_listing_s3_base_urls(data.get("user_access_interfaces")))
+            errors.extend(validate_listing_smtp_base_urls(data.get("user_access_interfaces")))
 
         return len(errors) == 0, errors
 

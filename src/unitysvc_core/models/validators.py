@@ -238,6 +238,58 @@ def validate_listing_s3_base_urls(user_access_interfaces: dict[str, Any] | None)
     return errors
 
 
+_SMTP_GATEWAY_BASE_URL = "${SMTP_GATEWAY_BASE_URL}"
+
+
+def validate_listing_smtp_base_urls(user_access_interfaces: dict[str, Any] | None) -> list[str]:
+    """Validate SMTP gateway interfaces in listing_v1 user_access_interfaces.
+
+    For each interface whose base_url is or starts with ``${SMTP_GATEWAY_BASE_URL}``:
+
+    - ``base_url`` must be exactly ``${SMTP_GATEWAY_BASE_URL}`` — no path suffix.
+    - ``routing_key`` must be a dict with a non-empty ``username`` key.
+
+    Returns a list of error messages (empty if all valid).
+    """
+    if not user_access_interfaces or not isinstance(user_access_interfaces, dict):
+        return []
+
+    errors: list[str] = []
+    for iface_name, iface in user_access_interfaces.items():
+        if not isinstance(iface, dict):
+            continue
+        base_url = iface.get("base_url", "")
+        if not isinstance(base_url, str):
+            continue
+        if not (base_url == _SMTP_GATEWAY_BASE_URL or base_url.startswith(_SMTP_GATEWAY_BASE_URL + "/")):
+            continue
+
+        field = f"user_access_interfaces.{iface_name}"
+
+        if base_url != _SMTP_GATEWAY_BASE_URL:
+            errors.append(
+                f"{field}.base_url: SMTP gateway base_url must be exactly "
+                f"'${{SMTP_GATEWAY_BASE_URL}}' with no path suffix — "
+                f"SMTP routing uses routing_key.username, not URL path"
+            )
+
+        routing_key = iface.get("routing_key")
+        if not isinstance(routing_key, dict):
+            errors.append(
+                f"{field}.routing_key: SMTP gateway interface requires a "
+                f"'routing_key' dict with a 'username' entry"
+            )
+        else:
+            username = routing_key.get("username")
+            if not username or not isinstance(username, str):
+                errors.append(
+                    f"{field}.routing_key.username: SMTP gateway interface requires "
+                    f"a non-empty 'username' in routing_key"
+                )
+
+    return errors
+
+
 def suggest_valid_name(display_name: str, *, allow_slash: bool = False) -> str:
     """
     Suggest a valid name based on a display name.
