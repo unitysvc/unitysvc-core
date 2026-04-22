@@ -251,9 +251,16 @@ class DataValidator:
     # capturing everything after the namespace so unsupported forms
     # (bracket lookup, whitespace-only, missing dot) also surface as errors
     # rather than being silently ignored.
-    _SECRET_REF_RE = re.compile(r"\$\{\s*(secrets|customer_secrets)(.*?)\s*\}")
-    # After the namespace, the only valid tail is `.IDENTIFIER`.
-    _SECRET_TAIL_RE = re.compile(r"^\.([A-Za-z_][A-Za-z0-9_]*)$")
+    _SECRET_REF_RE = re.compile(r"\$\{\s*(secrets|customer_secrets)(.*?)\s*\}", re.DOTALL)
+    # Valid tails after the namespace:
+    #   .IDENTIFIER                    — required reference
+    #   .IDENTIFIER ?? default         — optional reference with fallback
+    # The default can contain anything (hyphens, slashes, spaces, URLs)
+    # per the `??` syntax defined in backend/app/core/var_substitution.py.
+    _SECRET_TAIL_RE = re.compile(
+        r"^\.([A-Za-z_][A-Za-z0-9_]*)(?:\s*\?\?\s*(.*?))?$",
+        re.DOTALL,
+    )
 
     def _load_sibling_listing(self, offering_file: Path) -> dict[str, Any] | None:
         """Load the paired ``listing*.json`` from the same directory as the offering.
@@ -365,7 +372,9 @@ class DataValidator:
                         errors.append(
                             f"{field_path}: secret reference '{match.group(0)}' "
                             f"is not a valid form. Use "
-                            f"'${{ {namespace}.NAME }}' (literal) or "
+                            f"'${{ {namespace}.NAME }}' (required), "
+                            f"'${{ {namespace}.NAME ?? default }}' (optional "
+                            f"with fallback), or "
                             f"'${{ {namespace}.{{{{ params.KEY }}}} }}' "
                             f"(with KEY from "
                             f"service_options.ops_testing_parameters). "

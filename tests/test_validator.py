@@ -896,3 +896,90 @@ class TestSecretReferencesValidation:
         )
         assert errors == []
 
+    def test_default_value_syntax_is_ok(self, schema_dir, example_data_dir, tmp_path):
+        """`${ customer_secrets.X ?? default }` is accepted — the `??`
+        syntax introduced in backend/app/core/var_substitution.py."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        offering_path = self._write_pair(
+            tmp_path,
+            offering={
+                "upstream_access_config": {
+                    "S3": {"region": "${ customer_secrets.S3_REGION ?? us-east-1 }"}
+                }
+            },
+            listing={"service_options": {}},
+        )
+        import json
+
+        data = json.loads(offering_path.read_text())
+        errors = validator.validate_secret_references(data, "offering_v1", offering_path)
+        assert errors == []
+
+    def test_default_with_hyphen_and_slash(self, schema_dir, example_data_dir, tmp_path):
+        """Defaults may contain hyphens, slashes, spaces — matches backend
+        `??` parser semantics (defaults are free-form)."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        offering_path = self._write_pair(
+            tmp_path,
+            offering={
+                "upstream_access_config": {
+                    "API": {
+                        "api_key": "${ secrets.FOO ?? prod-east-1 }",
+                        "base_url": "${ secrets.URL ?? https://api.example.com/v1 }",
+                    }
+                }
+            },
+            listing={"service_options": {}},
+        )
+        import json
+
+        data = json.loads(offering_path.read_text())
+        errors = validator.validate_secret_references(data, "offering_v1", offering_path)
+        assert errors == []
+
+    def test_default_after_jinja_rendered_name(self, schema_dir, example_data_dir, tmp_path):
+        """`??` default works after a Jinja-rendered secret name."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        offering_path = self._write_pair(
+            tmp_path,
+            offering={
+                "upstream_access_config": {
+                    "S3": {
+                        "region": (
+                            "${ customer_secrets.{{ params.region_secret }} "
+                            "?? us-east-1 }"
+                        )
+                    }
+                }
+            },
+            listing={
+                "service_options": {
+                    "ops_testing_parameters": {"region_secret": "SVCPASS_S3_REGION"}
+                }
+            },
+        )
+        import json
+
+        data = json.loads(offering_path.read_text())
+        errors = validator.validate_secret_references(data, "offering_v1", offering_path)
+        assert errors == []
+
+    def test_empty_default_is_ok(self, schema_dir, example_data_dir, tmp_path):
+        """`${ secrets.X ?? }` (empty default) is valid — matches backend
+        behaviour where `default=''` is distinct from `default=None`."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        offering_path = self._write_pair(
+            tmp_path,
+            offering={
+                "upstream_access_config": {
+                    "API": {"api_key": "${ secrets.OPTIONAL_KEY ?? }"}
+                }
+            },
+            listing={"service_options": {}},
+        )
+        import json
+
+        data = json.loads(offering_path.read_text())
+        errors = validator.validate_secret_references(data, "offering_v1", offering_path)
+        assert errors == []
+
