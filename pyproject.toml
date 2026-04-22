@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unitysvc-core"
-version = "0.1.3"
+version = "0.1.4"
 description = "Shared data models and validation helpers for UnitySVC packages"
 readme = "README.md"
 authors = [{ name = "Bo Peng", email = "bo.peng@unitysvc.com" }]
@@ -23,6 +23,14 @@ dependencies = [
   "jinja2",
   "json5",
   "tomli-w",
+  # Presets exposed under $<fn> sentinels that load_data_file expands
+  # transparently after parse + override-merge. The actual set of
+  # recognised sentinel keys is discovered dynamically from
+  # unitysvc_data.PRESET_FNS — every function decorated with @preset
+  # in unitysvc-data flows through to core automatically, so new
+  # preset types don't require a core release. Consumers that don't
+  # want expansion can pass preset_fns=None to load_data_file.
+  "unitysvc-data>=0.1.4",
 ]
 requires-python = ">= 3.11"
 
