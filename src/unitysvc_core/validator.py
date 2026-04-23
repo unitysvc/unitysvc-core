@@ -146,13 +146,18 @@ class DataValidator:
                                 f"File path '{value}' in field '{new_path}' "
                                 f"must not be a URL. Use 'external_url' field for URLs instead."
                             )
-                        # All file_path fields must use relative paths
                         elif Path(value).is_absolute():
-                            errors.append(
-                                f"File path '{value}' in field '{new_path}' "
-                                f"must be a relative path, not an absolute path"
-                            )
-                        # Check that the file exists
+                            # Absolute paths are only valid when they resolve to an existing
+                            # file — this happens when a $doc_preset sentinel is expanded by
+                            # load_data_file before validation.  A non-existent absolute path
+                            # means the user hard-coded a machine-specific path, which is
+                            # rejected.
+                            if not Path(value).exists():
+                                errors.append(
+                                    f"File path '{value}' in field '{new_path}' "
+                                    f"must be a relative path, not an absolute path"
+                                )
+                        # Check that a relative file reference exists
                         else:
                             referenced_file = file_path.parent / value
                             if not referenced_file.exists():

@@ -198,6 +198,63 @@ def test_file_reference_validation(schema_dir, example_data_dir):
     assert len(file_ref_errors) == 0, "File reference validation failed"
 
 
+class TestFilePathAbsolutePresetExpansion:
+    """validate_file_references must accept absolute file_path values that exist.
+
+    When a $doc_preset sentinel is expanded by load_data_file, the resulting
+    file_path is an absolute path inside the installed unitysvc_data package.
+    The validator must not reject it as "must be a relative path".
+    """
+
+    def _make_validator(self, schema_dir, example_data_dir):
+        return DataValidator(example_data_dir, schema_dir)
+
+    def test_absolute_existing_file_path_is_accepted(self, schema_dir, example_data_dir, tmp_path):
+        """An absolute file_path that resolves to a real file should pass."""
+        real_file = tmp_path / "bundled.sh"
+        real_file.write_text("#!/bin/sh\necho hello\n")
+
+        data = {
+            "documents": {
+                "My Doc": {
+                    "category": "connectivity_test",
+                    "description": "desc",
+                    "mime_type": "text/x-shellscript",
+                    "file_path": str(real_file),
+                }
+            }
+        }
+        validator = self._make_validator(schema_dir, example_data_dir)
+        listing_json = tmp_path / "listing.json"
+        errors = validator.validate_file_references(data, listing_json, set())
+        assert errors == [], f"Unexpected errors: {errors}"
+
+    def test_absolute_nonexistent_file_path_is_rejected(self, schema_dir, example_data_dir, tmp_path):
+        """An absolute file_path pointing to a missing file should be rejected."""
+        data = {
+            "documents": {
+                "My Doc": {
+                    "category": "connectivity_test",
+                    "description": "desc",
+                    "mime_type": "text/x-shellscript",
+                    "file_path": "/nonexistent/path/to/file.sh",
+                }
+            }
+        }
+        validator = self._make_validator(schema_dir, example_data_dir)
+        listing_json = tmp_path / "listing.json"
+        errors = validator.validate_file_references(data, listing_json, set())
+        assert any("must be a relative path" in e for e in errors), f"Expected rejection, got: {errors}"
+
+    def test_relative_existing_file_path_is_accepted(self, schema_dir, example_data_dir, tmp_path):
+        """A relative file_path that resolves to a real file should pass."""
+        (tmp_path / "bundled.sh").write_text("#!/bin/sh\n")
+        data = {"documents": {"My Doc": {"file_path": "bundled.sh"}}}
+        validator = self._make_validator(schema_dir, example_data_dir)
+        errors = validator.validate_file_references(data, tmp_path / "listing.json", set())
+        assert errors == [], f"Unexpected errors: {errors}"
+
+
 class TestRequiredParameterDefaults:
     """Tests for validate_required_parameter_defaults method."""
 
