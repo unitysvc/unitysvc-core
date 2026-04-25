@@ -4,7 +4,7 @@
   "display_name": "Service 2 Listing",
   "time_created": "2024-02-29T05:52:38.739683Z",
   "user_access_interfaces": {
-    "Provider API": {
+    "provider_api": {
       "access_method": "http",
       "base_url": "${API_GATEWAY_BASE_URL}/p/example-provider2",
       "api_key": null
