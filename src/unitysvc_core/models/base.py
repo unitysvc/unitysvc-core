@@ -125,6 +125,27 @@ class ServiceGroupStatusEnum(StrEnum):
     archived = "archived"
 
 
+class GroupOwnerTypeEnum(StrEnum):
+    """Type of entity that owns a service group."""
+
+    platform = "platform"
+    seller = "seller"
+    customer = "customer"
+
+
+class GroupTypeEnum(StrEnum):
+    """Type of service group.
+
+    - ``regular``: Enrollable, services-bearing group (the common case).
+    - ``category``: Non-enrollable parent that organizes child groups.
+    - ``misc``: System-generated catch-all for uncategorized services.
+    """
+
+    regular = "regular"
+    category = "category"
+    misc = "misc"
+
+
 class SellerTypeEnum(StrEnum):
     individual = "individual"
     organization = "organization"

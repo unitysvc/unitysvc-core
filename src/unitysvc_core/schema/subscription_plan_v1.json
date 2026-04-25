@@ -1,0 +1,213 @@
+{
+  "$defs": {
+    "SubscriptionPlanStatusEnum": {
+      "description": "Subscription plan lifecycle and visibility status.\n\n- incomplete: Plan is being drafted/configured, can be updated\n- active: Plan is live and shown on public pricing page, immutable\n- private: Plan is live but hidden (custom/enterprise plans), immutable\n- expired: Plan is archived, no longer available for new subscriptions",
+      "enum": [
+        "incomplete",
+        "active",
+        "private",
+        "expired"
+      ],
+      "title": "SubscriptionPlanStatusEnum",
+      "type": "string"
+    },
+    "SubscriptionTierEnum": {
+      "description": "High-level subscription tier categories.",
+      "enum": [
+        "free",
+        "individual",
+        "team",
+        "enterprise"
+      ],
+      "title": "SubscriptionTierEnum",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Subscription Plan model for CLI publishing and backend ingest.",
+  "properties": {
+    "additional_seat_price": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Price per seat beyond included_seats. Required when included_seats is set.",
+      "title": "Additional Seat Price"
+    },
+    "annual_discount_percent": {
+      "default": 0,
+      "description": "Discount percentage for annual billing (0-100)",
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Annual Discount Percent",
+      "type": "integer"
+    },
+    "base_amount": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "description": "Base price per billing interval (Decimal for currency precision)",
+      "title": "Base Amount"
+    },
+    "currency": {
+      "default": "USD",
+      "description": "Currency code (ISO 4217)",
+      "title": "Currency",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Plan description for marketing/UI",
+      "title": "Description"
+    },
+    "display_name": {
+      "description": "Human-readable display name for marketing/UI",
+      "title": "Display Name",
+      "type": "string"
+    },
+    "extra_metadata": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Additional metadata (templates, taglines, marketing copy, etc.)",
+      "title": "Extra Metadata"
+    },
+    "included_seats": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Number of seats included in base_amount. None = flat pricing (quantity ignored). 0 = simple per-seat (base_amount ignored, additional_seat_price * quantity). N = tiered (base_amount covers N seats, additional_seat_price per extra).",
+      "title": "Included Seats"
+    },
+    "name": {
+      "description": "Plan name (e.g., 'Pro', 'Team', 'Enterprise')",
+      "title": "Name",
+      "type": "string"
+    },
+    "plan_pricing": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Plan-level pricing that replaces per-request charges at statement time. Supports graduated/tiered pricing based on total_customer_charge or request_count.",
+      "title": "Plan Pricing"
+    },
+    "schema": {
+      "default": "subscription_plan_v1",
+      "description": "Schema identifier for validation",
+      "title": "Schema",
+      "type": "string"
+    },
+    "slug": {
+      "description": "Unique plan identifier (e.g., 'pro-2025-v1', 'enterprise-acme'). URL-friendly slug: lowercase ASCII alphanumeric plus '-' / '_', must start with a letter or digit.",
+      "maxLength": 100,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "title": "Slug",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/SubscriptionPlanStatusEnum",
+      "default": "incomplete",
+      "description": "Plan lifecycle status: incomplete, active, private, expired"
+    },
+    "terms": {
+      "additionalProperties": true,
+      "description": "Plan terms including features, limits, SLA, etc.",
+      "title": "Terms",
+      "type": "object"
+    },
+    "tier": {
+      "$ref": "#/$defs/SubscriptionTierEnum",
+      "description": "Tier category: free, individual, team, enterprise"
+    },
+    "time_created": {
+      "description": "Timestamp when this plan file was created",
+      "format": "date-time",
+      "title": "Time Created",
+      "type": "string"
+    },
+    "valid_from": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Plan availability start date (defaults to now if not specified)",
+      "title": "Valid From"
+    },
+    "valid_until": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Plan availability end date (None = no end)",
+      "title": "Valid Until"
+    }
+  },
+  "required": [
+    "slug",
+    "name",
+    "tier",
+    "display_name",
+    "base_amount",
+    "terms"
+  ],
+  "title": "SubscriptionPlanV1",
+  "type": "object"
+}
