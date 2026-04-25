@@ -20,7 +20,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
 # Mirrors the ``slug`` rule used for service group names. Lowercase
 # ASCII alphanumeric plus '-' and '_', must start with letter/digit.
 _SLUG_PATTERN = r"^[a-z0-9][a-z0-9_-]*$"
