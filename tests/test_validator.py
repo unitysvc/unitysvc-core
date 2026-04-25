@@ -1040,3 +1040,87 @@ class TestSecretReferencesValidation:
         errors = validator.validate_secret_references(data, "offering_v1", offering_path)
         assert errors == []
 
+
+class TestAccessInterfaceNameValidation:
+    """Tests for ``validate_access_interface_names``.
+
+    The dictionary keys of ``user_access_interfaces`` become the SDK
+    handle for routing (``service.dispatch(interface=name)``) and end
+    up as ``AccessInterface.name`` on the backend, which enforces the
+    same slug pattern. Surfacing violations at CLI-validation time
+    means sellers see them before publishing.
+    """
+
+    def test_none_input_passes(self):
+        from unitysvc_core.models.validators import validate_access_interface_names
+
+        assert validate_access_interface_names(None) == []
+
+    def test_empty_dict_passes(self):
+        from unitysvc_core.models.validators import validate_access_interface_names
+
+        assert validate_access_interface_names({}) == []
+
+    def test_valid_slugs_pass(self):
+        from unitysvc_core.models.validators import validate_access_interface_names
+
+        assert (
+            validate_access_interface_names(
+                {
+                    "default": {},
+                    "openai-compat": {},
+                    "v1_chat": {},
+                    "abc123": {},
+                    "0fallback": {},
+                }
+            )
+            == []
+        )
+
+    def test_uppercase_rejected(self):
+        from unitysvc_core.models.validators import validate_access_interface_names
+
+        errors = validate_access_interface_names({"Default": {}})
+        assert len(errors) == 1
+        assert "user_access_interfaces.'Default'" in errors[0]
+        assert "Suggestion: rename to 'default'" in errors[0]
+
+    def test_space_in_name_rejected(self):
+        """The motivating offender from production data."""
+        from unitysvc_core.models.validators import validate_access_interface_names
+
+        errors = validate_access_interface_names({"Provider SDK": {}})
+        assert len(errors) == 1
+        assert "user_access_interfaces.'Provider SDK'" in errors[0]
+        assert "rename to 'provider_sdk'" in errors[0]
+
+    def test_leading_dash_rejected(self):
+        from unitysvc_core.models.validators import validate_access_interface_names
+
+        errors = validate_access_interface_names({"-default": {}})
+        assert len(errors) == 1
+        assert "URL-friendly slug" in errors[0]
+
+    def test_dot_in_name_rejected(self):
+        """Dots are excluded — interface names aren't versioned/qualified."""
+        from unitysvc_core.models.validators import validate_access_interface_names
+
+        errors = validate_access_interface_names({"v1.0": {}})
+        assert len(errors) == 1
+
+    def test_multiple_offenders_each_reported(self):
+        from unitysvc_core.models.validators import validate_access_interface_names
+
+        errors = validate_access_interface_names(
+            {
+                "Provider SDK": {},
+                "OK_one": {},  # uppercase invalid
+                "ok_two": {},  # valid
+            }
+        )
+        assert len(errors) == 2
+        joined = "\n".join(errors)
+        assert "'Provider SDK'" in joined
+        assert "'OK_one'" in joined
+        assert "'ok_two'" not in joined
+

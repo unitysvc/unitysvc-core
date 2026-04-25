@@ -290,6 +290,55 @@ def validate_listing_smtp_base_urls(user_access_interfaces: dict[str, Any] | Non
     return errors
 
 
+# Slug pattern enforced on access interface names (the dictionary keys
+# of ``user_access_interfaces``). Names become the SDK handle for
+# routing — e.g. ``service.dispatch(interface="default")`` — so they
+# must be URL-safe and predictable across consumers (URLs, dict keys,
+# attribute access). The unitysvc backend enforces the same pattern on
+# AccessInterfaceBase.name; surfacing it at CLI validation time means
+# sellers see the violation before publishing.
+_INTERFACE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+def _suggest_interface_slug(name: str) -> str:
+    """Suggest a slug-conformant rename for a non-conforming interface key."""
+    suggested = re.sub(r"[^a-z0-9_-]+", "_", name.lower())
+    suggested = suggested.strip("_-")
+    # Slugs must start with a letter or digit; if stripping leaves
+    # something starting with a non-alphanumeric char (impossible after
+    # the strip above, but defensive) or an empty string, fall back.
+    if not suggested or not suggested[0].isalnum():
+        return "interface"
+    return suggested
+
+
+def validate_access_interface_names(user_access_interfaces: dict[str, Any] | None) -> list[str]:
+    """Validate that ``user_access_interfaces`` keys are URL-friendly slugs.
+
+    Each key in the ``user_access_interfaces`` dict becomes the access
+    interface's name on the backend and is used by SDK callers as the
+    routing handle. Allowing arbitrary strings (e.g. ``"Provider SDK"``)
+    breaks URL construction, attribute-style access, and pushes
+    inconsistent identifiers to scripts.
+
+    Returns a list of error messages (empty if all keys conform).
+    """
+    if not user_access_interfaces or not isinstance(user_access_interfaces, dict):
+        return []
+
+    errors: list[str] = []
+    for iface_name in user_access_interfaces:
+        if not isinstance(iface_name, str) or not _INTERFACE_NAME_PATTERN.match(iface_name):
+            suggested = _suggest_interface_slug(str(iface_name))
+            errors.append(
+                f"user_access_interfaces.'{iface_name}': interface name must be a "
+                "URL-friendly slug (lowercase ASCII alphanumeric plus '-' / '_', "
+                "must start with a letter or digit). "
+                f"Suggestion: rename to '{suggested}'."
+            )
+    return errors
+
+
 def suggest_valid_name(display_name: str, *, allow_slash: bool = False) -> str:
     """
     Suggest a valid name based on a display name.

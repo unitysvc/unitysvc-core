@@ -690,10 +690,16 @@ class DataValidator:
 
         # Validate S3 and SMTP gateway interfaces (listing_v1 only)
         if schema_name == "listing_v1":
-            from .models.validators import validate_listing_s3_base_urls, validate_listing_smtp_base_urls
+            from .models.validators import (
+                validate_access_interface_names,
+                validate_listing_s3_base_urls,
+                validate_listing_smtp_base_urls,
+            )
 
-            errors.extend(validate_listing_s3_base_urls(data.get("user_access_interfaces")))
-            errors.extend(validate_listing_smtp_base_urls(data.get("user_access_interfaces")))
+            uai = data.get("user_access_interfaces")
+            errors.extend(validate_access_interface_names(uai))
+            errors.extend(validate_listing_s3_base_urls(uai))
+            errors.extend(validate_listing_smtp_base_urls(uai))
 
         return len(errors) == 0, errors
 
