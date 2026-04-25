@@ -1,5 +1,25 @@
 {
   "$defs": {
+    "GroupOwnerTypeEnum": {
+      "description": "Type of entity that owns a service group.",
+      "enum": [
+        "platform",
+        "seller",
+        "customer"
+      ],
+      "title": "GroupOwnerTypeEnum",
+      "type": "string"
+    },
+    "GroupTypeEnum": {
+      "description": "Type of service group.\n\n- ``regular``: Enrollable, services-bearing group (the common case).\n- ``category``: Non-enrollable parent that organizes child groups.\n- ``misc``: System-generated catch-all for uncategorized services.",
+      "enum": [
+        "regular",
+        "category",
+        "misc"
+      ],
+      "title": "GroupTypeEnum",
+      "type": "string"
+    },
     "ServiceGroupStatusEnum": {
       "enum": [
         "draft",
@@ -14,6 +34,19 @@
   "additionalProperties": false,
   "description": "Service group file model with schema version validation.\n\nExample file:\n```json\n{\n    \"schema\": \"service_group_v1\",\n    \"name\": \"my-llm-services\",\n    \"display_name\": \"My LLM Services\",\n    \"description\": \"LLM services for targeted promotions\",\n    \"membership_rules\": {\n        \"expression\": \"service_type == 'llm'\"\n    },\n    \"status\": \"private\"\n}\n```",
   "properties": {
+    "access_interface_data_template": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Jinja2 template that renders to AccessInterfaceData JSON when populated with service data. Used by admin to auto-generate group-scoped AccessInterfaces.",
+      "title": "Access Interface Data Template"
+    },
     "description": {
       "anyOf": [
         {
@@ -34,6 +67,11 @@
       "title": "Display Name",
       "type": "string"
     },
+    "group_type": {
+      "$ref": "#/$defs/GroupTypeEnum",
+      "default": "regular",
+      "description": "Type of group: regular (enrollable), category (non-enrollable parent), or misc (system-generated catch-all)."
+    },
     "membership_rules": {
       "anyOf": [
         {
@@ -49,12 +87,14 @@
       "title": "Membership Rules"
     },
     "name": {
-      "description": "URL-friendly slug (unique per owner, e.g., 'my-llm-services')",
+      "description": "URL-friendly slug, unique per owner (e.g., 'my-llm-services'). Lowercase ASCII alphanumeric plus '-' / '_', must start with a letter or digit. Used as the public identifier in customer SDK paths, so changing it is a breaking change for callers.",
       "maxLength": 100,
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
       "title": "Name",
       "type": "string"
     },
-    "parent_group_name": {
+    "owner_id": {
       "anyOf": [
         {
           "type": "string"
@@ -64,7 +104,28 @@
         }
       ],
       "default": null,
-      "description": "Parent group name for hierarchy (resolved to ancestor_path)",
+      "description": "Owner ID (UUID string). For platform groups, the backend fills in the platform-superuser ID when omitted; for seller/customer groups it must be supplied.",
+      "title": "Owner Id"
+    },
+    "owner_type": {
+      "$ref": "#/$defs/GroupOwnerTypeEnum",
+      "default": "platform",
+      "description": "Type of owner (platform, seller, customer)"
+    },
+    "parent_group_name": {
+      "anyOf": [
+        {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Parent group name for hierarchy (resolved to ancestor_path by the backend). Must itself be a valid group slug.",
       "title": "Parent Group Name"
     },
     "schema": {

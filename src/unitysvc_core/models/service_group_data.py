@@ -17,25 +17,40 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from .base import ServiceGroupStatusEnum
+from .base import GroupOwnerTypeEnum, GroupTypeEnum, ServiceGroupStatusEnum
+
+# Slug pattern enforced on group ``name`` and ``parent_group_name``.
+# Matches the pattern enforced at the unitysvc backend on
+# ``ServiceGroupBase.name`` (CHECK constraint + Pydantic). Group names
+# are the public, stable identifier — they appear in URLs
+# (``/customer/groups/{name}``) and in SDK scripts that may run months
+# later — so they must be predictable across consumers.
+_GROUP_NAME_PATTERN = r"^[a-z0-9][a-z0-9_-]*$"
 
 
 class ServiceGroupData(BaseModel):
-    """Base data structure for service group information.
+    """Single data model for service group payloads.
 
-    This model contains the core fields needed to describe a service group,
-    without file-specific validation fields. It serves as:
-
-    1. The base class for file-level validation (with schema_version field)
-    2. The data structure for API payload validation
-    3. The shared model for both seller and admin CLIs
+    Used identically by seller publishing (``usvc seller …``), admin
+    uploads (``usvc_admin groups upload``), and backend ingest. The
+    only audience-specific behaviour is that seller workflows supply
+    their own ``owner_type`` / ``owner_id`` defaults at the CLI/backend
+    layer (the seller's own role) rather than the platform defaults
+    declared here, which is the right thing for admin tooling.
     """
 
     model_config = {"extra": "ignore"}
 
     name: str = Field(
+        min_length=1,
         max_length=100,
-        description="URL-friendly slug (unique per owner, e.g., 'my-llm-services')",
+        pattern=_GROUP_NAME_PATTERN,
+        description=(
+            "URL-friendly slug, unique per owner (e.g., 'my-llm-services'). "
+            "Lowercase ASCII alphanumeric plus '-' / '_', must start with a "
+            "letter or digit. Used as the public identifier in customer SDK "
+            "paths, so changing it is a breaking change for callers."
+        ),
     )
 
     display_name: str = Field(
@@ -54,9 +69,37 @@ class ServiceGroupData(BaseModel):
         description="Group status (draft, active, private, archived)",
     )
 
+    owner_type: GroupOwnerTypeEnum = Field(
+        default=GroupOwnerTypeEnum.platform,
+        description="Type of owner (platform, seller, customer)",
+    )
+
+    owner_id: str | None = Field(
+        default=None,
+        description=(
+            "Owner ID (UUID string). For platform groups, the backend "
+            "fills in the platform-superuser ID when omitted; for "
+            "seller/customer groups it must be supplied."
+        ),
+    )
+
+    group_type: GroupTypeEnum = Field(
+        default=GroupTypeEnum.regular,
+        description=(
+            "Type of group: regular (enrollable), category (non-enrollable "
+            "parent), or misc (system-generated catch-all)."
+        ),
+    )
+
     parent_group_name: str | None = Field(
         default=None,
-        description="Parent group name for hierarchy (resolved to ancestor_path)",
+        min_length=1,
+        max_length=100,
+        pattern=_GROUP_NAME_PATTERN,
+        description=(
+            "Parent group name for hierarchy (resolved to ancestor_path "
+            "by the backend). Must itself be a valid group slug."
+        ),
     )
 
     membership_rules: dict[str, Any] | None = Field(
@@ -67,6 +110,15 @@ class ServiceGroupData(BaseModel):
             "Available variables: service_id, seller_id, provider_id, seller_name, "
             "provider_name, name, display_name, service_type, status, listing_type, "
             "tags, is_featured"
+        ),
+    )
+
+    access_interface_data_template: str | None = Field(
+        default=None,
+        description=(
+            "Jinja2 template that renders to AccessInterfaceData JSON when "
+            "populated with service data. Used by admin to auto-generate "
+            "group-scoped AccessInterfaces."
         ),
     )
 
@@ -114,6 +166,25 @@ _DANGEROUS_PATTERNS = [
 ]
 
 
+_GROUP_NAME_RE = re.compile(_GROUP_NAME_PATTERN)
+_VALID_OWNER_TYPES = {e.value for e in GroupOwnerTypeEnum}
+_VALID_GROUP_TYPES = {e.value for e in GroupTypeEnum}
+
+
+def _check_slug(value: Any, field: str, errors: list[str]) -> None:
+    """Append a slug-format error for ``field`` if ``value`` doesn't conform."""
+    if not isinstance(value, str):
+        errors.append(f"{field} must be a string")
+    elif len(value) < 1 or len(value) > 100:
+        errors.append(f"{field} must be between 1 and 100 characters")
+    elif not _GROUP_NAME_RE.match(value):
+        errors.append(
+            f"{field} must be a URL-friendly slug — lowercase ASCII "
+            "alphanumeric plus '-' / '_', must start with a letter "
+            "or digit (e.g. 'my-llm-services')"
+        )
+
+
 def validate_service_group(data: dict[str, Any]) -> list[str]:
     """Validate a service group data dict.
 
@@ -128,15 +199,8 @@ def validate_service_group(data: dict[str, Any]) -> list[str]:
     # Required fields
     if "name" not in data:
         errors.append("Missing required field: name")
-    elif not isinstance(data["name"], str):
-        errors.append("name must be a string")
-    elif len(data["name"]) > 100:
-        errors.append("name must be at most 100 characters")
-    elif not re.match(r"^[a-z0-9]+(?:[-:][a-z0-9]+)*$", data["name"]):
-        errors.append(
-            "name must be lowercase alphanumeric with hyphens "
-            "(e.g., 'my-llm-services')"
-        )
+    else:
+        _check_slug(data["name"], "name", errors)
 
     if "display_name" not in data:
         errors.append("Missing required field: display_name")
@@ -151,6 +215,23 @@ def validate_service_group(data: dict[str, Any]) -> list[str]:
             errors.append("description must be a string")
         elif len(data["description"]) > 2000:
             errors.append("description must be at most 2000 characters")
+
+    if "parent_group_name" in data and data["parent_group_name"] is not None:
+        _check_slug(data["parent_group_name"], "parent_group_name", errors)
+
+    if "owner_type" in data and data["owner_type"] is not None:
+        if data["owner_type"] not in _VALID_OWNER_TYPES:
+            errors.append(
+                f"owner_type must be one of {sorted(_VALID_OWNER_TYPES)}, "
+                f"got {data['owner_type']!r}"
+            )
+
+    if "group_type" in data and data["group_type"] is not None:
+        if data["group_type"] not in _VALID_GROUP_TYPES:
+            errors.append(
+                f"group_type must be one of {sorted(_VALID_GROUP_TYPES)}, "
+                f"got {data['group_type']!r}"
+            )
 
     # Membership rules
     if "membership_rules" in data and data["membership_rules"] is not None:
