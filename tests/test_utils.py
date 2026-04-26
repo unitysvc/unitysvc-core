@@ -7,9 +7,11 @@ import pytest
 
 from unitysvc_core.utils import (
     DEFAULT_PRESET_FNS,
+    DataFileLoadWarning,
     compute_file_hash,
     deep_merge_dicts,
     expand_presets,
+    find_file_by_schema_and_name,
     find_files_by_schema,
     generate_content_based_key,
     get_basename,
@@ -330,3 +332,67 @@ def test_find_files_by_schema_returns_expanded_data(tmp_path: Path) -> None:
 
 def test_default_preset_fns_exports_doc_and_file() -> None:
     assert set(DEFAULT_PRESET_FNS) == {"doc_preset", "file_preset"}
+
+
+# =============================================================================
+# DataFileLoadWarning — discovery surfaces load failures instead of hiding them
+# =============================================================================
+
+
+def test_find_files_by_schema_warns_on_unknown_preset(tmp_path: Path) -> None:
+    """A listing referencing a non-existent preset must not be silently skipped.
+
+    Discovery used to swallow every exception with a bare ``except Exception:``,
+    which made "no listings found" indistinguishable from "every listing has a
+    typo." The function now emits :class:`DataFileLoadWarning` naming the file
+    and the underlying error so callers can debug.
+    """
+    listing = tmp_path / "listing.json"
+    listing.write_text(json.dumps({
+        "schema": "listing_v1",
+        "documents": {"T": {"$doc_preset": "this_preset_does_not_exist"}},
+    }))
+
+    find_files_by_schema.cache_clear()
+    with pytest.warns(DataFileLoadWarning, match="this_preset_does_not_exist"):
+        results = find_files_by_schema(tmp_path, "listing_v1")
+    assert results == []
+
+
+def test_find_files_by_schema_warns_on_malformed_json(tmp_path: Path) -> None:
+    bad = tmp_path / "broken.json"
+    bad.write_text("{ this is not json")
+
+    find_files_by_schema.cache_clear()
+    with pytest.warns(DataFileLoadWarning, match="broken.json"):
+        results = find_files_by_schema(tmp_path, "listing_v1")
+    assert results == []
+
+
+def test_find_file_by_schema_and_name_warns_on_load_failure(tmp_path: Path) -> None:
+    """A malformed file in the search directory must surface as a warning,
+    not as a silent ``None`` (which would be indistinguishable from
+    "the name didn't match anything")."""
+    bad = tmp_path / "broken.json"
+    bad.write_text("{ this is not json")
+
+    with pytest.warns(DataFileLoadWarning, match="broken.json"):
+        result = find_file_by_schema_and_name(tmp_path, "provider_v1", "name", "p")
+    assert result is None
+
+
+def test_find_files_by_schema_can_be_promoted_to_error(tmp_path: Path) -> None:
+    """Callers that want fail-fast can promote the warning to an exception."""
+    import warnings as _warnings
+
+    listing = tmp_path / "listing.json"
+    listing.write_text(json.dumps({
+        "schema": "listing_v1",
+        "documents": {"T": {"$doc_preset": "this_preset_does_not_exist"}},
+    }))
+
+    find_files_by_schema.cache_clear()
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error", DataFileLoadWarning)
+        with pytest.raises(DataFileLoadWarning):
+            find_files_by_schema(tmp_path, "listing_v1")

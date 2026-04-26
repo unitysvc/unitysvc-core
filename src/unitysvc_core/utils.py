@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import tomllib
+import warnings
 from collections.abc import Callable, Mapping
 from functools import lru_cache
 from pathlib import Path
@@ -458,6 +459,38 @@ def find_data_files(data_dir: Path, extensions: tuple[str, ...] | None = None) -
     return data_files
 
 
+class DataFileLoadWarning(UserWarning):
+    """Emitted when ``find_*`` discovery skips a data file because
+    :func:`load_data_file` raised.
+
+    A discovery walk that silently swallows load failures makes "no
+    files found" indistinguishable from "your files have a bug" —
+    e.g. a missing preset, malformed JSON, or a bad override merge.
+    Surfacing the underlying exception lets callers actually debug.
+
+    Standard ``warnings`` filters apply, so callers who genuinely
+    want fail-fast behaviour can promote this to an error with::
+
+        warnings.simplefilter("error", DataFileLoadWarning)
+
+    and callers who want the legacy silent skip can suppress it.
+    """
+
+
+def _warn_skipped(file_path: Path, exc: Exception) -> None:
+    """Emit :class:`DataFileLoadWarning` from a ``find_*`` discovery loop.
+
+    ``stacklevel=3`` so the warning points at the caller of the
+    discovery function (e.g. ``discover_code_examples``) rather than
+    at the line inside ``utils.py``.
+    """
+    warnings.warn(
+        f"Skipping {file_path}: {type(exc).__name__}: {exc}",
+        DataFileLoadWarning,
+        stacklevel=3,
+    )
+
+
 def find_file_by_schema_and_name(
     data_dir: Path, schema: str, name_field: str, name_value: str
 ) -> tuple[Path, str, dict[str, Any]] | None:
@@ -478,11 +511,11 @@ def find_file_by_schema_and_name(
     for data_file in data_files:
         try:
             data, file_format = load_data_file(data_file)
-            if data.get("schema") == schema and data.get(name_field) == name_value:
-                return data_file, file_format, data
-        except Exception:
-            # Skip files that can't be loaded
+        except Exception as exc:
+            _warn_skipped(data_file, exc)
             continue
+        if data.get("schema") == schema and data.get(name_field) == name_value:
+            return data_file, file_format, data
 
     return None
 
@@ -515,27 +548,26 @@ def find_files_by_schema(
     field_filter_dict = dict(field_filter) if field_filter else None
 
     for data_file in data_files:
-        try:
-            # Apply path filter
-            if path_filter and path_filter not in str(data_file):
-                continue
-
-            data, file_format = load_data_file(data_file, skip_override=skip_override)
-
-            # Check schema
-            if data.get("schema") != schema:
-                continue
-
-            # Apply field filters
-            if field_filter_dict:
-                if not all(data.get(k) == v for k, v in field_filter_dict.items()):
-                    continue
-
-            matching_files.append((data_file, file_format, data))
-
-        except Exception:
-            # Skip files that can't be loaded
+        # Apply path filter (cheap; do before the load).
+        if path_filter and path_filter not in str(data_file):
             continue
+
+        try:
+            data, file_format = load_data_file(data_file, skip_override=skip_override)
+        except Exception as exc:
+            _warn_skipped(data_file, exc)
+            continue
+
+        # Check schema
+        if data.get("schema") != schema:
+            continue
+
+        # Apply field filters
+        if field_filter_dict:
+            if not all(data.get(k) == v for k, v in field_filter_dict.items()):
+                continue
+
+        matching_files.append((data_file, file_format, data))
 
     return matching_files
 
