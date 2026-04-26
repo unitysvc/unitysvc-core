@@ -361,9 +361,7 @@ class DataValidator:
                     )
                     continue
                 except TemplateSyntaxError as exc:
-                    errors.append(
-                        f"{field_path}: Jinja syntax error in '{value}' — {exc.message}."
-                    )
+                    errors.append(f"{field_path}: Jinja syntax error in '{value}' — {exc.message}.")
                     continue
 
                 # Then scan the rendered form for secret references. Every
@@ -456,6 +454,64 @@ class DataValidator:
 
         return errors
 
+    def validate_llm_offering_metadata(self, data: dict[str, Any], schema_name: str) -> list[str]:
+        """Validate that LLM offerings declare ``context_length`` and ``parameter_count``.
+
+        Mirrors the backend's ingest-time check (see
+        ``backend/app/workers/ingest_tasks.py``) so authors get the
+        same feedback at ``usvc data validate`` time, before submitting
+        to the platform.
+
+        Rules for ``offering_v1`` files where ``service_type == "llm"``:
+
+        - ``details.context_length`` and ``details.parameter_count`` must
+          both be **present**. Missing keys are rejected.
+        - Each value must be either a **positive integer** (real value)
+          or **null** (asserted unknown).
+        - Negative numbers, zero, booleans, and non-int types are rejected.
+
+        Other service types (proxy, content, email, embedding, etc.) are
+        unaffected.
+
+        Args:
+            data: The offering data being validated.
+            schema_name: The schema name (only ``offering_v1`` is checked).
+
+        Returns:
+            List of validation error messages. Empty if the offering
+            isn't an LLM service or all rules pass.
+        """
+        errors: list[str] = []
+
+        if schema_name != "offering_v1":
+            return errors
+        if data.get("service_type") != "llm":
+            return errors
+
+        details = data.get("details")
+        if not isinstance(details, dict):
+            errors.append(
+                "LLM offerings must declare 'details' with context_length and "
+                "parameter_count. Use null for either if the value is unknown."
+            )
+            return errors
+
+        for key in ("context_length", "parameter_count"):
+            if key not in details:
+                errors.append(
+                    f"LLM offerings must declare details.{key}. Use null to assert that the value is unknown."
+                )
+                continue
+            value = details[key]
+            if value is None:
+                continue
+            # bool is a subclass of int in Python — reject explicitly so
+            # ``parameter_count: True`` doesn't silently coerce to 1.
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                errors.append(f"details.{key} must be a positive integer or null, got {value!r}.")
+
+        return errors
+
     def validate_connectivity_test_exists(self, data: dict[str, Any], schema_name: str) -> list[str]:
         """Validate that at least one connectivity_test document exists.
 
@@ -485,8 +541,7 @@ class DataValidator:
             return errors
 
         has_connectivity_test = any(
-            isinstance(doc, dict) and doc.get("category") == "connectivity_test"
-            for doc in documents.values()
+            isinstance(doc, dict) and doc.get("category") == "connectivity_test" for doc in documents.values()
         )
 
         if not has_connectivity_test:
@@ -680,6 +735,11 @@ class DataValidator:
         secret_ref_errors = self.validate_secret_references(data, schema_name, file_path)
         errors.extend(secret_ref_errors)
 
+        # Validate LLM offerings declare context_length and parameter_count
+        # (mirrors the backend's ingest-time check).
+        llm_metadata_errors = self.validate_llm_offering_metadata(data, schema_name)
+        errors.extend(llm_metadata_errors)
+
         # Validate service_options keys and value types (listing_v1 only)
         service_options_errors = self.validate_service_options_keys(data, schema_name)
         errors.extend(service_options_errors)
@@ -772,4 +832,3 @@ class DataValidator:
                 results[str(relative_path)] = (is_valid, errors)
 
         return results
-
