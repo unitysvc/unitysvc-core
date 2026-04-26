@@ -782,20 +782,14 @@ class TestSecretReferencesValidation:
         offering_path = svc_dir / "offering.json"
         offering_path.write_text(json.dumps({"schema": "offering_v1", **offering}))
         if listing is not None:
-            (svc_dir / "listing.json").write_text(
-                json.dumps({"schema": "listing_v1", **listing})
-            )
+            (svc_dir / "listing.json").write_text(json.dumps({"schema": "listing_v1", **listing}))
         return offering_path
 
     def test_literal_identifier_is_ok(self, schema_dir, example_data_dir, tmp_path):
         validator = DataValidator(example_data_dir, schema_dir)
         offering_path = self._write_pair(
             tmp_path,
-            offering={
-                "upstream_access_config": {
-                    "API": {"api_key": "${ customer_secrets.ECHO_API_KEY }"}
-                }
-            },
+            offering={"upstream_access_config": {"API": {"api_key": "${ customer_secrets.ECHO_API_KEY }"}}},
             listing={"service_options": {}},
         )
         import json
@@ -811,17 +805,11 @@ class TestSecretReferencesValidation:
             tmp_path,
             offering={
                 "upstream_access_config": {
-                    "S3": {
-                        "access_key": "${ customer_secrets.{{ params.s3_access_key_secret }} }"
-                    }
+                    "S3": {"access_key": "${ customer_secrets.{{ params.s3_access_key_secret }} }"}
                 }
             },
             listing={
-                "service_options": {
-                    "ops_testing_parameters": {
-                        "s3_access_key_secret": "SVCMARKET_S3_ACCESS_KEY_ID"
-                    }
-                }
+                "service_options": {"ops_testing_parameters": {"s3_access_key_secret": "SVCMARKET_S3_ACCESS_KEY_ID"}}
             },
         )
         import json
@@ -861,11 +849,7 @@ class TestSecretReferencesValidation:
             tmp_path,
             offering={
                 "upstream_access_config": {
-                    "S3": {
-                        "access_key": (
-                            "${ customer_secrets[enrollment_params.s3_access_key_secret] }"
-                        )
-                    }
+                    "S3": {"access_key": ("${ customer_secrets[enrollment_params.s3_access_key_secret] }")}
                 }
             },
             listing={"service_options": {"ops_testing_parameters": {}}},
@@ -884,13 +868,9 @@ class TestSecretReferencesValidation:
         offering_path = self._write_pair(
             tmp_path,
             offering={
-                "upstream_access_config": {
-                    "S3": {"access_key": "${ customer_secrets.{{ params.missing_key }} }"}
-                }
+                "upstream_access_config": {"S3": {"access_key": "${ customer_secrets.{{ params.missing_key }} }"}}
             },
-            listing={
-                "service_options": {"ops_testing_parameters": {"other_key": "VALUE"}}
-            },
+            listing={"service_options": {"ops_testing_parameters": {"other_key": "VALUE"}}},
         )
         import json
 
@@ -906,15 +886,9 @@ class TestSecretReferencesValidation:
         offering_path = self._write_pair(
             tmp_path,
             offering={
-                "upstream_access_config": {
-                    "API": {"api_key": "${ customer_secrets.{{ params.a }}-{{ params.b }} }"}
-                }
+                "upstream_access_config": {"API": {"api_key": "${ customer_secrets.{{ params.a }}-{{ params.b }} }"}}
             },
-            listing={
-                "service_options": {
-                    "ops_testing_parameters": {"a": "FOO", "b": "BAR"}
-                }
-            },
+            listing={"service_options": {"ops_testing_parameters": {"a": "FOO", "b": "BAR"}}},
         )
         import json
 
@@ -930,11 +904,7 @@ class TestSecretReferencesValidation:
         # No listing written — only offering.
         offering_path = self._write_pair(
             tmp_path,
-            offering={
-                "upstream_access_config": {
-                    "API": {"api_key": "${ secrets.MY_KEY }"}
-                }
-            },
+            offering={"upstream_access_config": {"API": {"api_key": "${ secrets.MY_KEY }"}}},
             listing=None,
         )
         import json
@@ -959,11 +929,7 @@ class TestSecretReferencesValidation:
         validator = DataValidator(example_data_dir, schema_dir)
         offering_path = self._write_pair(
             tmp_path,
-            offering={
-                "upstream_access_config": {
-                    "S3": {"region": "${ customer_secrets.S3_REGION ?? us-east-1 }"}
-                }
-            },
+            offering={"upstream_access_config": {"S3": {"region": "${ customer_secrets.S3_REGION ?? us-east-1 }"}}},
             listing={"service_options": {}},
         )
         import json
@@ -1001,19 +967,10 @@ class TestSecretReferencesValidation:
             tmp_path,
             offering={
                 "upstream_access_config": {
-                    "S3": {
-                        "region": (
-                            "${ customer_secrets.{{ params.region_secret }} "
-                            "?? us-east-1 }"
-                        )
-                    }
+                    "S3": {"region": ("${ customer_secrets.{{ params.region_secret }} ?? us-east-1 }")}
                 }
             },
-            listing={
-                "service_options": {
-                    "ops_testing_parameters": {"region_secret": "SVCPASS_S3_REGION"}
-                }
-            },
+            listing={"service_options": {"ops_testing_parameters": {"region_secret": "SVCPASS_S3_REGION"}}},
         )
         import json
 
@@ -1027,11 +984,7 @@ class TestSecretReferencesValidation:
         validator = DataValidator(example_data_dir, schema_dir)
         offering_path = self._write_pair(
             tmp_path,
-            offering={
-                "upstream_access_config": {
-                    "API": {"api_key": "${ secrets.OPTIONAL_KEY ?? }"}
-                }
-            },
+            offering={"upstream_access_config": {"API": {"api_key": "${ secrets.OPTIONAL_KEY ?? }"}}},
             listing={"service_options": {}},
         )
         import json
@@ -1124,3 +1077,169 @@ class TestAccessInterfaceNameValidation:
         assert "'OK_one'" in joined
         assert "'ok_two'" not in joined
 
+
+class TestLLMOfferingMetadataValidation:
+    """Tests for ``validate_llm_offering_metadata``.
+
+    Mirrors the backend's ingest-time check at
+    ``backend/app/workers/ingest_tasks.py``: LLM offerings must declare
+    ``details.context_length`` and ``details.parameter_count`` as either
+    a positive integer (real value) or null (asserted unknown). The CLI
+    validator catches violations at ``usvc data validate`` time so
+    authors see the error before submission.
+    """
+
+    def test_valid_positive_integers_pass(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "offering_v1",
+            "service_type": "llm",
+            "details": {"context_length": 128_000, "parameter_count": 7_000_000_000},
+        }
+        assert validator.validate_llm_offering_metadata(data, "offering_v1") == []
+
+    def test_explicit_null_values_pass(self, schema_dir, example_data_dir):
+        """null is the canonical 'unknown' marker — both fields may use it."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "offering_v1",
+            "service_type": "llm",
+            "details": {"context_length": None, "parameter_count": None},
+        }
+        assert validator.validate_llm_offering_metadata(data, "offering_v1") == []
+
+    def test_one_value_one_null_passes(self, schema_dir, example_data_dir):
+        """Closed-source models (GPT-*, Claude-*) typically have a known
+        context_length but unknown parameter_count — common shape."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "offering_v1",
+            "service_type": "llm",
+            "details": {"context_length": 200_000, "parameter_count": None},
+        }
+        assert validator.validate_llm_offering_metadata(data, "offering_v1") == []
+
+    def test_missing_context_length_rejected(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "offering_v1",
+            "service_type": "llm",
+            "details": {"parameter_count": 7_000_000_000},
+        }
+        errors = validator.validate_llm_offering_metadata(data, "offering_v1")
+        assert len(errors) == 1
+        assert "context_length" in errors[0]
+        assert "null" in errors[0]
+
+    def test_missing_parameter_count_rejected(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "offering_v1",
+            "service_type": "llm",
+            "details": {"context_length": 128_000},
+        }
+        errors = validator.validate_llm_offering_metadata(data, "offering_v1")
+        assert len(errors) == 1
+        assert "parameter_count" in errors[0]
+
+    def test_both_missing_rejected_separately(self, schema_dir, example_data_dir):
+        """Two distinct errors — easier to triage than one combined message."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "offering_v1",
+            "service_type": "llm",
+            "details": {},
+        }
+        errors = validator.validate_llm_offering_metadata(data, "offering_v1")
+        assert len(errors) == 2
+        joined = "\n".join(errors)
+        assert "context_length" in joined
+        assert "parameter_count" in joined
+
+    def test_details_missing_entirely_rejected(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {"schema": "offering_v1", "service_type": "llm"}
+        errors = validator.validate_llm_offering_metadata(data, "offering_v1")
+        assert len(errors) == 1
+        assert "context_length" in errors[0]
+        assert "parameter_count" in errors[0]
+
+    def test_zero_rejected(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "offering_v1",
+            "service_type": "llm",
+            "details": {"context_length": 0, "parameter_count": 7_000_000_000},
+        }
+        errors = validator.validate_llm_offering_metadata(data, "offering_v1")
+        assert len(errors) == 1
+        assert "context_length" in errors[0]
+        assert "positive integer" in errors[0]
+
+    def test_negative_rejected(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "offering_v1",
+            "service_type": "llm",
+            "details": {"context_length": 128_000, "parameter_count": -1},
+        }
+        errors = validator.validate_llm_offering_metadata(data, "offering_v1")
+        assert len(errors) == 1
+        assert "parameter_count" in errors[0]
+
+    def test_string_rejected(self, schema_dir, example_data_dir):
+        """A common manual-data mistake — '7B' as a string. Reject."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "offering_v1",
+            "service_type": "llm",
+            "details": {"context_length": 128_000, "parameter_count": "7B"},
+        }
+        errors = validator.validate_llm_offering_metadata(data, "offering_v1")
+        assert len(errors) == 1
+        assert "parameter_count" in errors[0]
+        assert "'7B'" in errors[0]
+
+    def test_bool_rejected(self, schema_dir, example_data_dir):
+        """bool is a subclass of int in Python — guard against
+        ``parameter_count: True`` silently coercing to 1."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "offering_v1",
+            "service_type": "llm",
+            "details": {"context_length": True, "parameter_count": 7_000_000_000},
+        }
+        errors = validator.validate_llm_offering_metadata(data, "offering_v1")
+        assert len(errors) == 1
+        assert "context_length" in errors[0]
+
+    def test_float_rejected(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "offering_v1",
+            "service_type": "llm",
+            "details": {"context_length": 128_000.0, "parameter_count": 7_000_000_000},
+        }
+        errors = validator.validate_llm_offering_metadata(data, "offering_v1")
+        assert len(errors) == 1
+        assert "context_length" in errors[0]
+
+    def test_non_llm_offering_skipped(self, schema_dir, example_data_dir):
+        """Other service types (proxy, content, email, embedding) are
+        not subject to this rule — no error even with empty details."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        for service_type in ("proxy", "content", "email", "embedding"):
+            data = {
+                "schema": "offering_v1",
+                "service_type": service_type,
+                "details": {},
+            }
+            assert validator.validate_llm_offering_metadata(data, "offering_v1") == []
+
+    def test_non_offering_schema_skipped(self, schema_dir, example_data_dir):
+        """The rule only applies to offering_v1. Listing / provider /
+        seller schemas are unaffected."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        for schema_name in ("listing_v1", "provider_v1", "seller_v1"):
+            data = {"schema": schema_name, "service_type": "llm"}
+            assert validator.validate_llm_offering_metadata(data, schema_name) == []
