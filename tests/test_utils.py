@@ -201,6 +201,46 @@ def test_find_files_by_schema(tmp_path: Path) -> None:
     assert offering_paths == {"b.json"}
 
 
+def test_find_files_by_schema_skips_non_dict_roots(tmp_path: Path) -> None:
+    """Discovery walks every ``*.json``/``*.toml`` under ``data_dir``.  A
+    real seller catalog directory typically has *some* sibling content
+    whose root isn't a dict — openapi specs (top-level array of routes),
+    Node lock files, mypy cache files.  A previous version of this
+    function called ``data.get("schema")`` unconditionally and aborted
+    the whole walk with ``AttributeError: 'list' object has no
+    attribute 'get'`` on the first such file.  Skip them cleanly so the
+    catalog scan keeps going.
+    """
+    # One real catalog file, plus three non-dict roots discovery should
+    # tolerate without crashing.
+    (tmp_path / "good.json").write_text(
+        json.dumps({"schema": "provider_v1", "name": "good"})
+    )
+    (tmp_path / "list_root.json").write_text(json.dumps([1, 2, 3]))
+    (tmp_path / "string_root.json").write_text(json.dumps("hello"))
+    (tmp_path / "null_root.json").write_text("null")
+
+    # Use a unique schema name to bypass ``find_files_by_schema``'s
+    # ``lru_cache`` — the prior test in this file populates the cache
+    # with ``provider_v1`` on a different ``tmp_path``.
+    files = find_files_by_schema(tmp_path, "provider_v1")
+    assert {Path(fp).name for fp, _fmt, _data in files} == {"good.json"}
+
+
+def test_find_file_by_schema_and_name_skips_non_dict_roots(tmp_path: Path) -> None:
+    """Sibling discovery helper has the same surface — pin both."""
+    (tmp_path / "good.json").write_text(
+        json.dumps({"schema": "listing_v1", "name": "wanted"})
+    )
+    (tmp_path / "list_root.json").write_text(json.dumps([{"schema": "listing_v1"}]))
+
+    result = find_file_by_schema_and_name(tmp_path, "listing_v1", "name", "wanted")
+    assert result is not None
+    fp, _fmt, data = result
+    assert Path(fp).name == "good.json"
+    assert data["name"] == "wanted"
+
+
 # =============================================================================
 # $preset sentinel expansion
 # =============================================================================

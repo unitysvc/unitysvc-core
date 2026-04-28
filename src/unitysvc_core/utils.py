@@ -514,6 +514,13 @@ def find_file_by_schema_and_name(
         except Exception as exc:
             _warn_skipped(data_file, exc)
             continue
+        # Discovery walks every ``*.json`` / ``*.toml`` under ``data_dir``,
+        # which sweeps in things like ``package-lock.json`` (top-level dict
+        # but no ``schema`` field) and openapi/mypy-cache files (top-level
+        # list). The schema check ignores the former, but the latter
+        # crashes ``.get`` — skip non-dict roots instead.
+        if not isinstance(data, dict):
+            continue
         if data.get("schema") == schema and data.get(name_field) == name_value:
             return data_file, file_format, data
 
@@ -556,6 +563,14 @@ def find_files_by_schema(
             data, file_format = load_data_file(data_file, skip_override=skip_override)
         except Exception as exc:
             _warn_skipped(data_file, exc)
+            continue
+
+        # Discovery sweeps in every ``*.json`` / ``*.toml`` under
+        # ``data_dir`` — including non-catalog files like openapi specs
+        # (top-level list), mypy cache, and Node lock files. ``.get``
+        # below blows up on a list root; skip non-dict roots cleanly so
+        # the catalog scan keeps going.
+        if not isinstance(data, dict):
             continue
 
         # Check schema
