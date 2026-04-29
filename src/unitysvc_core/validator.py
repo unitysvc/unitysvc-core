@@ -2,6 +2,7 @@
 
 import json
 import re
+import warnings
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -10,6 +11,24 @@ from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedE
 from jsonschema.validators import Draft7Validator
 
 from .utils import load_data_file
+
+
+class UnrecognizedDataFileWarning(UserWarning):
+    """Emitted when ``validate_all`` skips a JSON/TOML file because it
+    isn't service data (no ``schema`` field, or a ``schema`` value that
+    isn't one of the loaded schemas).
+
+    A seller repo legitimately contains non-data files at any depth —
+    e.g. ``gorse-config.example.toml`` (Docker config), ``pyproject.toml``,
+    ad-hoc ``requirements.txt`` siblings — and reporting them as
+    validation failures produces a noisy false positive that drowns out
+    real errors.
+
+    Standard ``warnings`` filters apply, so callers who want a strict
+    "every file must declare a schema" pass can promote this with::
+
+        warnings.simplefilter("error", UnrecognizedDataFileWarning)
+    """
 
 
 class DataValidationError(Exception):
@@ -823,6 +842,10 @@ class DataValidator:
                 relative_path = file_path.relative_to(self.data_dir)
 
                 if is_data_file:
+                    if not self._is_recognized_data_file(file_path):
+                        # Non-service file (config example, ad-hoc TOML, etc.) —
+                        # warn but don't fail the run.
+                        continue
                     is_valid, errors = self.validate_data_file(file_path)
                 elif is_template:
                     is_valid, errors = self.validate_jinja2_file(file_path)
@@ -832,3 +855,41 @@ class DataValidator:
                 results[str(relative_path)] = (is_valid, errors)
 
         return results
+
+    def _is_recognized_data_file(self, file_path: Path) -> bool:
+        """Return True if ``file_path`` parses and declares a known ``schema``.
+
+        Files that aren't service data (Docker configs, ``pyproject.toml``,
+        ``*.example.toml`` snippets, etc.) emit
+        :class:`UnrecognizedDataFileWarning` and are skipped by
+        :meth:`validate_all`.  Parse failures are *not* skipped — they
+        still flow through :meth:`validate_data_file` so the user sees
+        the syntax error.
+        """
+        data, _load_errors = self.load_data_file(file_path)
+        # Parse failure → let validate_data_file surface it.
+        if data is None:
+            return True
+        if not isinstance(data, dict):
+            warnings.warn(
+                f"Skipping {file_path}: not a dict at the top level",
+                UnrecognizedDataFileWarning,
+                stacklevel=3,
+            )
+            return False
+        schema_name = data.get("schema")
+        if schema_name is None:
+            warnings.warn(
+                f"Skipping {file_path}: no 'schema' field — not service data",
+                UnrecognizedDataFileWarning,
+                stacklevel=3,
+            )
+            return False
+        if schema_name not in self.schemas:
+            warnings.warn(
+                f"Skipping {file_path}: unrecognized schema {schema_name!r}",
+                UnrecognizedDataFileWarning,
+                stacklevel=3,
+            )
+            return False
+        return True
