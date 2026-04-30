@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unitysvc-core"
-version = "0.1.7"
+version = "0.1.8"
 description = "Shared data models and validation helpers for UnitySVC packages"
 readme = "README.md"
 authors = [{ name = "Bo Peng", email = "bo.peng@unitysvc.com" }]
@@ -30,7 +30,7 @@ dependencies = [
   # in unitysvc-data flows through to core automatically, so new
   # preset types don't require a core release. Consumers that don't
   # want expansion can pass preset_fns=None to load_data_file.
-  "unitysvc-data>=0.1.4",
+  "unitysvc-data>=0.1.9",
 ]
 requires-python = ">= 3.11"
 
