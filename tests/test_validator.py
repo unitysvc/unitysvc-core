@@ -1243,3 +1243,151 @@ class TestLLMOfferingMetadataValidation:
         for schema_name in ("listing_v1", "provider_v1", "seller_v1"):
             data = {"schema": schema_name, "service_type": "llm"}
             assert validator.validate_llm_offering_metadata(data, schema_name) == []
+
+
+class TestListingJinjaVarReferences:
+    """Tests for ``validate_listing_jinja_var_references``.
+
+    Catches the exact failure mode that bit unitysvc-services-http: a
+    ``{{ enrollment_vars.code }}`` in ``user_access_interfaces`` with no
+    matching key in ``service_options.enrollment_vars`` (commit
+    9fb93aa). Covers ``params`` / ``routing_vars`` / ``enrollment_vars``.
+    """
+
+    def test_undefined_enrollment_var_rejected(self):
+        """The exact unitysvc-services-http regression: enrollment_vars.code
+        referenced but service_options has no enrollment_vars."""
+        from unitysvc_core.models.validators import validate_listing_jinja_var_references
+
+        data = {
+            "user_access_interfaces": {
+                "http_gateway": {"base_url": "${API_GATEWAY_BASE_URL}/{{ enrollment_vars.code }}"},
+            },
+            "service_options": {"ops_testing_parameters": {"x": "1"}},
+        }
+        errors = validate_listing_jinja_var_references(data)
+        assert len(errors) == 1
+        assert "user_access_interfaces.http_gateway.base_url" in errors[0]
+        assert "code" in errors[0]
+        assert "enrollment_vars" in errors[0]
+
+    def test_defined_enrollment_var_passes(self):
+        from unitysvc_core.models.validators import validate_listing_jinja_var_references
+
+        data = {
+            "user_access_interfaces": {
+                "http_gateway": {"base_url": "${API_GATEWAY_BASE_URL}/{{ enrollment_vars.code }}"},
+            },
+            "service_options": {"enrollment_vars": {"code": "{{ enrollment_code(6) }}"}},
+        }
+        assert validate_listing_jinja_var_references(data) == []
+
+    def test_undefined_routing_var_rejected(self):
+        from unitysvc_core.models.validators import validate_listing_jinja_var_references
+
+        data = {
+            "user_access_interfaces": {
+                "default": {"api_key": "${ secrets.{{ routing_vars.env }}_KEY }"},
+            },
+            "service_options": {},
+        }
+        errors = validate_listing_jinja_var_references(data)
+        assert len(errors) == 1
+        assert "routing_vars" in errors[0] or "env" in errors[0]
+
+    def test_defined_routing_var_passes(self):
+        from unitysvc_core.models.validators import validate_listing_jinja_var_references
+
+        data = {
+            "user_access_interfaces": {
+                "default": {"api_key": "${ secrets.{{ routing_vars.env }}_KEY }"},
+            },
+            "service_options": {"routing_vars": {"env": "PROD"}},
+        }
+        assert validate_listing_jinja_var_references(data) == []
+
+    def test_params_resolved_from_user_parameters_schema(self):
+        """A ``params.X`` ref is satisfied by user_parameters_schema.properties
+        even without an ops_testing_parameters default — the runtime gets
+        the value from the user."""
+        from unitysvc_core.models.validators import validate_listing_jinja_var_references
+
+        data = {
+            "user_access_interfaces": {
+                "default": {"base_url": "https://api/{{ params.region }}"},
+            },
+            "user_parameters_schema": {"properties": {"region": {"type": "string"}}},
+        }
+        assert validate_listing_jinja_var_references(data) == []
+
+    def test_params_resolved_from_ops_testing_parameters(self):
+        from unitysvc_core.models.validators import validate_listing_jinja_var_references
+
+        data = {
+            "user_access_interfaces": {
+                "default": {"base_url": "https://api/{{ params.region }}"},
+            },
+            "service_options": {"ops_testing_parameters": {"region": "us-east-1"}},
+        }
+        assert validate_listing_jinja_var_references(data) == []
+
+    def test_undefined_params_rejected(self):
+        from unitysvc_core.models.validators import validate_listing_jinja_var_references
+
+        data = {
+            "user_access_interfaces": {
+                "default": {"base_url": "https://api/{{ params.region }}"},
+            },
+            "user_parameters_schema": {"properties": {"other": {"type": "string"}}},
+        }
+        errors = validate_listing_jinja_var_references(data)
+        assert len(errors) == 1
+        assert "region" in errors[0]
+
+    def test_nested_string_in_routing_key_checked(self):
+        """References inside nested dicts (e.g. routing_key.username) are
+        also validated."""
+        from unitysvc_core.models.validators import validate_listing_jinja_var_references
+
+        data = {
+            "user_access_interfaces": {
+                "smtp": {
+                    "base_url": "${SMTP_GATEWAY_BASE_URL}",
+                    "routing_key": {"username": "{{ enrollment_vars.mailbox }}"},
+                },
+            },
+            "service_options": {},
+        }
+        errors = validate_listing_jinja_var_references(data)
+        assert len(errors) == 1
+        assert "user_access_interfaces.smtp.routing_key.username" in errors[0]
+
+    def test_no_jinja_reference_skipped(self):
+        from unitysvc_core.models.validators import validate_listing_jinja_var_references
+
+        data = {
+            "user_access_interfaces": {
+                "default": {"base_url": "https://api.example.com/v1", "api_key": "${ secrets.KEY }"},
+            },
+            "service_options": {},
+        }
+        assert validate_listing_jinja_var_references(data) == []
+
+    def test_jinja_syntax_error_reported(self):
+        from unitysvc_core.models.validators import validate_listing_jinja_var_references
+
+        data = {
+            "user_access_interfaces": {
+                "default": {"base_url": "https://api/{{ unclosed"},
+            },
+        }
+        errors = validate_listing_jinja_var_references(data)
+        assert len(errors) == 1
+        assert "syntax error" in errors[0].lower()
+
+    def test_no_user_access_interfaces_skipped(self):
+        from unitysvc_core.models.validators import validate_listing_jinja_var_references
+
+        assert validate_listing_jinja_var_references({"schema": "listing_v1"}) == []
+        assert validate_listing_jinja_var_references({"user_access_interfaces": {}}) == []
+        assert validate_listing_jinja_var_references(None) == []

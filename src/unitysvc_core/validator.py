@@ -327,6 +327,12 @@ class DataValidator:
         # variables will still surface as clear errors from StrictUndefined.
         listing_data = self._load_sibling_listing(file_path) or {}
         service_options = listing_data.get("service_options") or {}
+        # Offering-side rendering uses *actual* values (not just key presence)
+        # because the rendered text feeds the secret-reference regex check
+        # below — e.g. `${ customer_secrets.{{ params.X }} }` must render to a
+        # real identifier.  This is why the listing's user_parameters_schema is
+        # NOT merged in here: a param with no ops_testing_parameters default
+        # would render empty and produce a confusingly-malformed secret ref.
         context = {
             "params": service_options.get("ops_testing_parameters") or {},
             "routing_vars": service_options.get("routing_vars") or {},
@@ -752,6 +758,7 @@ class DataValidator:
         if schema_name == "listing_v1":
             from .models.validators import (
                 validate_access_interface_names,
+                validate_listing_jinja_var_references,
                 validate_listing_s3_base_urls,
                 validate_listing_smtp_base_urls,
             )
@@ -760,6 +767,7 @@ class DataValidator:
             errors.extend(validate_access_interface_names(uai))
             errors.extend(validate_listing_s3_base_urls(uai))
             errors.extend(validate_listing_smtp_base_urls(uai))
+            errors.extend(validate_listing_jinja_var_references(data))
 
         return len(errors) == 0, errors
 

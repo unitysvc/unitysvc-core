@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedError
+
 
 def validate_name(name: str, entity_type: str, display_name: str | None = None, *, allow_slash: bool = False) -> str:
     """
@@ -371,3 +373,99 @@ def suggest_valid_name(display_name: str, *, allow_slash: bool = False) -> str:
         suggested = re.sub(r"-+", "-", suggested)
 
     return suggested
+
+
+def build_jinja_var_context(
+    service_options: dict[str, Any] | None,
+    user_parameters_schema: dict[str, Any] | None,
+) -> dict[str, dict[str, str]]:
+    """Build the ``{ params, routing_vars, enrollment_vars }`` context used to
+    render Jinja templates in listing/offering data.
+
+    A name is "defined" for validation purposes if it appears in:
+
+    - ``params``: ``user_parameters_schema.properties`` (declared parameters)
+      *or* ``service_options.ops_testing_parameters`` (test defaults). Either
+      means the runtime will have a value, so referencing it is safe.
+    - ``routing_vars``: keys of ``service_options.routing_vars``.
+    - ``enrollment_vars``: keys of ``service_options.enrollment_vars``.
+
+    Values are placeholder strings — only key presence matters for
+    StrictUndefined checks.
+    """
+    service_options = service_options or {}
+    user_parameters_schema = user_parameters_schema or {}
+
+    params_keys: set[str] = set()
+    props = user_parameters_schema.get("properties") if isinstance(user_parameters_schema, dict) else None
+    if isinstance(props, dict):
+        params_keys.update(k for k in props if isinstance(k, str))
+    ops_testing = service_options.get("ops_testing_parameters") if isinstance(service_options, dict) else None
+    if isinstance(ops_testing, dict):
+        params_keys.update(k for k in ops_testing if isinstance(k, str))
+
+    routing_vars = service_options.get("routing_vars") if isinstance(service_options, dict) else None
+    enrollment_vars = service_options.get("enrollment_vars") if isinstance(service_options, dict) else None
+
+    return {
+        "params": {k: "" for k in params_keys},
+        "routing_vars": {k: "" for k in routing_vars} if isinstance(routing_vars, dict) else {},
+        "enrollment_vars": {k: "" for k in enrollment_vars} if isinstance(enrollment_vars, dict) else {},
+    }
+
+
+def _iter_strings(value: Any, path: str):
+    """Yield ``(field_path, str_value)`` for every string nested under ``value``."""
+    if isinstance(value, str):
+        yield path, value
+    elif isinstance(value, dict):
+        for key, sub in value.items():
+            yield from _iter_strings(sub, f"{path}.{key}")
+    elif isinstance(value, list):
+        for idx, sub in enumerate(value):
+            yield from _iter_strings(sub, f"{path}[{idx}]")
+
+
+def validate_listing_jinja_var_references(data: dict[str, Any] | None) -> list[str]:
+    """Validate that every ``{{ params.X }}`` / ``{{ routing_vars.X }}`` /
+    ``{{ enrollment_vars.X }}`` reference inside ``user_access_interfaces``
+    resolves to a name declared in the listing's own
+    ``service_options`` / ``user_parameters_schema``.
+
+    A reference is undefined when:
+
+    - ``params.X``: ``X`` is not in ``user_parameters_schema.properties`` and
+      not in ``service_options.ops_testing_parameters``.
+    - ``routing_vars.X``: ``X`` is not in ``service_options.routing_vars``.
+    - ``enrollment_vars.X``: ``X`` is not in ``service_options.enrollment_vars``.
+
+    Returns a list of error messages (empty if all references resolve).
+    """
+    if not isinstance(data, dict):
+        return []
+    uai = data.get("user_access_interfaces")
+    if not isinstance(uai, dict) or not uai:
+        return []
+
+    context = build_jinja_var_context(data.get("service_options"), data.get("user_parameters_schema"))
+    jinja_env = Environment(undefined=StrictUndefined, autoescape=False)
+    errors: list[str] = []
+
+    for iface_name, iface in uai.items():
+        if not isinstance(iface, dict):
+            continue
+        for field_path, value in _iter_strings(iface, f"user_access_interfaces.{iface_name}"):
+            if "{{" not in value and "{%" not in value:
+                continue
+            try:
+                jinja_env.from_string(value).render(**context)
+            except UndefinedError as exc:
+                errors.append(
+                    f"{field_path}: Jinja reference is undefined — {exc.message}. "
+                    f"Define the variable in the listing's service_options "
+                    f"(enrollment_vars / routing_vars) or user_parameters_schema.properties (for params)."
+                )
+            except TemplateSyntaxError as exc:
+                errors.append(f"{field_path}: Jinja syntax error in '{value}' — {exc.message}.")
+
+    return errors
