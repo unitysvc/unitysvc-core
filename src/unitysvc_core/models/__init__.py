@@ -80,13 +80,6 @@ from .service_group_data import (
     validate_service_group,
 )
 from .service_group_v1 import ServiceGroupV1
-from .subscription_plan_v1 import (
-    SUBSCRIPTION_PLAN_SCHEMA_VERSION,
-    SubscriptionPlanStatusEnum,
-    SubscriptionPlanV1,
-    SubscriptionTierEnum,
-    is_subscription_plan_file,
-)
 from .validators import (
     SUPPORTED_SERVICE_OPTIONS,
     suggest_valid_name,
@@ -104,7 +97,6 @@ __all__ = [
     "ListingV1",
     "PromotionV1",
     "ServiceGroupV1",
-    "SubscriptionPlanV1",
     # Data models (for API/backend use)
     "ProviderData",
     "ServiceOfferingData",
@@ -188,9 +180,4 @@ __all__ = [
     "SERVICE_GROUP_SCHEMA_VERSION",
     "is_service_group_file",
     "validate_service_group",
-    # Subscription Plans
-    "SUBSCRIPTION_PLAN_SCHEMA_VERSION",
-    "SubscriptionTierEnum",
-    "SubscriptionPlanStatusEnum",
-    "is_subscription_plan_file",
 ]
