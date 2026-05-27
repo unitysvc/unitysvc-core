@@ -345,8 +345,11 @@ def validate_listing_gateway_base_urls(user_access_interfaces: dict[str, Any] | 
     - Each segment uses only letters, digits, ``.``, ``-``, ``_``, and
       starts with an alphanumeric character.
 
-    Jinja templates (containing ``{{`` or ``{%``) are skipped — they get
-    resolved per-enrollment and cannot be validated structurally here.
+    The portion before any Jinja template marker (``{{`` or ``{%``) is
+    treated as the static service-identifier prefix and validated; the
+    Jinja portion itself is dynamic per-enrollment and not part of the
+    platform identifier. A base_url that is entirely Jinja after the
+    prefix is skipped.
 
     Returns a list of error messages (empty if all valid).
     """
@@ -363,12 +366,19 @@ def validate_listing_gateway_base_urls(user_access_interfaces: dict[str, Any] | 
         if not base_url.startswith(_API_GATEWAY_PREFIX):
             continue
         suffix = base_url[len(_API_GATEWAY_PREFIX) :]
-        if "{{" in suffix or "{%" in suffix:
-            continue
+
+        # Truncate at the first Jinja marker. The static prefix is the
+        # platform identifier; everything from the marker on is
+        # per-enrollment substitution that should not be part of the
+        # service name.
+        jinja_idx = _earliest_jinja_marker(suffix)
+        if jinja_idx is not None:
+            suffix = suffix[:jinja_idx].rstrip("/")
 
         # Strip the single separator slash, if any. An empty suffix
-        # (i.e. ``${API_GATEWAY_BASE_URL}`` alone) is allowed — that's
-        # the gateway root, used by some platform-native interfaces.
+        # (i.e. ``${API_GATEWAY_BASE_URL}`` alone, or a base_url that is
+        # entirely Jinja substitution) is allowed — that's the gateway
+        # root, used by some platform-native interfaces and BYOE URLs.
         if suffix.startswith("/"):
             suffix = suffix[1:]
         if not suffix:
@@ -378,6 +388,14 @@ def validate_listing_gateway_base_urls(user_access_interfaces: dict[str, Any] | 
         errors.extend(_validate_gateway_path_prefix(suffix, field))
 
     return errors
+
+
+def _earliest_jinja_marker(s: str) -> int | None:
+    """Return the index of the earliest ``{{`` or ``{%`` in ``s``, or None."""
+    idx_var = s.find("{{")
+    idx_block = s.find("{%")
+    candidates = [i for i in (idx_var, idx_block) if i >= 0]
+    return min(candidates) if candidates else None
 
 
 def _validate_gateway_path_prefix(path: str, field: str) -> list[str]:

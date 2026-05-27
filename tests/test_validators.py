@@ -155,18 +155,36 @@ class TestValidateListingGatewayBaseUrls:
     def test_accepts_valid_base_urls(self, base_url: str) -> None:
         assert validate_listing_gateway_base_urls(_uai(base_url)) == []
 
-    # --- Jinja templates skipped -----------------------------------------
+    # --- Jinja templates: validate the static prefix --------------------
 
     @pytest.mark.parametrize(
         "base_url",
         [
+            # Entirely Jinja after the prefix — skipped (no static identifier).
             "${API_GATEWAY_BASE_URL}/{{ provider_name }}",
-            "${API_GATEWAY_BASE_URL}/anthropic/{{ params.model }}",
             "${API_GATEWAY_BASE_URL}/{% if x %}a{% else %}b{% endif %}",
+            # Static prefix is a valid 2-segment identifier; trailing
+            # Jinja is dynamic per-enrollment data.
+            "${API_GATEWAY_BASE_URL}/anthropic/{{ params.model }}",
+            "${API_GATEWAY_BASE_URL}/demo/echo-enrollment-vars/{{ enrollment_vars.code }}",
+            "${API_GATEWAY_BASE_URL}/ntfy/{{ enrollment_vars.topic }}",
+            "${API_GATEWAY_BASE_URL}/notify/discord-relay/{{ enrollment_vars.code }}",
         ],
     )
-    def test_skips_jinja_templates(self, base_url: str) -> None:
+    def test_accepts_valid_static_prefix_with_jinja_suffix(self, base_url: str) -> None:
         assert validate_listing_gateway_base_urls(_uai(base_url)) == []
+
+    def test_validates_static_prefix_even_when_jinja_follows(self) -> None:
+        """A bug in the static prefix (e.g. single-char segment) must still
+        be reported, even when a Jinja template appears later in the path.
+        Real-world example: ``/u/uptime/{{ code }}`` — ``u`` is single-char."""
+        errors = validate_listing_gateway_base_urls(
+            _uai("${API_GATEWAY_BASE_URL}/u/uptime/{{ enrollment_vars.code }}")
+        )
+        # `u` is single-char (catches the primitive-prefix collision) AND
+        # the static prefix has 2 slashes (catches the path-depth rule);
+        # both findings are useful.
+        assert any("at least 2 characters" in e for e in errors)
 
     # --- Non-gateway URLs skipped ----------------------------------------
 
