@@ -6,7 +6,7 @@
   "user_access_interfaces": {
     "provider_api": {
       "access_method": "http",
-      "base_url": "${API_GATEWAY_BASE_URL}/p/example-provider2",
+      "base_url": "${API_GATEWAY_BASE_URL}/example-provider2",
       "api_key": null
     }
   },

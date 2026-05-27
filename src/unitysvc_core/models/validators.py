@@ -94,6 +94,86 @@ def validate_name(name: str, entity_type: str, display_name: str | None = None, 
     return name
 
 
+# Service identifier (offering / listing name) pattern.
+#
+# Grammar per the platform service-naming convention:
+#   <name>[@<variant>]
+# where:
+#   - <name>     : letters/digits/dots/dashes/underscores; no '/' (the
+#                  provider namespace comes from the directory hierarchy)
+#   - <variant>  : optional seller-defined tag after '@'; same character
+#                  set as <name>
+#   - At most one '@' in the identifier
+#   - <name> must be at least 2 characters so it cannot collide with
+#     single-letter gateway primitive prefixes (a/, g/, b/, c/, l/, m/,
+#     r/, d/, t/, f/)
+_SERVICE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*(@[a-zA-Z0-9][a-zA-Z0-9._-]*)?$")
+
+
+def validate_service_identifier(name: str, entity_type: str) -> str:
+    """Validate a service identifier (offering or listing name).
+
+    Enforces the platform service-naming convention:
+
+    - At most one ``@`` separating the bare name from an optional
+      seller-defined variant tag (e.g. ``claude-opus-4-7@byok``).
+    - No ``/`` — the provider namespace comes from the directory
+      structure (``data/<provider>/services/<service-name>/``), not the
+      name field.
+    - The bare name (before ``@``) must be at least 2 characters so it
+      cannot collide with single-letter gateway primitive prefixes
+      (``a/``, ``g/``, ``b/``, ``c/``, ``l/``, ``m/``, ``r/``, ``d/``,
+      ``t/``, ``f/``).
+    - Alphanumeric + ``.`` ``-`` ``_`` characters only; must start with
+      an alphanumeric character.
+
+    Args:
+        name: The identifier to validate.
+        entity_type: Type of entity (``service``, ``listing``) for error
+            messages.
+
+    Returns:
+        The validated identifier (unchanged if valid).
+
+    Raises:
+        ValueError: If the identifier doesn't match the required pattern.
+
+    Examples:
+        Valid: ``claude-opus-4-7``, ``gpt-4`` (sticky default),
+        ``claude-opus-4-7@byok``, ``gpt-4@premium-eu`` (seller-defined
+        variant tag).
+
+        Invalid: ``models/gpt-4`` (use directory namespace instead),
+        ``a`` (too short — collides with /a/ primitive),
+        ``gpt-4@byok@premium`` (multiple ``@``),
+        ``-gpt-4`` (must start with alphanumeric).
+    """
+    if not name:
+        raise ValueError(f"Invalid {entity_type} name: name cannot be empty")
+
+    if not _SERVICE_IDENTIFIER_RE.match(name):
+        raise ValueError(
+            f"Invalid {entity_type} name '{name}'. "
+            f"Must match '<name>[@<variant>]' where <name> and <variant> use "
+            f"only letters, digits, dots, dashes, underscores. "
+            f"'/' is not allowed — the provider namespace comes from the "
+            f"directory structure, not the name field. "
+            f"At most one '@' is allowed (separates name from variant tag)."
+        )
+
+    bare_name = name.split("@", 1)[0]
+    if len(bare_name) < 2:
+        raise ValueError(
+            f"Invalid {entity_type} name '{name}': the bare name "
+            f"(before '@', if present) must be at least 2 characters. "
+            f"Single-character names are reserved to avoid collision with "
+            f"single-letter gateway primitive prefixes "
+            f"(a/, g/, b/, c/, l/, m/, r/, d/, t/, f/)."
+        )
+
+    return name
+
+
 SUPPORTED_SERVICE_OPTIONS: dict[str, type | tuple[type, ...]] = {
     "enrollment_vars": dict,  # Named Jinja2 template values rendered per-enrollment
     "routing_vars": dict,  # Seller-managed operational variables for template resolution at request time
@@ -203,9 +283,7 @@ def validate_s3_gateway_alias(alias: str, field: str) -> list[str]:
         return errors
 
     if alias.startswith("xn--"):
-        errors.append(
-            f"{field}: S3 gateway alias '{alias}' cannot start with 'xn--' (reserved prefix)"
-        )
+        errors.append(f"{field}: S3 gateway alias '{alias}' cannot start with 'xn--' (reserved prefix)")
     elif alias.endswith("-s3alias") or alias.endswith("--ol-s3"):
         errors.append(f"{field}: S3 gateway alias '{alias}' uses a reserved suffix")
 
@@ -231,11 +309,167 @@ def validate_listing_s3_base_urls(user_access_interfaces: dict[str, Any] | None)
         base_url = iface.get("base_url", "")
         if not isinstance(base_url, str) or not base_url.startswith(_S3_GATEWAY_PREFIX):
             continue
-        alias = base_url[len(_S3_GATEWAY_PREFIX):]
+        alias = base_url[len(_S3_GATEWAY_PREFIX) :]
         if "{{" in alias or "{%" in alias:
             continue
         field = f"user_access_interfaces.{iface_name}.base_url"
         errors.extend(validate_s3_gateway_alias(alias, field))
+
+    return errors
+
+
+_API_GATEWAY_PREFIX = "${API_GATEWAY_BASE_URL}"
+
+# Single path segment in a gateway service identifier (provider slot,
+# service-name slot, or variant tag). Alphanumeric + . - _, must start
+# with alphanumeric.
+_GATEWAY_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
+
+def validate_listing_gateway_base_urls(user_access_interfaces: dict[str, Any] | None) -> list[str]:
+    """Validate ``${API_GATEWAY_BASE_URL}/...`` base_urls against the
+    platform service-naming convention.
+
+    The path after ``${API_GATEWAY_BASE_URL}/`` must match:
+
+        <provider>[/<service-name>][@<variant>]
+
+    where:
+
+    - At most one ``/`` (provider, optionally followed by a service-name slot).
+    - At most one ``@`` (separates the name part from an optional
+      seller-defined variant tag).
+    - Each name segment is at least 2 characters so it cannot collide
+      with single-letter gateway primitive prefixes (``a/``, ``g/``,
+      ``b/``, ``c/``, ``l/``, ``m/``, ``r/``, ``d/``, ``t/``, ``f/``).
+    - Each segment uses only letters, digits, ``.``, ``-``, ``_``, and
+      starts with an alphanumeric character.
+
+    The portion before any dynamic substitution marker — Jinja
+    (``{{`` or ``{%``) or shell-style env-var (``${``) — is treated as
+    the static service-identifier prefix and validated. The dynamic
+    portion is per-enrollment substitution and not part of the platform
+    identifier. A base_url that is entirely dynamic after the
+    ``${API_GATEWAY_BASE_URL}/`` prefix is skipped.
+
+    Returns a list of error messages (empty if all valid).
+    """
+    if not user_access_interfaces or not isinstance(user_access_interfaces, dict):
+        return []
+
+    errors: list[str] = []
+    for iface_name, iface in user_access_interfaces.items():
+        if not isinstance(iface, dict):
+            continue
+        base_url = iface.get("base_url", "")
+        if not isinstance(base_url, str):
+            continue
+        if not base_url.startswith(_API_GATEWAY_PREFIX):
+            continue
+        suffix = base_url[len(_API_GATEWAY_PREFIX) :]
+
+        # Truncate at the first dynamic-substitution marker. The static
+        # prefix is the platform identifier; everything from the marker
+        # on is per-enrollment substitution (Jinja template or env-var
+        # reference) that should not be part of the service name.
+        dyn_idx = _earliest_dynamic_marker(suffix)
+        if dyn_idx is not None:
+            suffix = suffix[:dyn_idx].rstrip("/")
+
+        # Strip the single separator slash, if any. An empty suffix
+        # (i.e. ``${API_GATEWAY_BASE_URL}`` alone, or a base_url that is
+        # entirely Jinja substitution) is allowed — that's the gateway
+        # root, used by some platform-native interfaces and BYOE URLs.
+        if suffix.startswith("/"):
+            suffix = suffix[1:]
+        if not suffix:
+            continue
+
+        field = f"user_access_interfaces.{iface_name}.base_url"
+        errors.extend(_validate_gateway_path_prefix(suffix, field))
+
+    return errors
+
+
+def _earliest_dynamic_marker(s: str) -> int | None:
+    """Return the index of the earliest dynamic-substitution marker in ``s``.
+
+    Recognized markers:
+
+    - ``{{`` — Jinja variable
+    - ``{%`` — Jinja block tag
+    - ``${`` — shell-style env-var reference (e.g. ``${enrollment_vars.code}``)
+
+    Returns the smallest index where one of these markers begins, or
+    ``None`` if no markers are present.
+    """
+    candidates = [i for i in (s.find("{{"), s.find("{%"), s.find("${")) if i >= 0]
+    return min(candidates) if candidates else None
+
+
+def _validate_gateway_path_prefix(path: str, field: str) -> list[str]:
+    """Validate ``<provider>[/<service-name>][@<variant>]`` grammar.
+
+    ``path`` is the substring after ``${API_GATEWAY_BASE_URL}/`` (with
+    the leading slash already stripped). Returns error messages — empty
+    if valid.
+    """
+    errors: list[str] = []
+
+    # Split on '@' first to separate the name part from the optional variant.
+    at_parts = path.split("@")
+    if len(at_parts) > 2:
+        errors.append(
+            f"{field}: gateway path '{path}' has multiple '@' — "
+            f"at most one variant tag is allowed (e.g. '<provider>/<service>@byok')"
+        )
+        return errors
+
+    name_part = at_parts[0]
+    variant = at_parts[1] if len(at_parts) == 2 else None
+
+    # Name part: 1 or 2 segments separated by exactly one '/'.
+    segments = name_part.split("/")
+    if len(segments) > 2:
+        errors.append(
+            f"{field}: gateway path '{path}' has multiple '/' — "
+            f"expected '<provider>[/<service-name>]' (one '/' maximum, the provider "
+            f"slot is the entity running the upstream endpoint)"
+        )
+        return errors
+
+    for i, segment in enumerate(segments):
+        slot_name = "provider" if i == 0 else "service-name"
+        if not segment:
+            errors.append(f"{field}: gateway path '{path}' has an empty {slot_name} slot")
+            continue
+        if len(segment) < 2:
+            errors.append(
+                f"{field}: {slot_name} slot '{segment}' in gateway path '{path}' must be "
+                f"at least 2 characters (single-letter segments are reserved to avoid "
+                f"collision with gateway primitive prefixes a/, g/, b/, c/, l/, m/, r/, d/, t/, f/)"
+            )
+            continue
+        if not _GATEWAY_SEGMENT_RE.match(segment):
+            errors.append(
+                f"{field}: {slot_name} slot '{segment}' in gateway path '{path}' has "
+                f"invalid characters (allowed: letters, digits, '.', '-', '_'; must "
+                f"start with an alphanumeric character)"
+            )
+
+    # Variant tag: same per-segment rules.
+    if variant is not None:
+        if not variant:
+            errors.append(
+                f"{field}: gateway path '{path}' has an empty variant after '@' "
+                f"(use '<name>@<variant>' or omit the '@')"
+            )
+        elif not _GATEWAY_SEGMENT_RE.match(variant):
+            errors.append(
+                f"{field}: variant tag '{variant}' in gateway path '{path}' has "
+                f"invalid characters (allowed: letters, digits, '.', '-', '_'; must "
+                f"start with an alphanumeric character)"
+            )
 
     return errors
 
@@ -278,8 +512,7 @@ def validate_listing_smtp_base_urls(user_access_interfaces: dict[str, Any] | Non
         routing_key = iface.get("routing_key")
         if not isinstance(routing_key, dict):
             errors.append(
-                f"{field}.routing_key: SMTP gateway interface requires a "
-                f"'routing_key' dict with a 'username' entry"
+                f"{field}.routing_key: SMTP gateway interface requires a 'routing_key' dict with a 'username' entry"
             )
         else:
             username = routing_key.get("username")

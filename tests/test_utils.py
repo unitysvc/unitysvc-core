@@ -310,11 +310,11 @@ def test_expand_presets_leaves_unknown_dollar_keys_alone() -> None:
 
 
 def test_file_preset_rejects_overrides() -> None:
-    # file_preset takes only ``source`` — no **kwargs. The decorator's
-    # wrapper unpacks the flat form and delegates directly, so extra
-    # keys surface as Python's native TypeError on the call, which
-    # is as helpful as a custom message (names the bad kwargs).
-    with pytest.raises(TypeError, match="unexpected keyword argument"):
+    # file_preset takes only ``source`` — no **kwargs. The preset
+    # dispatcher in ``unitysvc_data`` validates the parameter set
+    # ahead of the call and raises a ValueError naming the offending
+    # keys, which is at least as helpful as Python's native TypeError.
+    with pytest.raises(ValueError, match="Unknown parameter"):
         expand_presets({"$file_preset": {"name": "s3_connectivity_v1", "desc": "x"}})
 
 

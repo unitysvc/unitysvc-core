@@ -6,7 +6,7 @@ from .documents import DocumentData
 from .listing_data import ServiceListingData
 from .pricing import Pricing
 from .service import AccessInterfaceData
-from .validators import validate_name
+from .validators import validate_service_identifier
 
 
 class ListingV1(ServiceListingData):
@@ -49,7 +49,12 @@ class ListingV1(ServiceListingData):
     @field_validator("name")
     @classmethod
     def validate_name_format(cls, v: str | None) -> str | None:
-        """Validate that listing name uses valid identifiers (allows slashes for hierarchical names)."""
+        """Validate the listing-name slot of the platform identifier.
+
+        Listing identifier grammar: ``<name>[@<variant>]``. No ``/`` —
+        provider namespace comes from the directory structure. See
+        ``validate_service_identifier`` for full rules.
+        """
         if v is None:
             return v
-        return validate_name(v, "listing", allow_slash=True)
+        return validate_service_identifier(v, "listing")
