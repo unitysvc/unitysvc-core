@@ -178,12 +178,32 @@ class TestValidateListingGatewayBaseUrls:
         """A bug in the static prefix (e.g. single-char segment) must still
         be reported, even when a Jinja template appears later in the path.
         Real-world example: ``/u/uptime/{{ code }}`` — ``u`` is single-char."""
-        errors = validate_listing_gateway_base_urls(
-            _uai("${API_GATEWAY_BASE_URL}/u/uptime/{{ enrollment_vars.code }}")
-        )
+        errors = validate_listing_gateway_base_urls(_uai("${API_GATEWAY_BASE_URL}/u/uptime/{{ enrollment_vars.code }}"))
         # `u` is single-char (catches the primitive-prefix collision) AND
         # the static prefix has 2 slashes (catches the path-depth rule);
         # both findings are useful.
+        assert any("at least 2 characters" in e for e in errors)
+
+    # --- Env-var substitution: ${...} treated like Jinja ----------------
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            # Entirely env-var after the prefix — skipped.
+            "${API_GATEWAY_BASE_URL}/${enrollment_vars.code}",
+            "${API_GATEWAY_BASE_URL}/${ enrollment_vars.code }",
+            # Valid static prefix + env-var suffix.
+            "${API_GATEWAY_BASE_URL}/labs/uptime/${enrollment_vars.code}",
+            "${API_GATEWAY_BASE_URL}/notify/discord/${enrollment_vars.code}",
+        ],
+    )
+    def test_accepts_valid_static_prefix_with_envvar_suffix(self, base_url: str) -> None:
+        assert validate_listing_gateway_base_urls(_uai(base_url)) == []
+
+    def test_validates_static_prefix_when_envvar_follows(self) -> None:
+        """A single-char provider in the static prefix is caught even when
+        the path ends in an env-var substitution like ``${ code }``."""
+        errors = validate_listing_gateway_base_urls(_uai("${API_GATEWAY_BASE_URL}/u/uptime/${enrollment_vars.code}"))
         assert any("at least 2 characters" in e for e in errors)
 
     # --- Non-gateway URLs skipped ----------------------------------------

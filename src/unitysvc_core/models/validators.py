@@ -345,11 +345,12 @@ def validate_listing_gateway_base_urls(user_access_interfaces: dict[str, Any] | 
     - Each segment uses only letters, digits, ``.``, ``-``, ``_``, and
       starts with an alphanumeric character.
 
-    The portion before any Jinja template marker (``{{`` or ``{%``) is
-    treated as the static service-identifier prefix and validated; the
-    Jinja portion itself is dynamic per-enrollment and not part of the
-    platform identifier. A base_url that is entirely Jinja after the
-    prefix is skipped.
+    The portion before any dynamic substitution marker — Jinja
+    (``{{`` or ``{%``) or shell-style env-var (``${``) — is treated as
+    the static service-identifier prefix and validated. The dynamic
+    portion is per-enrollment substitution and not part of the platform
+    identifier. A base_url that is entirely dynamic after the
+    ``${API_GATEWAY_BASE_URL}/`` prefix is skipped.
 
     Returns a list of error messages (empty if all valid).
     """
@@ -367,13 +368,13 @@ def validate_listing_gateway_base_urls(user_access_interfaces: dict[str, Any] | 
             continue
         suffix = base_url[len(_API_GATEWAY_PREFIX) :]
 
-        # Truncate at the first Jinja marker. The static prefix is the
-        # platform identifier; everything from the marker on is
-        # per-enrollment substitution that should not be part of the
-        # service name.
-        jinja_idx = _earliest_jinja_marker(suffix)
-        if jinja_idx is not None:
-            suffix = suffix[:jinja_idx].rstrip("/")
+        # Truncate at the first dynamic-substitution marker. The static
+        # prefix is the platform identifier; everything from the marker
+        # on is per-enrollment substitution (Jinja template or env-var
+        # reference) that should not be part of the service name.
+        dyn_idx = _earliest_dynamic_marker(suffix)
+        if dyn_idx is not None:
+            suffix = suffix[:dyn_idx].rstrip("/")
 
         # Strip the single separator slash, if any. An empty suffix
         # (i.e. ``${API_GATEWAY_BASE_URL}`` alone, or a base_url that is
@@ -390,11 +391,19 @@ def validate_listing_gateway_base_urls(user_access_interfaces: dict[str, Any] | 
     return errors
 
 
-def _earliest_jinja_marker(s: str) -> int | None:
-    """Return the index of the earliest ``{{`` or ``{%`` in ``s``, or None."""
-    idx_var = s.find("{{")
-    idx_block = s.find("{%")
-    candidates = [i for i in (idx_var, idx_block) if i >= 0]
+def _earliest_dynamic_marker(s: str) -> int | None:
+    """Return the index of the earliest dynamic-substitution marker in ``s``.
+
+    Recognized markers:
+
+    - ``{{`` — Jinja variable
+    - ``{%`` — Jinja block tag
+    - ``${`` — shell-style env-var reference (e.g. ``${enrollment_vars.code}``)
+
+    Returns the smallest index where one of these markers begins, or
+    ``None`` if no markers are present.
+    """
+    candidates = [i for i in (s.find("{{"), s.find("{%"), s.find("${")) if i >= 0]
     return min(candidates) if candidates else None
 
 
