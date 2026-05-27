@@ -36,6 +36,13 @@ class TestValidateServiceIdentifier:
             "model@managed",
             "ab@cd",  # minimum length on both sides
             "service-1.2@variant_3",
+            # Hierarchical creator/model names (HuggingFace, Replicate,
+            # Together, OpenRouter-style providers).
+            "Qwen/Qwen2.5-Coder-7B-Instruct",
+            "meta-llama/llama-4-scout-17b-16e-instruct",
+            "openai/gpt-oss-120b",
+            "Qwen/Qwen2.5-Coder-7B-Instruct@byok",
+            "meta-llama/llama-4-scout-17b-16e-instruct@premium-eu",
         ],
     )
     def test_accepts_valid_identifiers(self, name: str) -> None:
@@ -47,21 +54,35 @@ class TestValidateServiceIdentifier:
         with pytest.raises(ValueError, match="cannot be empty"):
             validate_service_identifier("", "service")
 
-    # --- Slash rejection ---------------------------------------------------
+    # --- Slash handling: hierarchical names accepted, malformed rejected --
 
     @pytest.mark.parametrize(
         "name",
         [
-            "models/gpt-4",
-            "provider/service",
-            "api/v1/completion",
-            "a/b/c",
-            "/leading-slash",
-            "trailing-slash/",
+            "Qwen/Qwen2.5",  # 2-segment creator/model
+            "openai/gpt-4/v2",  # 3-segment (rare but allowed structurally)
+            "a/b/c/d",  # would fail on segment length, not slash count
         ],
     )
-    def test_rejects_slash_in_identifier(self, name: str) -> None:
-        with pytest.raises(ValueError, match="'/' is not allowed"):
+    def test_accepts_or_evaluates_hierarchical_names(self, name: str) -> None:
+        """``/`` is permitted; per-segment rules decide acceptance."""
+        if "a/b/c" in name:
+            # Single-char segments are rejected on length, not slash count
+            with pytest.raises(ValueError, match="at least 2 characters"):
+                validate_service_identifier(name, "service")
+        else:
+            assert validate_service_identifier(name, "service") == name
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "/leading-slash",
+            "trailing-slash/",
+            "Qwen//Qwen2.5",  # consecutive '/'
+        ],
+    )
+    def test_rejects_empty_segments(self, name: str) -> None:
+        with pytest.raises(ValueError, match="empty segment|empty name"):
             validate_service_identifier(name, "service")
 
     # --- Multiple @ rejection ---------------------------------------------
@@ -71,11 +92,11 @@ class TestValidateServiceIdentifier:
         [
             "service@byok@premium",
             "model@@variant",
-            "a@b@c",
+            "ab@cd@ef",
         ],
     )
     def test_rejects_multiple_at(self, name: str) -> None:
-        with pytest.raises(ValueError, match="At most one '@'"):
+        with pytest.raises(ValueError, match="at most one '@'"):
             validate_service_identifier(name, "service")
 
     # --- Minimum-length rejection ------------------------------------------
@@ -220,19 +241,25 @@ class TestValidateListingGatewayBaseUrls:
     def test_skips_non_api_gateway_urls(self, base_url: str) -> None:
         assert validate_listing_gateway_base_urls(_uai(base_url)) == []
 
-    # --- Slash count rejection --------------------------------------------
+    # --- Hierarchical multi-segment paths ---------------------------------
 
     @pytest.mark.parametrize(
         "base_url",
         [
+            # HuggingFace-style creator/model paths (legitimate use)
+            "${API_GATEWAY_BASE_URL}/huggingface/Qwen/Qwen2.5-Coder-7B-Instruct",
+            "${API_GATEWAY_BASE_URL}/huggingface/meta-llama/llama-4-scout-17b-16e-instruct@byok",
+            # Provider with multi-segment service-name path
+            # passes structurally; semantic review catches deep-API-path bugs
             "${API_GATEWAY_BASE_URL}/anthropic/v1/messages",
-            "${API_GATEWAY_BASE_URL}/p/anthropic/v1",
-            "${API_GATEWAY_BASE_URL}/a/b/c/d",
         ],
     )
-    def test_rejects_too_many_slashes(self, base_url: str) -> None:
-        errors = validate_listing_gateway_base_urls(_uai(base_url))
-        assert any("multiple '/'" in e for e in errors)
+    def test_accepts_multi_segment_paths(self, base_url: str) -> None:
+        """The validator allows arbitrary segment depth as long as each
+        segment passes the per-segment rules. Sellers using deep paths
+        as a hidden API-path constraint should use ``routing_vars`` per
+        the convention; we don't enforce that structurally."""
+        assert validate_listing_gateway_base_urls(_uai(base_url)) == []
 
     # --- Single-character segment rejection -------------------------------
 

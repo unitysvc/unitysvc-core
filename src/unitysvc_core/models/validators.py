@@ -94,20 +94,10 @@ def validate_name(name: str, entity_type: str, display_name: str | None = None, 
     return name
 
 
-# Service identifier (offering / listing name) pattern.
-#
-# Grammar per the platform service-naming convention:
-#   <name>[@<variant>]
-# where:
-#   - <name>     : letters/digits/dots/dashes/underscores; no '/' (the
-#                  provider namespace comes from the directory hierarchy)
-#   - <variant>  : optional seller-defined tag after '@'; same character
-#                  set as <name>
-#   - At most one '@' in the identifier
-#   - <name> must be at least 2 characters so it cannot collide with
-#     single-letter gateway primitive prefixes (a/, g/, b/, c/, l/, m/,
-#     r/, d/, t/, f/)
-_SERVICE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*(@[a-zA-Z0-9][a-zA-Z0-9._-]*)?$")
+# Single path segment in a service identifier (provider slot, service-name
+# slot, or any sub-segment of a hierarchical name like Qwen/Qwen2.5-...).
+# Alphanumeric + ``.`` ``-`` ``_``, must start with alphanumeric.
+_SERVICE_NAME_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
 
 def validate_service_identifier(name: str, entity_type: str) -> str:
@@ -115,17 +105,18 @@ def validate_service_identifier(name: str, entity_type: str) -> str:
 
     Enforces the platform service-naming convention:
 
-    - At most one ``@`` separating the bare name from an optional
-      seller-defined variant tag (e.g. ``claude-opus-4-7@byok``).
-    - No ``/`` — the provider namespace comes from the directory
-      structure (``data/<provider>/services/<service-name>/``), not the
-      name field.
-    - The bare name (before ``@``) must be at least 2 characters so it
-      cannot collide with single-letter gateway primitive prefixes
-      (``a/``, ``g/``, ``b/``, ``c/``, ``l/``, ``m/``, ``r/``, ``d/``,
-      ``t/``, ``f/``).
-    - Alphanumeric + ``.`` ``-`` ``_`` characters only; must start with
-      an alphanumeric character.
+    - The identifier has the form ``<name>[@<variant>]`` with at most one
+      ``@`` separating the bare name from an optional seller-defined
+      variant tag (e.g. ``claude-opus-4-7@byok``, ``gpt-4@premium-eu``).
+    - ``<name>`` may be a single segment (``claude-opus-4-7``) or a
+      hierarchical ``segment/segment[/segment...]`` form for providers
+      whose model identifiers use ``creator/model`` (e.g. HuggingFace's
+      ``Qwen/Qwen2.5-Coder-7B-Instruct``).
+    - Each segment must be at least 2 characters so it cannot collide
+      with single-letter gateway primitive prefixes (``a/``, ``g/``,
+      ``b/``, ``c/``, ``l/``, ``m/``, ``r/``, ``d/``, ``t/``, ``f/``).
+    - Each segment uses only letters, digits, ``.``, ``-``, ``_`` and
+      must start with an alphanumeric character.
 
     Args:
         name: The identifier to validate.
@@ -139,37 +130,63 @@ def validate_service_identifier(name: str, entity_type: str) -> str:
         ValueError: If the identifier doesn't match the required pattern.
 
     Examples:
-        Valid: ``claude-opus-4-7``, ``gpt-4`` (sticky default),
-        ``claude-opus-4-7@byok``, ``gpt-4@premium-eu`` (seller-defined
-        variant tag).
+        Valid: ``claude-opus-4-7``, ``gpt-4``,
+        ``Qwen/Qwen2.5-Coder-7B-Instruct`` (HuggingFace hierarchical),
+        ``claude-opus-4-7@byok``, ``Qwen/Qwen2.5-Coder-7B-Instruct@byok``.
 
-        Invalid: ``models/gpt-4`` (use directory namespace instead),
-        ``a`` (too short — collides with /a/ primitive),
+        Invalid: ``a`` (single-char — collides with /a/ primitive),
+        ``a/b`` (single-char first segment),
+        ``Qwen/x`` (single-char second segment),
         ``gpt-4@byok@premium`` (multiple ``@``),
-        ``-gpt-4`` (must start with alphanumeric).
+        ``-gpt-4`` (must start with alphanumeric),
+        ``Qwen//model`` (empty segment from ``//``).
     """
     if not name:
         raise ValueError(f"Invalid {entity_type} name: name cannot be empty")
 
-    if not _SERVICE_IDENTIFIER_RE.match(name):
+    at_parts = name.split("@")
+    if len(at_parts) > 2:
         raise ValueError(
-            f"Invalid {entity_type} name '{name}'. "
-            f"Must match '<name>[@<variant>]' where <name> and <variant> use "
-            f"only letters, digits, dots, dashes, underscores. "
-            f"'/' is not allowed — the provider namespace comes from the "
-            f"directory structure, not the name field. "
-            f"At most one '@' is allowed (separates name from variant tag)."
+            f"Invalid {entity_type} name '{name}': at most one '@' is allowed (separates name from variant tag)."
         )
 
-    bare_name = name.split("@", 1)[0]
-    if len(bare_name) < 2:
-        raise ValueError(
-            f"Invalid {entity_type} name '{name}': the bare name "
-            f"(before '@', if present) must be at least 2 characters. "
-            f"Single-character names are reserved to avoid collision with "
-            f"single-letter gateway primitive prefixes "
-            f"(a/, g/, b/, c/, l/, m/, r/, d/, t/, f/)."
-        )
+    bare_name = at_parts[0]
+    if not bare_name:
+        raise ValueError(f"Invalid {entity_type} name '{name}': empty name before '@'.")
+
+    for segment in bare_name.split("/"):
+        if not segment:
+            raise ValueError(
+                f"Invalid {entity_type} name '{name}': empty segment (consecutive or leading/trailing '/')."
+            )
+        if len(segment) < 2:
+            raise ValueError(
+                f"Invalid {entity_type} name '{name}': segment '{segment}' "
+                f"must be at least 2 characters. Single-character segments "
+                f"are reserved to avoid collision with single-letter gateway "
+                f"primitive prefixes (a/, g/, b/, c/, l/, m/, r/, d/, t/, f/)."
+            )
+        if not _SERVICE_NAME_SEGMENT_RE.match(segment):
+            raise ValueError(
+                f"Invalid {entity_type} name '{name}': segment '{segment}' "
+                f"has invalid characters (allowed: letters, digits, '.', "
+                f"'-', '_'; must start with an alphanumeric character)."
+            )
+
+    if len(at_parts) == 2:
+        variant = at_parts[1]
+        if not variant:
+            raise ValueError(f"Invalid {entity_type} name '{name}': empty variant after '@'.")
+        for segment in variant.split("/"):
+            if not segment:
+                raise ValueError(f"Invalid {entity_type} name '{name}': empty variant segment.")
+            if not _SERVICE_NAME_SEGMENT_RE.match(segment):
+                raise ValueError(
+                    f"Invalid {entity_type} name '{name}': variant segment "
+                    f"'{segment}' has invalid characters (allowed: letters, "
+                    f"digits, '.', '-', '_'; must start with an alphanumeric "
+                    f"character)."
+                )
 
     return name
 
@@ -408,11 +425,13 @@ def _earliest_dynamic_marker(s: str) -> int | None:
 
 
 def _validate_gateway_path_prefix(path: str, field: str) -> list[str]:
-    """Validate ``<provider>[/<service-name>][@<variant>]`` grammar.
+    """Validate ``<provider>[/<segment>...][@<variant>]`` grammar.
 
     ``path`` is the substring after ``${API_GATEWAY_BASE_URL}/`` (with
-    the leading slash already stripped). Returns error messages — empty
-    if valid.
+    the leading slash already stripped). The first segment is the
+    provider slot; subsequent segments are part of the service-name and
+    may be hierarchical (e.g. HuggingFace's ``Qwen/Qwen2.5-Coder-7B-Instruct``).
+    Returns error messages — empty if valid.
     """
     errors: list[str] = []
 
@@ -428,48 +447,48 @@ def _validate_gateway_path_prefix(path: str, field: str) -> list[str]:
     name_part = at_parts[0]
     variant = at_parts[1] if len(at_parts) == 2 else None
 
-    # Name part: 1 or 2 segments separated by exactly one '/'.
+    # Name part: 1 or more segments separated by '/'.
     segments = name_part.split("/")
-    if len(segments) > 2:
-        errors.append(
-            f"{field}: gateway path '{path}' has multiple '/' — "
-            f"expected '<provider>[/<service-name>]' (one '/' maximum, the provider "
-            f"slot is the entity running the upstream endpoint)"
-        )
-        return errors
-
     for i, segment in enumerate(segments):
-        slot_name = "provider" if i == 0 else "service-name"
+        slot_name = "provider" if i == 0 else f"segment {i + 1}"
         if not segment:
-            errors.append(f"{field}: gateway path '{path}' has an empty {slot_name} slot")
+            errors.append(
+                f"{field}: gateway path '{path}' has an empty {slot_name} (consecutive or leading/trailing '/')"
+            )
             continue
         if len(segment) < 2:
             errors.append(
-                f"{field}: {slot_name} slot '{segment}' in gateway path '{path}' must be "
+                f"{field}: {slot_name} '{segment}' in gateway path '{path}' must be "
                 f"at least 2 characters (single-letter segments are reserved to avoid "
                 f"collision with gateway primitive prefixes a/, g/, b/, c/, l/, m/, r/, d/, t/, f/)"
             )
             continue
         if not _GATEWAY_SEGMENT_RE.match(segment):
             errors.append(
-                f"{field}: {slot_name} slot '{segment}' in gateway path '{path}' has "
+                f"{field}: {slot_name} '{segment}' in gateway path '{path}' has "
                 f"invalid characters (allowed: letters, digits, '.', '-', '_'; must "
                 f"start with an alphanumeric character)"
             )
 
-    # Variant tag: same per-segment rules.
+    # Variant tag: per-segment rules apply (variants are rarely hierarchical,
+    # but we don't forbid it).
     if variant is not None:
         if not variant:
             errors.append(
                 f"{field}: gateway path '{path}' has an empty variant after '@' "
                 f"(use '<name>@<variant>' or omit the '@')"
             )
-        elif not _GATEWAY_SEGMENT_RE.match(variant):
-            errors.append(
-                f"{field}: variant tag '{variant}' in gateway path '{path}' has "
-                f"invalid characters (allowed: letters, digits, '.', '-', '_'; must "
-                f"start with an alphanumeric character)"
-            )
+        else:
+            for segment in variant.split("/"):
+                if not segment:
+                    errors.append(f"{field}: variant in gateway path '{path}' has an empty segment")
+                    continue
+                if not _GATEWAY_SEGMENT_RE.match(segment):
+                    errors.append(
+                        f"{field}: variant segment '{segment}' in gateway path '{path}' has "
+                        f"invalid characters (allowed: letters, digits, '.', '-', '_'; must "
+                        f"start with an alphanumeric character)"
+                    )
 
     return errors
 
