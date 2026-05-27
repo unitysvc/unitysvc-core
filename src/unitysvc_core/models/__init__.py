@@ -87,6 +87,7 @@ from .validators import (
     validate_listing_smtp_base_urls,
     validate_name,
     validate_s3_gateway_alias,
+    validate_service_identifier,
     validate_service_options,
 )
 
@@ -165,6 +166,7 @@ __all__ = [
     # Validators
     "SUPPORTED_SERVICE_OPTIONS",
     "validate_name",
+    "validate_service_identifier",
     "validate_service_options",
     "validate_s3_gateway_alias",
     "validate_listing_s3_base_urls",

@@ -7,7 +7,7 @@ from .documents import DocumentData
 from .offering_data import ServiceOfferingData
 from .pricing import Pricing
 from .service import UpstreamAccessConfigData
-from .validators import validate_name
+from .validators import validate_service_identifier
 
 
 class OfferingV1(ServiceOfferingData):
@@ -64,5 +64,10 @@ class OfferingV1(ServiceOfferingData):
     @field_validator("name")
     @classmethod
     def validate_name_format(cls, v: str) -> str:
-        """Validate that service name uses valid identifiers (allows slashes for hierarchical names)."""
-        return validate_name(v, "service", allow_slash=True)
+        """Validate the service-name slot of the platform identifier.
+
+        Service identifier grammar: ``<name>[@<variant>]``. No ``/`` —
+        provider namespace comes from the directory structure. See
+        ``validate_service_identifier`` for full rules.
+        """
+        return validate_service_identifier(v, "service")

@@ -94,6 +94,86 @@ def validate_name(name: str, entity_type: str, display_name: str | None = None, 
     return name
 
 
+# Service identifier (offering / listing name) pattern.
+#
+# Grammar per the platform service-naming convention:
+#   <name>[@<variant>]
+# where:
+#   - <name>     : letters/digits/dots/dashes/underscores; no '/' (the
+#                  provider namespace comes from the directory hierarchy)
+#   - <variant>  : optional seller-defined tag after '@'; same character
+#                  set as <name>
+#   - At most one '@' in the identifier
+#   - <name> must be at least 2 characters so it cannot collide with
+#     single-letter gateway primitive prefixes (a/, g/, b/, c/, l/, m/,
+#     r/, d/, t/, f/)
+_SERVICE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*(@[a-zA-Z0-9][a-zA-Z0-9._-]*)?$")
+
+
+def validate_service_identifier(name: str, entity_type: str) -> str:
+    """Validate a service identifier (offering or listing name).
+
+    Enforces the platform service-naming convention:
+
+    - At most one ``@`` separating the bare name from an optional
+      seller-defined variant tag (e.g. ``claude-opus-4-7@byok``).
+    - No ``/`` — the provider namespace comes from the directory
+      structure (``data/<provider>/services/<service-name>/``), not the
+      name field.
+    - The bare name (before ``@``) must be at least 2 characters so it
+      cannot collide with single-letter gateway primitive prefixes
+      (``a/``, ``g/``, ``b/``, ``c/``, ``l/``, ``m/``, ``r/``, ``d/``,
+      ``t/``, ``f/``).
+    - Alphanumeric + ``.`` ``-`` ``_`` characters only; must start with
+      an alphanumeric character.
+
+    Args:
+        name: The identifier to validate.
+        entity_type: Type of entity (``service``, ``listing``) for error
+            messages.
+
+    Returns:
+        The validated identifier (unchanged if valid).
+
+    Raises:
+        ValueError: If the identifier doesn't match the required pattern.
+
+    Examples:
+        Valid: ``claude-opus-4-7``, ``gpt-4`` (sticky default),
+        ``claude-opus-4-7@byok``, ``gpt-4@premium-eu`` (seller-defined
+        variant tag).
+
+        Invalid: ``models/gpt-4`` (use directory namespace instead),
+        ``a`` (too short — collides with /a/ primitive),
+        ``gpt-4@byok@premium`` (multiple ``@``),
+        ``-gpt-4`` (must start with alphanumeric).
+    """
+    if not name:
+        raise ValueError(f"Invalid {entity_type} name: name cannot be empty")
+
+    if not _SERVICE_IDENTIFIER_RE.match(name):
+        raise ValueError(
+            f"Invalid {entity_type} name '{name}'. "
+            f"Must match '<name>[@<variant>]' where <name> and <variant> use "
+            f"only letters, digits, dots, dashes, underscores. "
+            f"'/' is not allowed — the provider namespace comes from the "
+            f"directory structure, not the name field. "
+            f"At most one '@' is allowed (separates name from variant tag)."
+        )
+
+    bare_name = name.split("@", 1)[0]
+    if len(bare_name) < 2:
+        raise ValueError(
+            f"Invalid {entity_type} name '{name}': the bare name "
+            f"(before '@', if present) must be at least 2 characters. "
+            f"Single-character names are reserved to avoid collision with "
+            f"single-letter gateway primitive prefixes "
+            f"(a/, g/, b/, c/, l/, m/, r/, d/, t/, f/)."
+        )
+
+    return name
+
+
 SUPPORTED_SERVICE_OPTIONS: dict[str, type | tuple[type, ...]] = {
     "enrollment_vars": dict,  # Named Jinja2 template values rendered per-enrollment
     "routing_vars": dict,  # Seller-managed operational variables for template resolution at request time
@@ -203,9 +283,7 @@ def validate_s3_gateway_alias(alias: str, field: str) -> list[str]:
         return errors
 
     if alias.startswith("xn--"):
-        errors.append(
-            f"{field}: S3 gateway alias '{alias}' cannot start with 'xn--' (reserved prefix)"
-        )
+        errors.append(f"{field}: S3 gateway alias '{alias}' cannot start with 'xn--' (reserved prefix)")
     elif alias.endswith("-s3alias") or alias.endswith("--ol-s3"):
         errors.append(f"{field}: S3 gateway alias '{alias}' uses a reserved suffix")
 
@@ -231,7 +309,7 @@ def validate_listing_s3_base_urls(user_access_interfaces: dict[str, Any] | None)
         base_url = iface.get("base_url", "")
         if not isinstance(base_url, str) or not base_url.startswith(_S3_GATEWAY_PREFIX):
             continue
-        alias = base_url[len(_S3_GATEWAY_PREFIX):]
+        alias = base_url[len(_S3_GATEWAY_PREFIX) :]
         if "{{" in alias or "{%" in alias:
             continue
         field = f"user_access_interfaces.{iface_name}.base_url"
@@ -278,8 +356,7 @@ def validate_listing_smtp_base_urls(user_access_interfaces: dict[str, Any] | Non
         routing_key = iface.get("routing_key")
         if not isinstance(routing_key, dict):
             errors.append(
-                f"{field}.routing_key: SMTP gateway interface requires a "
-                f"'routing_key' dict with a 'username' entry"
+                f"{field}.routing_key: SMTP gateway interface requires a 'routing_key' dict with a 'username' entry"
             )
         else:
             username = routing_key.get("username")
