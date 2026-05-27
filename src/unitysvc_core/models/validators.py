@@ -318,6 +318,135 @@ def validate_listing_s3_base_urls(user_access_interfaces: dict[str, Any] | None)
     return errors
 
 
+_API_GATEWAY_PREFIX = "${API_GATEWAY_BASE_URL}"
+
+# Single path segment in a gateway service identifier (provider slot,
+# service-name slot, or variant tag). Alphanumeric + . - _, must start
+# with alphanumeric.
+_GATEWAY_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
+
+def validate_listing_gateway_base_urls(user_access_interfaces: dict[str, Any] | None) -> list[str]:
+    """Validate ``${API_GATEWAY_BASE_URL}/...`` base_urls against the
+    platform service-naming convention.
+
+    The path after ``${API_GATEWAY_BASE_URL}/`` must match:
+
+        <provider>[/<service-name>][@<variant>]
+
+    where:
+
+    - At most one ``/`` (provider, optionally followed by a service-name slot).
+    - At most one ``@`` (separates the name part from an optional
+      seller-defined variant tag).
+    - Each name segment is at least 2 characters so it cannot collide
+      with single-letter gateway primitive prefixes (``a/``, ``g/``,
+      ``b/``, ``c/``, ``l/``, ``m/``, ``r/``, ``d/``, ``t/``, ``f/``).
+    - Each segment uses only letters, digits, ``.``, ``-``, ``_``, and
+      starts with an alphanumeric character.
+
+    Jinja templates (containing ``{{`` or ``{%``) are skipped — they get
+    resolved per-enrollment and cannot be validated structurally here.
+
+    Returns a list of error messages (empty if all valid).
+    """
+    if not user_access_interfaces or not isinstance(user_access_interfaces, dict):
+        return []
+
+    errors: list[str] = []
+    for iface_name, iface in user_access_interfaces.items():
+        if not isinstance(iface, dict):
+            continue
+        base_url = iface.get("base_url", "")
+        if not isinstance(base_url, str):
+            continue
+        if not base_url.startswith(_API_GATEWAY_PREFIX):
+            continue
+        suffix = base_url[len(_API_GATEWAY_PREFIX) :]
+        if "{{" in suffix or "{%" in suffix:
+            continue
+
+        # Strip the single separator slash, if any. An empty suffix
+        # (i.e. ``${API_GATEWAY_BASE_URL}`` alone) is allowed — that's
+        # the gateway root, used by some platform-native interfaces.
+        if suffix.startswith("/"):
+            suffix = suffix[1:]
+        if not suffix:
+            continue
+
+        field = f"user_access_interfaces.{iface_name}.base_url"
+        errors.extend(_validate_gateway_path_prefix(suffix, field))
+
+    return errors
+
+
+def _validate_gateway_path_prefix(path: str, field: str) -> list[str]:
+    """Validate ``<provider>[/<service-name>][@<variant>]`` grammar.
+
+    ``path`` is the substring after ``${API_GATEWAY_BASE_URL}/`` (with
+    the leading slash already stripped). Returns error messages — empty
+    if valid.
+    """
+    errors: list[str] = []
+
+    # Split on '@' first to separate the name part from the optional variant.
+    at_parts = path.split("@")
+    if len(at_parts) > 2:
+        errors.append(
+            f"{field}: gateway path '{path}' has multiple '@' — "
+            f"at most one variant tag is allowed (e.g. '<provider>/<service>@byok')"
+        )
+        return errors
+
+    name_part = at_parts[0]
+    variant = at_parts[1] if len(at_parts) == 2 else None
+
+    # Name part: 1 or 2 segments separated by exactly one '/'.
+    segments = name_part.split("/")
+    if len(segments) > 2:
+        errors.append(
+            f"{field}: gateway path '{path}' has multiple '/' — "
+            f"expected '<provider>[/<service-name>]' (one '/' maximum, the provider "
+            f"slot is the entity running the upstream endpoint)"
+        )
+        return errors
+
+    for i, segment in enumerate(segments):
+        slot_name = "provider" if i == 0 else "service-name"
+        if not segment:
+            errors.append(f"{field}: gateway path '{path}' has an empty {slot_name} slot")
+            continue
+        if len(segment) < 2:
+            errors.append(
+                f"{field}: {slot_name} slot '{segment}' in gateway path '{path}' must be "
+                f"at least 2 characters (single-letter segments are reserved to avoid "
+                f"collision with gateway primitive prefixes a/, g/, b/, c/, l/, m/, r/, d/, t/, f/)"
+            )
+            continue
+        if not _GATEWAY_SEGMENT_RE.match(segment):
+            errors.append(
+                f"{field}: {slot_name} slot '{segment}' in gateway path '{path}' has "
+                f"invalid characters (allowed: letters, digits, '.', '-', '_'; must "
+                f"start with an alphanumeric character)"
+            )
+
+    # Variant tag: same per-segment rules.
+    if variant is not None:
+        if not variant:
+            errors.append(
+                f"{field}: gateway path '{path}' has an empty variant after '@' "
+                f"(use '<name>@<variant>' or omit the '@')"
+            )
+        elif not _GATEWAY_SEGMENT_RE.match(variant):
+            errors.append(
+                f"{field}: variant tag '{variant}' in gateway path '{path}' has "
+                f"invalid characters (allowed: letters, digits, '.', '-', '_'; must "
+                f"start with an alphanumeric character)"
+            )
+
+    return errors
+
+
 _SMTP_GATEWAY_BASE_URL = "${SMTP_GATEWAY_BASE_URL}"
 
 

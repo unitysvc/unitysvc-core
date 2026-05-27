@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from unitysvc_core.models.validators import validate_service_identifier
+from unitysvc_core.models.validators import (
+    validate_listing_gateway_base_urls,
+    validate_service_identifier,
+)
 
 
 class TestValidateServiceIdentifier:
@@ -122,3 +125,124 @@ class TestValidateServiceIdentifier:
     def test_uses_entity_type_in_error_message(self) -> None:
         with pytest.raises(ValueError, match="Invalid listing name"):
             validate_service_identifier("a/b/c", "listing")
+
+
+def _uai(base_url: str) -> dict:
+    """Build a minimal ``user_access_interfaces`` dict for testing."""
+    return {"default": {"access_method": "http", "base_url": base_url}}
+
+
+class TestValidateListingGatewayBaseUrls:
+    """Coverage for the gateway base_url validator that enforces the
+    ``<provider>[/<service-name>][@<variant>]`` grammar."""
+
+    # --- Valid base_urls --------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "${API_GATEWAY_BASE_URL}/anthropic",
+            "${API_GATEWAY_BASE_URL}/cohere",
+            "${API_GATEWAY_BASE_URL}/fireworks.ai",
+            "${API_GATEWAY_BASE_URL}/anthropic/claude-opus-4-7",
+            "${API_GATEWAY_BASE_URL}/anthropic/claude-opus-4-7@byok",
+            "${API_GATEWAY_BASE_URL}/cohere/gpt-4@premium-eu",
+            # Bare gateway root (used by some platform-native interfaces)
+            "${API_GATEWAY_BASE_URL}",
+            "${API_GATEWAY_BASE_URL}/",
+        ],
+    )
+    def test_accepts_valid_base_urls(self, base_url: str) -> None:
+        assert validate_listing_gateway_base_urls(_uai(base_url)) == []
+
+    # --- Jinja templates skipped -----------------------------------------
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "${API_GATEWAY_BASE_URL}/{{ provider_name }}",
+            "${API_GATEWAY_BASE_URL}/anthropic/{{ params.model }}",
+            "${API_GATEWAY_BASE_URL}/{% if x %}a{% else %}b{% endif %}",
+        ],
+    )
+    def test_skips_jinja_templates(self, base_url: str) -> None:
+        assert validate_listing_gateway_base_urls(_uai(base_url)) == []
+
+    # --- Non-gateway URLs skipped ----------------------------------------
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "https://api.openai.com/v1",
+            "${S3_GATEWAY_BASE_URL}/my-bucket",
+            "${SMTP_GATEWAY_BASE_URL}",
+            "${ customer_secrets.HTTP_RELAY_BASE_URL }",
+        ],
+    )
+    def test_skips_non_api_gateway_urls(self, base_url: str) -> None:
+        assert validate_listing_gateway_base_urls(_uai(base_url)) == []
+
+    # --- Slash count rejection --------------------------------------------
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "${API_GATEWAY_BASE_URL}/anthropic/v1/messages",
+            "${API_GATEWAY_BASE_URL}/p/anthropic/v1",
+            "${API_GATEWAY_BASE_URL}/a/b/c/d",
+        ],
+    )
+    def test_rejects_too_many_slashes(self, base_url: str) -> None:
+        errors = validate_listing_gateway_base_urls(_uai(base_url))
+        assert any("multiple '/'" in e for e in errors)
+
+    # --- Single-character segment rejection -------------------------------
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "${API_GATEWAY_BASE_URL}/a",  # single-char provider
+            "${API_GATEWAY_BASE_URL}/p/anthropic",  # legacy /p/ — p is single-char
+            "${API_GATEWAY_BASE_URL}/anthropic/x",  # single-char service-name
+        ],
+    )
+    def test_rejects_single_char_segments(self, base_url: str) -> None:
+        errors = validate_listing_gateway_base_urls(_uai(base_url))
+        assert any("at least 2 characters" in e for e in errors)
+
+    # --- Multiple @ rejection ---------------------------------------------
+
+    def test_rejects_multiple_at_signs(self) -> None:
+        errors = validate_listing_gateway_base_urls(_uai("${API_GATEWAY_BASE_URL}/anthropic/claude@byok@premium"))
+        assert any("multiple '@'" in e for e in errors)
+
+    # --- Empty / malformed segments --------------------------------------
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "${API_GATEWAY_BASE_URL}/anthropic@",  # empty variant
+            "${API_GATEWAY_BASE_URL}/-anthropic",  # leading dash
+            "${API_GATEWAY_BASE_URL}/anthropic/_service",  # leading underscore
+        ],
+    )
+    def test_rejects_malformed_segments(self, base_url: str) -> None:
+        errors = validate_listing_gateway_base_urls(_uai(base_url))
+        assert len(errors) > 0
+
+    # --- Multi-interface error attribution -------------------------------
+
+    def test_reports_per_interface_field_path(self) -> None:
+        uai = {
+            "good": {"access_method": "http", "base_url": "${API_GATEWAY_BASE_URL}/anthropic"},
+            "bad": {"access_method": "http", "base_url": "${API_GATEWAY_BASE_URL}/p/anthropic"},
+        }
+        errors = validate_listing_gateway_base_urls(uai)
+        assert len(errors) == 1
+        assert "user_access_interfaces.bad.base_url" in errors[0]
+
+    # --- Defensive: non-dict inputs --------------------------------------
+
+    @pytest.mark.parametrize("value", [None, {}, "not a dict", []])
+    def test_handles_non_dict_inputs(self, value) -> None:
+        assert validate_listing_gateway_base_urls(value) == []
