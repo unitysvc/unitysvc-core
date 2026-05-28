@@ -151,6 +151,7 @@ class UsageData(BaseModel):
     one_thousand: float | None = None
     one_million: float | None = None
 
+
 # ============================================================================
 # Pricing Models - Discriminated Union for type-safe pricing validation
 # ============================================================================
@@ -361,9 +362,7 @@ class TimePriceData(BasePriceData):
         """
         units = _resolve_equivalent_metric(self.type, usage)
         if units is None:
-            raise ValueError(
-                f"Time-based pricing ({self.type}) requires a time field in usage data"
-            )
+            raise ValueError(f"Time-based pricing ({self.type}) requires a time field in usage data")
 
         return Decimal(self.price) * units
 
@@ -475,9 +474,7 @@ class DataPriceData(BasePriceData):
         """
         units = _resolve_equivalent_metric(self.type, usage)
         if units is None:
-            raise ValueError(
-                f"Data pricing ({self.type}) requires a data field in usage data"
-            )
+            raise ValueError(f"Data pricing ({self.type}) requires a data field in usage data")
 
         return Decimal(self.price) * units
 
@@ -520,9 +517,7 @@ class CountPriceData(BasePriceData):
         """
         units = _resolve_equivalent_metric(self.type, usage)
         if units is None:
-            raise ValueError(
-                f"Count pricing ({self.type}) requires a count field in usage data"
-            )
+            raise ValueError(f"Count pricing ({self.type}) requires a count field in usage data")
 
         return Decimal(self.price) * units
 
@@ -958,9 +953,7 @@ EQUIVALENCE_GROUPS: dict[str, dict[str, Decimal]] = {
 
 # Reverse lookup: unit_name → (group_name, base_factor)
 _UNIT_TO_GROUP: dict[str, tuple[str, Decimal]] = {
-    unit: (group, factor)
-    for group, units in EQUIVALENCE_GROUPS.items()
-    for unit, factor in units.items()
+    unit: (group, factor) for group, units in EQUIVALENCE_GROUPS.items() for unit, factor in units.items()
 }
 
 
@@ -1391,4 +1384,3 @@ def validate_pricing(
         TypeAdapter(Pricing)
     )
     return adapter.validate_python(data)
-

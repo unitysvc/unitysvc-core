@@ -432,8 +432,33 @@ def _validate_gateway_path_prefix(path: str, field: str) -> list[str]:
     provider slot; subsequent segments are part of the service-name and
     may be hierarchical (e.g. HuggingFace's ``Qwen/Qwen2.5-Coder-7B-Instruct``).
     Returns error messages — empty if valid.
+
+    Special case — the ``a/`` movable-pointer naming convention (#1139):
+    a leading ``a/`` segment is permitted as a customer-facing hint that
+    the published URL is a "movable pointer" — the seller / platform
+    publisher reserves the right to re-point the underlying target to a
+    new listing later. The single-character first-segment rule (normally
+    reserved to avoid collision with gateway primitive prefixes like
+    ``m/``, ``l/``, ``f/``, etc.) is therefore relaxed *only* for the
+    literal first segment ``a``; the rest of the path after the strip
+    must satisfy the normal ``<provider>[/<segment>...][@<variant>]``
+    grammar. All other single-letter prefixes remain reserved.
     """
     errors: list[str] = []
+
+    # ``a/`` movable-pointer naming convention (#1139). Strip the
+    # leading ``a/`` and validate the remainder under the normal rules.
+    # Stripped exactly once — nested ``a/a/...`` is unusual and not part
+    # of the convention.
+    if path.startswith("a/"):
+        path = path[2:]
+        if not path:
+            errors.append(
+                f"{field}: gateway path 'a/' is incomplete — the 'a/' "
+                f"movable-pointer prefix must be followed by a real path "
+                f"(e.g. 'a/cohere-latest')"
+            )
+            return errors
 
     # Split on '@' first to separate the name part from the optional variant.
     at_parts = path.split("@")

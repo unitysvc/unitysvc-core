@@ -221,17 +221,11 @@ def validate_service_group(data: dict[str, Any]) -> list[str]:
 
     if "owner_type" in data and data["owner_type"] is not None:
         if data["owner_type"] not in _VALID_OWNER_TYPES:
-            errors.append(
-                f"owner_type must be one of {sorted(_VALID_OWNER_TYPES)}, "
-                f"got {data['owner_type']!r}"
-            )
+            errors.append(f"owner_type must be one of {sorted(_VALID_OWNER_TYPES)}, got {data['owner_type']!r}")
 
     if "group_type" in data and data["group_type"] is not None:
         if data["group_type"] not in _VALID_GROUP_TYPES:
-            errors.append(
-                f"group_type must be one of {sorted(_VALID_GROUP_TYPES)}, "
-                f"got {data['group_type']!r}"
-            )
+            errors.append(f"group_type must be one of {sorted(_VALID_GROUP_TYPES)}, got {data['group_type']!r}")
 
     # Membership rules
     if "membership_rules" in data and data["membership_rules"] is not None:
@@ -248,9 +242,7 @@ def validate_service_group(data: dict[str, Any]) -> list[str]:
             # Security check
             for pattern in _DANGEROUS_PATTERNS:
                 if re.search(pattern, rules["expression"], re.IGNORECASE):
-                    errors.append(
-                        f"Disallowed pattern in rule expression: {pattern}"
-                    )
+                    errors.append(f"Disallowed pattern in rule expression: {pattern}")
 
     if "sort_order" in data:
         if not isinstance(data["sort_order"], int):

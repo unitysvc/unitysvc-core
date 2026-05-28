@@ -101,9 +101,7 @@ def test_deep_merge_dicts_empty_override() -> None:
 def test_deep_merge_dicts_deeply_nested() -> None:
     base = {"level1": {"level2": {"level3": {"value": "old", "keep": True}}}}
     override = {"level1": {"level2": {"level3": {"value": "new"}}}}
-    assert deep_merge_dicts(base, override) == {
-        "level1": {"level2": {"level3": {"value": "new", "keep": True}}}
-    }
+    assert deep_merge_dicts(base, override) == {"level1": {"level2": {"level3": {"value": "new", "keep": True}}}}
 
 
 # =============================================================================
@@ -213,9 +211,7 @@ def test_find_files_by_schema_skips_non_dict_roots(tmp_path: Path) -> None:
     """
     # One real catalog file, plus three non-dict roots discovery should
     # tolerate without crashing.
-    (tmp_path / "good.json").write_text(
-        json.dumps({"schema": "provider_v1", "name": "good"})
-    )
+    (tmp_path / "good.json").write_text(json.dumps({"schema": "provider_v1", "name": "good"}))
     (tmp_path / "list_root.json").write_text(json.dumps([1, 2, 3]))
     (tmp_path / "string_root.json").write_text(json.dumps("hello"))
     (tmp_path / "null_root.json").write_text("null")
@@ -229,9 +225,7 @@ def test_find_files_by_schema_skips_non_dict_roots(tmp_path: Path) -> None:
 
 def test_find_file_by_schema_and_name_skips_non_dict_roots(tmp_path: Path) -> None:
     """Sibling discovery helper has the same surface — pin both."""
-    (tmp_path / "good.json").write_text(
-        json.dumps({"schema": "listing_v1", "name": "wanted"})
-    )
+    (tmp_path / "good.json").write_text(json.dumps({"schema": "listing_v1", "name": "wanted"}))
     (tmp_path / "list_root.json").write_text(json.dumps([{"schema": "listing_v1"}]))
 
     result = find_file_by_schema_and_name(tmp_path, "listing_v1", "name", "wanted")
@@ -244,7 +238,6 @@ def test_find_file_by_schema_and_name_skips_non_dict_roots(tmp_path: Path) -> No
 # =============================================================================
 # $preset sentinel expansion
 # =============================================================================
-
 
 
 def test_expand_presets_bare_string_doc_preset(tmp_path: Path) -> None:
@@ -320,10 +313,14 @@ def test_file_preset_rejects_overrides() -> None:
 
 def test_load_data_file_expands_presets_by_default(tmp_path: Path) -> None:
     listing = tmp_path / "listing.json"
-    listing.write_text(json.dumps({
-        "schema": "listing_v1",
-        "documents": {"Test": {"$doc_preset": "s3_connectivity_v1"}},
-    }))
+    listing.write_text(
+        json.dumps(
+            {
+                "schema": "listing_v1",
+                "documents": {"Test": {"$doc_preset": "s3_connectivity_v1"}},
+            }
+        )
+    )
     data, _ = load_data_file(listing)
     record = data["documents"]["Test"]
     assert record["category"] == "connectivity_test"
@@ -332,22 +329,32 @@ def test_load_data_file_expands_presets_by_default(tmp_path: Path) -> None:
 
 def test_load_data_file_preset_fns_none_preserves_sentinel(tmp_path: Path) -> None:
     listing = tmp_path / "listing.json"
-    listing.write_text(json.dumps({
-        "schema": "listing_v1",
-        "documents": {"Test": {"$doc_preset": "s3_connectivity_v1"}},
-    }))
+    listing.write_text(
+        json.dumps(
+            {
+                "schema": "listing_v1",
+                "documents": {"Test": {"$doc_preset": "s3_connectivity_v1"}},
+            }
+        )
+    )
     data, _ = load_data_file(listing, preset_fns=None)
     assert data["documents"]["Test"] == {"$doc_preset": "s3_connectivity_v1"}
 
 
 def test_load_data_file_expands_after_override_merge(tmp_path: Path) -> None:
     base = tmp_path / "listing.json"
-    base.write_text(json.dumps({
-        "schema": "listing_v1",
-        "documents": {"Test": {
-            "$doc_preset": {"name": "s3_connectivity_v1", "is_active": True},
-        }},
-    }))
+    base.write_text(
+        json.dumps(
+            {
+                "schema": "listing_v1",
+                "documents": {
+                    "Test": {
+                        "$doc_preset": {"name": "s3_connectivity_v1", "is_active": True},
+                    }
+                },
+            }
+        )
+    )
     override = tmp_path / "listing.override.json"
     override.write_text(json.dumps({"name": "from-override"}))
 
@@ -359,10 +366,14 @@ def test_load_data_file_expands_after_override_merge(tmp_path: Path) -> None:
 def test_find_files_by_schema_returns_expanded_data(tmp_path: Path) -> None:
     """find_files_by_schema goes through load_data_file; sentinels are expanded."""
     listing = tmp_path / "listing.json"
-    listing.write_text(json.dumps({
-        "schema": "listing_v1",
-        "documents": {"T": {"$doc_preset": "s3_connectivity_v1"}},
-    }))
+    listing.write_text(
+        json.dumps(
+            {
+                "schema": "listing_v1",
+                "documents": {"T": {"$doc_preset": "s3_connectivity_v1"}},
+            }
+        )
+    )
     results = find_files_by_schema(tmp_path, "listing_v1")
     assert len(results) == 1
     _, _, data = results[0]
@@ -388,10 +399,14 @@ def test_find_files_by_schema_warns_on_unknown_preset(tmp_path: Path) -> None:
     and the underlying error so callers can debug.
     """
     listing = tmp_path / "listing.json"
-    listing.write_text(json.dumps({
-        "schema": "listing_v1",
-        "documents": {"T": {"$doc_preset": "this_preset_does_not_exist"}},
-    }))
+    listing.write_text(
+        json.dumps(
+            {
+                "schema": "listing_v1",
+                "documents": {"T": {"$doc_preset": "this_preset_does_not_exist"}},
+            }
+        )
+    )
 
     find_files_by_schema.cache_clear()
     with pytest.warns(DataFileLoadWarning, match="this_preset_does_not_exist"):
@@ -426,10 +441,14 @@ def test_find_files_by_schema_can_be_promoted_to_error(tmp_path: Path) -> None:
     import warnings as _warnings
 
     listing = tmp_path / "listing.json"
-    listing.write_text(json.dumps({
-        "schema": "listing_v1",
-        "documents": {"T": {"$doc_preset": "this_preset_does_not_exist"}},
-    }))
+    listing.write_text(
+        json.dumps(
+            {
+                "schema": "listing_v1",
+                "documents": {"T": {"$doc_preset": "this_preset_does_not_exist"}},
+            }
+        )
+    )
 
     find_files_by_schema.cache_clear()
     with _warnings.catch_warnings():

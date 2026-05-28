@@ -585,5 +585,3 @@ def find_files_by_schema(
         matching_files.append((data_file, file_format, data))
 
     return matching_files
-
-
