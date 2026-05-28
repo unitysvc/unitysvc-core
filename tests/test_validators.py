@@ -275,6 +275,47 @@ class TestValidateListingGatewayBaseUrls:
         errors = validate_listing_gateway_base_urls(_uai(base_url))
         assert any("at least 2 characters" in e for e in errors)
 
+    # --- a/ movable-pointer naming convention (#1139) --------------------
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "${API_GATEWAY_BASE_URL}/a/cohere-latest",
+            "${API_GATEWAY_BASE_URL}/a/anthropic/claude-opus-latest",
+            "${API_GATEWAY_BASE_URL}/a/cohere-latest@byok",
+            # Jinja suffix after an a/ prefix: validated as 'a/<provider>'
+            # static prefix + dynamic per-enrollment Jinja.
+            "${API_GATEWAY_BASE_URL}/a/cohere-latest/{{ enrollment_vars.code }}",
+        ],
+    )
+    def test_accepts_a_prefix_movable_pointer(self, base_url: str) -> None:
+        """The ``a/`` prefix is a customer-facing 'this URL is a movable
+        pointer' hint (#1139). It bypasses the single-char first-segment
+        rule but the remainder still has to be a valid path identifier.
+        """
+        assert validate_listing_gateway_base_urls(_uai(base_url)) == []
+
+    def test_rejects_bare_a_slash(self) -> None:
+        """``a/`` alone is incomplete — the prefix must point at something."""
+        errors = validate_listing_gateway_base_urls(_uai("${API_GATEWAY_BASE_URL}/a/"))
+        assert any("incomplete" in e or "empty" in e for e in errors)
+
+    def test_rejects_a_prefix_with_single_char_remainder(self) -> None:
+        """After stripping ``a/``, the remainder must still satisfy the
+        single-char rule. ``a/x`` is rejected because ``x`` is single-char.
+        """
+        errors = validate_listing_gateway_base_urls(_uai("${API_GATEWAY_BASE_URL}/a/x"))
+        assert any("at least 2 characters" in e for e in errors)
+
+    def test_a_prefix_carveout_does_not_apply_to_other_primitives(self) -> None:
+        """The carve-out is ``a/``-only. ``m/``, ``l/``, ``f/``, etc. stay
+        reserved to avoid colliding with gateway wrapper primitives."""
+        for prefix in ("m", "l", "f", "t", "d", "r", "b", "c", "g", "p"):
+            errors = validate_listing_gateway_base_urls(_uai(f"${{API_GATEWAY_BASE_URL}}/{prefix}/cohere-latest"))
+            assert any("at least 2 characters" in e for e in errors), (
+                f"expected '{prefix}/' to be rejected, got: {errors}"
+            )
+
     # --- Multiple @ rejection ---------------------------------------------
 
     def test_rejects_multiple_at_signs(self) -> None:

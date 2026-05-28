@@ -155,9 +155,9 @@ def test_validate_all_skips_unrecognized_data_files(schema_dir, tmp_path):
     from unitysvc_core.validator import UnrecognizedDataFileWarning
 
     no_schema_toml = tmp_path / "gorse-config.example.toml"
-    no_schema_toml.write_text("[database]\nurl = \"redis://...\"\n")
+    no_schema_toml.write_text('[database]\nurl = "redis://..."\n')
     unknown_schema_json = tmp_path / "unrelated.json"
-    unknown_schema_json.write_text("{\"schema\": \"not_a_real_schema\", \"foo\": 1}\n")
+    unknown_schema_json.write_text('{"schema": "not_a_real_schema", "foo": 1}\n')
 
     validator = DataValidator(tmp_path, schema_dir)
 

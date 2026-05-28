@@ -27,9 +27,7 @@ STATUS_VALUES = {e.value for e in PriceRuleStatusEnum}
 PROMOTION_SCHEMA_VERSION = "promotion_v1"
 
 # Pattern for {{ promotion_code(N) }} template
-_PROMOTION_CODE_PATTERN = re.compile(
-    r"^\{\{\s*promotion_code\(\s*(\d+)\s*\)\s*\}\}$"
-)
+_PROMOTION_CODE_PATTERN = re.compile(r"^\{\{\s*promotion_code\(\s*(\d+)\s*\)\s*\}\}$")
 
 
 class PromotionData(BaseModel):
@@ -69,8 +67,7 @@ class PromotionData(BaseModel):
 
     scope: dict[str, Any] | None = Field(
         default=None,
-        description="Customer and service targeting. "
-        "null = all customers, all services (blanket promotion).",
+        description="Customer and service targeting. null = all customers, all services (blanket promotion).",
     )
 
     pricing: dict[str, Any] = Field(
@@ -121,6 +118,7 @@ def strip_schema_field(data: dict[str, Any]) -> dict[str, Any]:
 # Scope helpers
 # ---------------------------------------------------------------------------
 
+
 def _validate_scope_customers(customers: Any, errors: list[str]) -> None:
     """Validate ``scope.customers``."""
     if customers == "*":
@@ -133,28 +131,18 @@ def _validate_scope_customers(customers: Any, errors: list[str]) -> None:
         allowed_keys = {"code", "subscription"}
         unknown = set(customers.keys()) - allowed_keys
         if unknown:
-            errors.append(
-                f"scope.customers has unknown keys: {unknown}"
-            )
+            errors.append(f"scope.customers has unknown keys: {unknown}")
         if "code" in customers:
             code = customers["code"]
             if not isinstance(code, str):
                 errors.append("scope.customers.code must be a string")
             elif len(code) > 50 and not _PROMOTION_CODE_PATTERN.match(code):
-                errors.append(
-                    "scope.customers.code must be <= 50 chars "
-                    "or a {{ promotion_code(N) }} template"
-                )
+                errors.append("scope.customers.code must be <= 50 chars or a {{ promotion_code(N) }} template")
         if "subscription" in customers:
             if not isinstance(customers["subscription"], str):
-                errors.append(
-                    "scope.customers.subscription must be a string"
-                )
+                errors.append("scope.customers.subscription must be a string")
         return
-    errors.append(
-        'scope.customers must be "*", a list of IDs, '
-        'or a dict with "code" / "subscription"'
-    )
+    errors.append('scope.customers must be "*", a list of IDs, or a dict with "code" / "subscription"')
 
 
 def _validate_scope_services(services: Any, errors: list[str]) -> None:
@@ -188,6 +176,7 @@ def _validate_scope(scope: Any, errors: list[str]) -> None:
 # ---------------------------------------------------------------------------
 # Main validator
 # ---------------------------------------------------------------------------
+
 
 def validate_promotion(data: dict[str, Any]) -> list[str]:
     """Validate a promotion data dict.
@@ -229,17 +218,11 @@ def validate_promotion(data: dict[str, Any]) -> list[str]:
 
     if "apply_at" in data:
         if data["apply_at"] not in APPLY_AT_VALUES:
-            errors.append(
-                f"apply_at must be one of {sorted(APPLY_AT_VALUES)}, "
-                f"got '{data['apply_at']}'"
-            )
+            errors.append(f"apply_at must be one of {sorted(APPLY_AT_VALUES)}, got '{data['apply_at']}'")
 
     if "status" in data:
         if data["status"] not in STATUS_VALUES:
-            errors.append(
-                f"status must be one of {sorted(STATUS_VALUES)}, "
-                f"got '{data['status']}'"
-            )
+            errors.append(f"status must be one of {sorted(STATUS_VALUES)}, got '{data['status']}'")
 
     if "priority" in data:
         if not isinstance(data["priority"], int):
@@ -255,6 +238,7 @@ def validate_promotion(data: dict[str, Any]) -> list[str]:
 # ---------------------------------------------------------------------------
 # Scope display helpers (for CLI)
 # ---------------------------------------------------------------------------
+
 
 def describe_scope(scope: dict[str, Any] | None) -> str:
     """Return a human-readable one-line description of the scope."""

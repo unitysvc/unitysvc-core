@@ -156,9 +156,7 @@ class TestTokenPriceDataUnits:
 
     def test_one_thousand_tokens_split(self) -> None:
         """Test per-thousand-token split input/output pricing."""
-        pricing = validate_pricing(
-            {"type": "one_thousand_tokens", "input": "0.001", "output": "0.003"}
-        )
+        pricing = validate_pricing({"type": "one_thousand_tokens", "input": "0.001", "output": "0.003"})
         usage = UsageData(input_tokens=10_000, output_tokens=5_000)
 
         cost = pricing.calculate_cost(usage)
@@ -178,9 +176,7 @@ class TestTokenPriceDataUnits:
 
     def test_one_token_split(self) -> None:
         """Test per-token split input/output pricing."""
-        pricing = validate_pricing(
-            {"type": "one_token", "input": "0.0001", "output": "0.0003"}
-        )
+        pricing = validate_pricing({"type": "one_token", "input": "0.0001", "output": "0.0003"})
         usage = UsageData(input_tokens=100, output_tokens=200)
 
         cost = pricing.calculate_cost(usage)
@@ -1244,8 +1240,8 @@ class TestMaxPriceData:
             {
                 "type": "max",
                 "prices": [
-                    {"type": "one_second", "price": "0.01"},   # 120 * 0.01 = 1.20
-                    {"type": "constant", "price": "0.50"},      # 0.50
+                    {"type": "one_second", "price": "0.01"},  # 120 * 0.01 = 1.20
+                    {"type": "constant", "price": "0.50"},  # 0.50
                 ],
             }
         )
@@ -1260,8 +1256,8 @@ class TestMaxPriceData:
                 "type": "max",
                 "prices": [
                     {"type": "one_second", "price": "0.01"},  # no time data → skip
-                    {"type": "image", "price": "0.05"},        # count=10 → $0.50
-                    {"type": "constant", "price": "0.25"},     # $0.25
+                    {"type": "image", "price": "0.05"},  # count=10 → $0.50
+                    {"type": "constant", "price": "0.25"},  # $0.25
                 ],
             }
         )
@@ -1313,8 +1309,8 @@ class TestMinPriceData:
             {
                 "type": "min",
                 "prices": [
-                    {"type": "one_second", "price": "0.10"},   # 2000 * 0.10 = 200
-                    {"type": "constant", "price": "100.00"},    # cap at 100
+                    {"type": "one_second", "price": "0.10"},  # 2000 * 0.10 = 200
+                    {"type": "constant", "price": "100.00"},  # cap at 100
                 ],
             }
         )
@@ -1328,8 +1324,8 @@ class TestMinPriceData:
             {
                 "type": "min",
                 "prices": [
-                    {"type": "one_second", "price": "0.10"},   # 50 * 0.10 = 5
-                    {"type": "constant", "price": "100.00"},    # cap at 100
+                    {"type": "one_second", "price": "0.10"},  # 50 * 0.10 = 5
+                    {"type": "constant", "price": "100.00"},  # cap at 100
                 ],
             }
         )
@@ -1344,8 +1340,8 @@ class TestMinPriceData:
                 "type": "min",
                 "prices": [
                     {"type": "one_second", "price": "999.00"},  # no time → skip
-                    {"type": "image", "price": "0.05"},          # count=10 → $0.50
-                    {"type": "constant", "price": "1.00"},       # $1.00
+                    {"type": "image", "price": "0.05"},  # count=10 → $0.50
+                    {"type": "constant", "price": "1.00"},  # $1.00
                 ],
             }
         )
@@ -1381,8 +1377,8 @@ class TestFirstPriceData:
                 "type": "first",
                 "prices": [
                     {"type": "one_second", "price": "0.01"},  # no time → skip
-                    {"type": "image", "price": "0.05"},        # count=20 → $1.00
-                    {"type": "constant", "price": "99.00"},    # would work, but not reached
+                    {"type": "image", "price": "0.05"},  # count=20 → $1.00
+                    {"type": "constant", "price": "99.00"},  # would work, but not reached
                 ],
             }
         )
@@ -1396,8 +1392,8 @@ class TestFirstPriceData:
             {
                 "type": "first",
                 "prices": [
-                    {"type": "constant", "price": "5.00"},     # always works → $5.00
-                    {"type": "constant", "price": "1.00"},     # also works, but not reached
+                    {"type": "constant", "price": "5.00"},  # always works → $5.00
+                    {"type": "constant", "price": "1.00"},  # also works, but not reached
                 ],
             }
         )
@@ -1412,8 +1408,8 @@ class TestFirstPriceData:
                 "type": "first",
                 "prices": [
                     {"type": "one_second", "price": "0.01"},  # no time → skip
-                    {"type": "image", "price": "0.05"},        # no count → skip
-                    {"type": "constant", "price": "2.00"},     # fallback → $2.00
+                    {"type": "image", "price": "0.05"},  # no count → skip
+                    {"type": "constant", "price": "2.00"},  # fallback → $2.00
                 ],
             }
         )

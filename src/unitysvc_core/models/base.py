@@ -218,7 +218,6 @@ class PricingTypeEnum(StrEnum):
     expr = "expr"  # Arbitrary expression using usage metrics
 
 
-
 class QuotaResetCycleEnum(StrEnum):
     daily = "daily"
     weekly = "weekly"
@@ -341,7 +340,6 @@ class PriceRuleApplyAtEnum(StrEnum):
     statement = "statement"  # Applied during billing/statement generation
 
 
-
 class PriceRuleStatusEnum(StrEnum):
     """Seller-facing status values for promotions.
 
@@ -353,5 +351,3 @@ class PriceRuleStatusEnum(StrEnum):
     draft = "draft"  # Not yet active, can be edited
     active = "active"  # Currently active and applied
     paused = "paused"  # Temporarily disabled
-
-

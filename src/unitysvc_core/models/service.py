@@ -132,4 +132,3 @@ class UpstreamAccessConfigData(AccessInterfaceData):
 
     # base_url is optional for upstream configs (e.g., S3 uses bucket + region instead)
     base_url: str | None = Field(default=None, max_length=500, description="Base URL for api access")  # type: ignore[assignment]
-

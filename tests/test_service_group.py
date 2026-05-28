@@ -105,19 +105,13 @@ class TestValidateServiceGroupDict:
         assert any("URL-friendly slug" in e for e in errors)
 
     def test_parent_group_name_validated(self):
-        errors = validate_service_group(
-            {"name": "ok", "display_name": "X", "parent_group_name": "Bad Parent"}
-        )
+        errors = validate_service_group({"name": "ok", "display_name": "X", "parent_group_name": "Bad Parent"})
         assert any("parent_group_name" in e for e in errors)
 
     def test_unknown_owner_type_rejected(self):
-        errors = validate_service_group(
-            {"name": "ok", "display_name": "X", "owner_type": "alien"}
-        )
+        errors = validate_service_group({"name": "ok", "display_name": "X", "owner_type": "alien"})
         assert any("owner_type" in e for e in errors)
 
     def test_unknown_group_type_rejected(self):
-        errors = validate_service_group(
-            {"name": "ok", "display_name": "X", "group_type": "exotic"}
-        )
+        errors = validate_service_group({"name": "ok", "display_name": "X", "group_type": "exotic"})
         assert any("group_type" in e for e in errors)

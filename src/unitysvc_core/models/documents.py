@@ -42,5 +42,3 @@ class DocumentData(BaseModel):
         default=False,
         description="Whether document is publicly accessible without authentication",
     )
-
-
