@@ -13,7 +13,6 @@ from .base import (
     OveragePolicyEnum,
     QuotaResetCycleEnum,
     RateLimitUnitEnum,
-    RequestTransformEnum,
     TimeWindowEnum,
 )
 
@@ -95,10 +94,6 @@ class AccessInterfaceData(BaseModel):
     api_key: str | None = Field(default=None, max_length=2000, description="API key if required")
 
     description: str | None = Field(default=None, max_length=500, description="Interface description")
-
-    request_transformer: dict[RequestTransformEnum, dict[str, Any] | str] | None = Field(
-        default=None, description="Request transformation configuration"
-    )
 
     routing_key: dict[str, Any] | None = Field(
         default=None,

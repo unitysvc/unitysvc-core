@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unitysvc-core"
-version = "0.1.11"
+version = "0.1.12"
 description = "Shared data models and validation helpers for UnitySVC packages"
 readme = "README.md"
 authors = [{ name = "Bo Peng", email = "bo.peng@unitysvc.com" }]
@@ -85,3 +85,8 @@ unitysvc_core = ["schema/*.json", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
