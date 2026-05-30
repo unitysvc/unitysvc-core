@@ -83,33 +83,6 @@
           "description": "Rate limit",
           "title": "Rate Limits"
         },
-        "request_transformer": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "string"
-                  }
-                ]
-              },
-              "propertyNames": {
-                "$ref": "#/$defs/RequestTransformEnum"
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Request transformation configuration",
-          "title": "Request Transformer"
-        },
         "response_rules": {
           "anyOf": [
             {
@@ -1192,15 +1165,6 @@
         "concurrent"
       ],
       "title": "RateLimitUnitEnum",
-      "type": "string"
-    },
-    "RequestTransformEnum": {
-      "enum": [
-        "proxy_rewrite",
-        "body_transformer",
-        "set_body"
-      ],
-      "title": "RequestTransformEnum",
       "type": "string"
     },
     "RevenueSharePriceData": {
