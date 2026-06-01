@@ -272,6 +272,12 @@ class ServiceTypeEnum(StrEnum):
     # smtp-relay, s3-relay, s3-proxy-multi).
     proxy = "proxy"
 
+    # === Gateway services ===
+    # Responses produced by the gateway itself, with no upstream contacted
+    # (e.g. resp:// direct-response endpoints). Used as routing-primitive test
+    # fixtures and null/sink targets for /l/, /f/, and /t/.
+    gateway = "gateway"
+
     # === Infrastructure services ===
     database = "database"  # Managed DB/cache access (SSH tunnel)
     monitoring = "monitoring"  # Uptime checks, health monitoring
