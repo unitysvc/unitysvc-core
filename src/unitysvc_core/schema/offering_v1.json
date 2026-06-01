@@ -1033,15 +1033,6 @@
       "title": "RateLimitUnitEnum",
       "type": "string"
     },
-    "RequestTransformEnum": {
-      "enum": [
-        "proxy_rewrite",
-        "body_transformer",
-        "set_body"
-      ],
-      "title": "RequestTransformEnum",
-      "type": "string"
-    },
     "RevenueSharePriceData": {
       "additionalProperties": false,
       "description": "Price data for revenue share pricing (payout_price only).\n\nThis pricing type is used exclusively for payout_price when the seller\nreceives a percentage of what the customer pays. It cannot be used for\nlist_price since the list price must be a concrete amount.\n\nThe percentage represents the seller's share of the customer charge.\nFor example, if percentage is \"70\" and the customer pays $10, the seller\nreceives $7.\n\nPercentage values must be strings (e.g., \"70.00\") to avoid floating-point\nprecision issues.",
@@ -1436,6 +1427,7 @@
         "streaming",
         "compute",
         "proxy",
+        "gateway",
         "database",
         "monitoring",
         "analytics"
@@ -1813,33 +1805,6 @@
           "default": null,
           "description": "Rate limit",
           "title": "Rate Limits"
-        },
-        "request_transformer": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "string"
-                  }
-                ]
-              },
-              "propertyNames": {
-                "$ref": "#/$defs/RequestTransformEnum"
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Request transformation configuration",
-          "title": "Request Transformer"
         },
         "response_rules": {
           "anyOf": [

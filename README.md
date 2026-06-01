@@ -32,7 +32,7 @@ src/unitysvc_core/
 │   ├── listing_v1.py      # Listing file schema + ServiceListingData
 │   ├── promotion_v1.py    # Promotion file schema + PromotionData
 │   └── service_group_v1.py
-├── schema/                # Generated JSON schemas
+├── schema/                # Generated JSON schemas (run scripts/generate_schemas.py; CI enforces sync)
 ├── validator.py           # DataValidator — per-file schema validation,
 │                          # union-field reference checks, API-key secret
 │                          # scanning, Jinja2 syntax validation, etc.
