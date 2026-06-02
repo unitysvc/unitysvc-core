@@ -789,8 +789,69 @@ class DataValidator:
             errors.extend(validate_listing_s3_base_urls(uai))
             errors.extend(validate_listing_smtp_base_urls(uai))
             errors.extend(validate_listing_jinja_var_references(data))
+            errors.extend(self.validate_listing_name_namespace(data, file_path))
 
         return len(errors) == 0, errors
+
+    def _resolve_provider_name(self, file_path: Path) -> str | None:
+        """Find the provider name (``provider_v1.name``) governing a listing file.
+
+        Walks up from the listing file and returns the ``name`` of the first
+        ``provider_v1`` data file found in an ancestor directory. Returns
+        ``None`` when none is found — the first-segment check is then skipped
+        (the backend re-checks at registration where the provider is known).
+        """
+        # Layout is data/<provider>/services/<svc>/listing.*, so the provider
+        # file is ~3 levels up; cap the climb to stay cheap.
+        for ancestor in list(file_path.parents)[:6]:
+            for cand in sorted(ancestor.glob("*")):
+                if not cand.is_file() or cand.suffix not in (".json", ".toml") or ".override." in cand.name:
+                    continue
+                try:
+                    cand_data, _ = load_data_file(cand)
+                except Exception:
+                    continue
+                if isinstance(cand_data, dict) and cand_data.get("schema") == "provider_v1":
+                    name = cand_data.get("name")
+                    return name if isinstance(name, str) else None
+        return None
+
+    def validate_listing_name_namespace(self, data: dict[str, Any], file_path: Path) -> list[str]:
+        """Enforce the namespaced-first-segment rule on ``listing.name`` (#1138).
+
+        ``service_name = listing.name``. Top-level vs namespaced is purely
+        syntactic (presence of ``/`` in the name part before any ``@variant``):
+
+        - **Namespaced** (has ``/``): the first segment must equal the governing
+          ``provider_v1.name``. This stops a seller registering
+          ``otherprovider/...`` under their own provider.
+        - **Bare** (no ``/``): a *top-level* request — not rejected here; the
+          backend admin-gates it against the reservation allowlist.
+
+        Per-segment grammar of the name itself is validated by the Pydantic
+        model (``validate_service_identifier``).
+        """
+        errors: list[str] = []
+
+        name = data.get("name")
+        if not isinstance(name, str) or not name:
+            return errors
+
+        name_part = name.split("@", 1)[0]
+        if "/" not in name_part:
+            # Bare top-level name — defer authorization to the backend.
+            return errors
+
+        first_segment = name_part.split("/", 1)[0]
+        provider_name = self._resolve_provider_name(file_path)
+        if provider_name is not None and first_segment != provider_name:
+            errors.append(
+                f"Listing name '{name}' is namespaced, so its first segment must be the provider "
+                f"slug '{provider_name}', not '{first_segment}'. Use '{provider_name}/...' for a "
+                f"provider service, or a bare name (no '/') for an admin-approved top-level service."
+            )
+
+        return errors
 
     def validate_jinja2_file(self, file_path: Path) -> tuple[bool, list[str]]:
         """Validate a file with Jinja2 template syntax.

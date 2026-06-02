@@ -1962,18 +1962,10 @@
       "title": "List Price"
     },
     "name": {
-      "anyOf": [
-        {
-          "maxLength": 255,
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Name identifier for the service listing (defaults to offering name if not provided)",
-      "title": "Name"
+      "description": "Service identifier (service_name). REQUIRED. Either a namespaced '<provider>/<service-name>[@variant]' or a bare top-level name.",
+      "maxLength": 255,
+      "title": "Name",
+      "type": "string"
     },
     "schema": {
       "default": "listing_v1",
@@ -2065,6 +2057,7 @@
     }
   },
   "required": [
+    "name",
     "time_created"
   ],
   "title": "ListingV1",

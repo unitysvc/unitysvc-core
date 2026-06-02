@@ -29,6 +29,18 @@ class ListingV1(ServiceListingData):
     schema_version: str = Field(default="listing_v1", description="Schema identifier", alias="schema")
     time_created: datetime
 
+    # listing.name IS the service identifier (service_name) and is REQUIRED.
+    # It is the single source of truth — no composition, no fallback to
+    # offering.name. The seller writes the full identifier verbatim:
+    # `<provider>/<service-name>[@variant]` (namespaced, self-service) or a bare
+    # `<name>` (top-level, admin-gated at registration). See issue #1138.
+    name: str = Field(  # type: ignore[assignment]
+        ...,
+        max_length=255,
+        description="Service identifier (service_name). REQUIRED. Either a namespaced "
+        "'<provider>/<service-name>[@variant]' or a bare top-level name.",
+    )
+
     # Override with typed models instead of dicts for file validation
     # (status, user_parameters_schema, user_parameters_ui_schema are inherited from ServiceListingData)
     user_access_interfaces: dict[str, AccessInterfaceData] | None = Field(  # type: ignore[assignment]
@@ -48,13 +60,13 @@ class ListingV1(ServiceListingData):
 
     @field_validator("name")
     @classmethod
-    def validate_name_format(cls, v: str | None) -> str | None:
-        """Validate the listing-name slot of the platform identifier.
+    def validate_name_format(cls, v: str) -> str:
+        """Validate the service identifier against the #1138 grammar.
 
-        Listing identifier grammar: ``<name>[@<variant>]``. No ``/`` —
-        provider namespace comes from the directory structure. See
-        ``validate_service_identifier`` for full rules.
+        ``listing.name`` is the full identifier ``<name>[@<variant>]`` where
+        ``<name>`` may be hierarchical (``<provider>/<service-name>...``). This
+        checks grammar only; the "namespaced first segment must equal the
+        provider slug" and top-level (no ``/``) rules need provider context and
+        are enforced by the catalog-layer ``DataValidator``.
         """
-        if v is None:
-            return v
         return validate_service_identifier(v, "listing")
