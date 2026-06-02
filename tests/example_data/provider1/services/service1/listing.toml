@@ -1,12 +1,13 @@
 schema = "listing_v1"
 status = "ready"
+name = "provider1/service1"
 display_name = "Service 1 Listing"
 time_created = "2024-02-29T05:52:38.739683Z"
 currency = "USD"
 
 [user_access_interfaces.provider_api]
 access_method = "http"
-base_url = "${API_GATEWAY_BASE_URL}/example-provider1"
+base_url = "${API_GATEWAY_BASE_URL}/{{ service_name }}"
 
 [documents."Python Code Example"]
 description = "Example code to use the model"

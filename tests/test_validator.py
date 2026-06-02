@@ -1421,3 +1421,61 @@ class TestListingJinjaVarReferences:
         assert validate_listing_jinja_var_references({"schema": "listing_v1"}) == []
         assert validate_listing_jinja_var_references({"user_access_interfaces": {}}) == []
         assert validate_listing_jinja_var_references(None) == []
+
+
+class TestListingNameNamespace:
+    """DataValidator.validate_listing_name_namespace — the namespaced
+    first-segment-must-equal-provider rule (issue #1138)."""
+
+    @staticmethod
+    def _make_tree(tmp_path: Path, provider_name: str, service_dir: str) -> Path:
+        provider_root = tmp_path / provider_name
+        svc_dir = provider_root / "services" / service_dir
+        svc_dir.mkdir(parents=True)
+        import json
+
+        (provider_root / "provider.json").write_text(
+            json.dumps({"schema": "provider_v1", "name": provider_name})
+        )
+        return svc_dir / "listing.json"
+
+    def test_namespaced_first_segment_matches_provider(self, tmp_path, schema_dir):
+        validator = DataValidator(tmp_path, schema_dir)
+        listing_file = self._make_tree(tmp_path, "deepseek", "deepseek-v4-pro")
+        errors = validator.validate_listing_name_namespace({"name": "deepseek/deepseek-v4-pro"}, listing_file)
+        assert errors == []
+
+    def test_namespaced_first_segment_mismatch_rejected(self, tmp_path, schema_dir):
+        validator = DataValidator(tmp_path, schema_dir)
+        listing_file = self._make_tree(tmp_path, "deepseek", "svc")
+        errors = validator.validate_listing_name_namespace({"name": "openai/whatever"}, listing_file)
+        assert any("first segment must be the provider slug" in e for e in errors)
+
+    def test_hierarchical_first_segment_matches_provider(self, tmp_path, schema_dir):
+        validator = DataValidator(tmp_path, schema_dir)
+        listing_file = self._make_tree(tmp_path, "huggingface", "qwen")
+        errors = validator.validate_listing_name_namespace(
+            {"name": "huggingface/Qwen/Qwen2.5-Coder-7B-Instruct"}, listing_file
+        )
+        assert errors == []
+
+    def test_bare_top_level_name_not_rejected_locally(self, tmp_path, schema_dir):
+        # Bare names are top-level requests; the backend admin-gates them.
+        validator = DataValidator(tmp_path, schema_dir)
+        listing_file = self._make_tree(tmp_path, "ntfy", "ntfy")
+        errors = validator.validate_listing_name_namespace({"name": "ntfy"}, listing_file)
+        assert errors == []
+
+    def test_variant_does_not_break_namespace_check(self, tmp_path, schema_dir):
+        validator = DataValidator(tmp_path, schema_dir)
+        listing_file = self._make_tree(tmp_path, "cohere", "gemma4")
+        errors = validator.validate_listing_name_namespace({"name": "cohere/gemma4@byok"}, listing_file)
+        assert errors == []
+
+    def test_no_provider_file_defers_to_backend(self, tmp_path, schema_dir):
+        validator = DataValidator(tmp_path, schema_dir)
+        loose = tmp_path / "loose"
+        loose.mkdir()
+        listing_file = loose / "listing.json"
+        errors = validator.validate_listing_name_namespace({"name": "openai/whatever"}, listing_file)
+        assert errors == []

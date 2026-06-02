@@ -6,6 +6,7 @@ import pytest
 
 from unitysvc_core.models.validators import (
     validate_listing_gateway_base_urls,
+    validate_listing_jinja_var_references,
     validate_service_identifier,
 )
 
@@ -154,80 +155,77 @@ def _uai(base_url: str) -> dict:
 
 
 class TestValidateListingGatewayBaseUrls:
-    """Coverage for the gateway base_url validator that enforces the
-    ``<provider>[/<service-name>][@<variant>]`` grammar."""
+    """Coverage for the gateway base_url validator (issue #1138).
 
-    # --- Valid base_urls --------------------------------------------------
+    Under ``service_name = listing.name``, a gateway base_url must route by the
+    service identifier through the ``{{ service_name }}`` Jinja variable (or be
+    an ``/a/<alias>`` movable pointer, the gateway root, or entirely dynamic).
+    Literal ``<provider>/<service>`` paths and the removed ``/p/`` primitive are
+    rejected.
+    """
+
+    # --- Valid: routes via {{ service_name }} -----------------------------
 
     @pytest.mark.parametrize(
         "base_url",
         [
-            "${API_GATEWAY_BASE_URL}/anthropic",
-            "${API_GATEWAY_BASE_URL}/cohere",
-            "${API_GATEWAY_BASE_URL}/fireworks.ai",
-            "${API_GATEWAY_BASE_URL}/anthropic/claude-opus-4-7",
-            "${API_GATEWAY_BASE_URL}/anthropic/claude-opus-4-7@byok",
-            "${API_GATEWAY_BASE_URL}/cohere/gpt-4@premium-eu",
-            # Bare gateway root (used by some platform-native interfaces)
+            "${API_GATEWAY_BASE_URL}/{{ service_name }}",
+            "${API_GATEWAY_BASE_URL}/{{service_name}}",
+            # Whitespace variations inside the Jinja braces.
+            "${API_GATEWAY_BASE_URL}/{{  service_name  }}",
+            # Static suffix after the identifier.
+            "${API_GATEWAY_BASE_URL}/{{ service_name }}/v1/messages",
+            # Dynamic per-enrollment suffix.
+            "${API_GATEWAY_BASE_URL}/{{ service_name }}/{{ enrollment_vars.code }}",
+            "${API_GATEWAY_BASE_URL}/{{ service_name }}/${enrollment_vars.code}",
+            # Wrapper-stack primitive prefix before the identifier.
+            "${API_GATEWAY_BASE_URL}/u/{{ service_name }}",
+            "${API_GATEWAY_BASE_URL}/u/{{ service_name }}/{{ enrollment_vars.code }}",
+        ],
+    )
+    def test_accepts_service_name_var(self, base_url: str) -> None:
+        assert validate_listing_gateway_base_urls(_uai(base_url)) == []
+
+    # --- Valid: gateway root / entirely dynamic ---------------------------
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            # Bare gateway root (platform-native interfaces).
             "${API_GATEWAY_BASE_URL}",
             "${API_GATEWAY_BASE_URL}/",
-        ],
-    )
-    def test_accepts_valid_base_urls(self, base_url: str) -> None:
-        assert validate_listing_gateway_base_urls(_uai(base_url)) == []
-
-    # --- Jinja templates: validate the static prefix --------------------
-
-    @pytest.mark.parametrize(
-        "base_url",
-        [
-            # Entirely Jinja after the prefix — skipped (no static identifier).
-            "${API_GATEWAY_BASE_URL}/{{ provider_name }}",
+            # Entirely dynamic from the first segment — nothing static to pin.
+            "${API_GATEWAY_BASE_URL}/{{ enrollment_vars.endpoint }}",
             "${API_GATEWAY_BASE_URL}/{% if x %}a{% else %}b{% endif %}",
-            # Static prefix is a valid 2-segment identifier; trailing
-            # Jinja is dynamic per-enrollment data.
-            "${API_GATEWAY_BASE_URL}/anthropic/{{ params.model }}",
-            "${API_GATEWAY_BASE_URL}/demo/echo-enrollment-vars/{{ enrollment_vars.code }}",
-            "${API_GATEWAY_BASE_URL}/ntfy/{{ enrollment_vars.topic }}",
-            "${API_GATEWAY_BASE_URL}/notify/discord-relay/{{ enrollment_vars.code }}",
+            "${API_GATEWAY_BASE_URL}/${enrollment_vars.code}",
         ],
     )
-    def test_accepts_valid_static_prefix_with_jinja_suffix(self, base_url: str) -> None:
+    def test_accepts_root_or_fully_dynamic(self, base_url: str) -> None:
         assert validate_listing_gateway_base_urls(_uai(base_url)) == []
 
-    def test_validates_static_prefix_even_when_jinja_follows(self) -> None:
-        """A bug in the static prefix (e.g. single-char segment) must still
-        be reported, even when a Jinja template appears later in the path.
-        Real-world example: ``/u/uptime/{{ code }}`` — ``u`` is single-char."""
-        errors = validate_listing_gateway_base_urls(_uai("${API_GATEWAY_BASE_URL}/u/uptime/{{ enrollment_vars.code }}"))
-        # `u` is single-char (catches the primitive-prefix collision) AND
-        # the static prefix has 2 slashes (catches the path-depth rule);
-        # both findings are useful.
-        assert any("at least 2 characters" in e for e in errors)
-
-    # --- Env-var substitution: ${...} treated like Jinja ----------------
+    # --- Valid: /a/<alias> movable pointer (#1139) ------------------------
 
     @pytest.mark.parametrize(
         "base_url",
         [
-            # Entirely env-var after the prefix — skipped.
-            "${API_GATEWAY_BASE_URL}/${enrollment_vars.code}",
-            "${API_GATEWAY_BASE_URL}/${ enrollment_vars.code }",
-            # Valid static prefix + env-var suffix.
-            "${API_GATEWAY_BASE_URL}/labs/uptime/${enrollment_vars.code}",
-            "${API_GATEWAY_BASE_URL}/notify/discord/${enrollment_vars.code}",
+            "${API_GATEWAY_BASE_URL}/a/cohere-latest",
+            "${API_GATEWAY_BASE_URL}/a/anthropic/claude-opus-latest",
+            "${API_GATEWAY_BASE_URL}/a/cohere-latest@byok",
+            "${API_GATEWAY_BASE_URL}/a/cohere-latest/{{ enrollment_vars.code }}",
         ],
     )
-    def test_accepts_valid_static_prefix_with_envvar_suffix(self, base_url: str) -> None:
+    def test_accepts_a_prefix_movable_pointer(self, base_url: str) -> None:
         assert validate_listing_gateway_base_urls(_uai(base_url)) == []
 
-    def test_validates_static_prefix_when_envvar_follows(self) -> None:
-        """A single-char provider in the static prefix is caught even when
-        the path ends in an env-var substitution like ``${ code }``."""
-        errors = validate_listing_gateway_base_urls(_uai("${API_GATEWAY_BASE_URL}/u/uptime/${enrollment_vars.code}"))
+    def test_rejects_bare_a_slash(self) -> None:
+        errors = validate_listing_gateway_base_urls(_uai("${API_GATEWAY_BASE_URL}/a/"))
+        assert any("incomplete" in e or "empty" in e for e in errors)
+
+    def test_rejects_a_prefix_with_single_char_remainder(self) -> None:
+        errors = validate_listing_gateway_base_urls(_uai("${API_GATEWAY_BASE_URL}/a/x"))
         assert any("at least 2 characters" in e for e in errors)
 
-    # --- Non-gateway URLs skipped ----------------------------------------
+    # --- Non-API-gateway URLs skipped (other validators handle them) ------
 
     @pytest.mark.parametrize(
         "base_url",
@@ -241,106 +239,43 @@ class TestValidateListingGatewayBaseUrls:
     def test_skips_non_api_gateway_urls(self, base_url: str) -> None:
         assert validate_listing_gateway_base_urls(_uai(base_url)) == []
 
-    # --- Hierarchical multi-segment paths ---------------------------------
+    # --- Rejected: literal <provider>/<service> paths ---------------------
 
     @pytest.mark.parametrize(
         "base_url",
         [
-            # HuggingFace-style creator/model paths (legitimate use)
+            "${API_GATEWAY_BASE_URL}/anthropic",
+            "${API_GATEWAY_BASE_URL}/anthropic/claude-opus-4-7",
+            "${API_GATEWAY_BASE_URL}/anthropic/claude-opus-4-7@byok",
             "${API_GATEWAY_BASE_URL}/huggingface/Qwen/Qwen2.5-Coder-7B-Instruct",
-            "${API_GATEWAY_BASE_URL}/huggingface/meta-llama/llama-4-scout-17b-16e-instruct@byok",
-            # Provider with multi-segment service-name path
-            # passes structurally; semantic review catches deep-API-path bugs
-            "${API_GATEWAY_BASE_URL}/anthropic/v1/messages",
+            # Wrapper prefix but still a literal name (no {{ service_name }}).
+            "${API_GATEWAY_BASE_URL}/u/uptime",
+            # Literal name with a dynamic suffix is still a hard-coded name.
+            "${API_GATEWAY_BASE_URL}/anthropic/{{ params.model }}",
         ],
     )
-    def test_accepts_multi_segment_paths(self, base_url: str) -> None:
-        """The validator allows arbitrary segment depth as long as each
-        segment passes the per-segment rules. Sellers using deep paths
-        as a hidden API-path constraint should use ``routing_vars`` per
-        the convention; we don't enforce that structurally."""
-        assert validate_listing_gateway_base_urls(_uai(base_url)) == []
-
-    # --- Single-character segment rejection -------------------------------
-
-    @pytest.mark.parametrize(
-        "base_url",
-        [
-            "${API_GATEWAY_BASE_URL}/a",  # single-char provider
-            "${API_GATEWAY_BASE_URL}/p/anthropic",  # legacy /p/ — p is single-char
-            "${API_GATEWAY_BASE_URL}/anthropic/x",  # single-char service-name
-        ],
-    )
-    def test_rejects_single_char_segments(self, base_url: str) -> None:
+    def test_rejects_literal_paths(self, base_url: str) -> None:
         errors = validate_listing_gateway_base_urls(_uai(base_url))
-        assert any("at least 2 characters" in e for e in errors)
+        assert any("service_name" in e for e in errors)
 
-    # --- a/ movable-pointer naming convention (#1139) --------------------
-
-    @pytest.mark.parametrize(
-        "base_url",
-        [
-            "${API_GATEWAY_BASE_URL}/a/cohere-latest",
-            "${API_GATEWAY_BASE_URL}/a/anthropic/claude-opus-latest",
-            "${API_GATEWAY_BASE_URL}/a/cohere-latest@byok",
-            # Jinja suffix after an a/ prefix: validated as 'a/<provider>'
-            # static prefix + dynamic per-enrollment Jinja.
-            "${API_GATEWAY_BASE_URL}/a/cohere-latest/{{ enrollment_vars.code }}",
-        ],
-    )
-    def test_accepts_a_prefix_movable_pointer(self, base_url: str) -> None:
-        """The ``a/`` prefix is a customer-facing 'this URL is a movable
-        pointer' hint (#1139). It bypasses the single-char first-segment
-        rule but the remainder still has to be a valid path identifier.
-        """
-        assert validate_listing_gateway_base_urls(_uai(base_url)) == []
-
-    def test_rejects_bare_a_slash(self) -> None:
-        """``a/`` alone is incomplete — the prefix must point at something."""
-        errors = validate_listing_gateway_base_urls(_uai("${API_GATEWAY_BASE_URL}/a/"))
-        assert any("incomplete" in e or "empty" in e for e in errors)
-
-    def test_rejects_a_prefix_with_single_char_remainder(self) -> None:
-        """After stripping ``a/``, the remainder must still satisfy the
-        single-char rule. ``a/x`` is rejected because ``x`` is single-char.
-        """
-        errors = validate_listing_gateway_base_urls(_uai("${API_GATEWAY_BASE_URL}/a/x"))
-        assert any("at least 2 characters" in e for e in errors)
-
-    def test_a_prefix_carveout_does_not_apply_to_other_primitives(self) -> None:
-        """The carve-out is ``a/``-only. ``m/``, ``l/``, ``f/``, etc. stay
-        reserved to avoid colliding with gateway wrapper primitives."""
-        for prefix in ("m", "l", "f", "t", "d", "r", "b", "c", "g", "p"):
-            errors = validate_listing_gateway_base_urls(_uai(f"${{API_GATEWAY_BASE_URL}}/{prefix}/cohere-latest"))
-            assert any("at least 2 characters" in e for e in errors), (
-                f"expected '{prefix}/' to be rejected, got: {errors}"
-            )
-
-    # --- Multiple @ rejection ---------------------------------------------
-
-    def test_rejects_multiple_at_signs(self) -> None:
-        errors = validate_listing_gateway_base_urls(_uai("${API_GATEWAY_BASE_URL}/anthropic/claude@byok@premium"))
-        assert any("multiple '@'" in e for e in errors)
-
-    # --- Empty / malformed segments --------------------------------------
+    # --- Rejected: removed /p/ primitive ----------------------------------
 
     @pytest.mark.parametrize(
         "base_url",
         [
-            "${API_GATEWAY_BASE_URL}/anthropic@",  # empty variant
-            "${API_GATEWAY_BASE_URL}/-anthropic",  # leading dash
-            "${API_GATEWAY_BASE_URL}/anthropic/_service",  # leading underscore
+            "${API_GATEWAY_BASE_URL}/p/anthropic",
+            "${API_GATEWAY_BASE_URL}/p/{{ service_name }}",
         ],
     )
-    def test_rejects_malformed_segments(self, base_url: str) -> None:
+    def test_rejects_legacy_p_primitive(self, base_url: str) -> None:
         errors = validate_listing_gateway_base_urls(_uai(base_url))
-        assert len(errors) > 0
+        assert any("/p/" in e and "removed" in e for e in errors)
 
     # --- Multi-interface error attribution -------------------------------
 
     def test_reports_per_interface_field_path(self) -> None:
         uai = {
-            "good": {"access_method": "http", "base_url": "${API_GATEWAY_BASE_URL}/anthropic"},
+            "good": {"access_method": "http", "base_url": "${API_GATEWAY_BASE_URL}/{{ service_name }}"},
             "bad": {"access_method": "http", "base_url": "${API_GATEWAY_BASE_URL}/p/anthropic"},
         }
         errors = validate_listing_gateway_base_urls(uai)
@@ -352,3 +287,39 @@ class TestValidateListingGatewayBaseUrls:
     @pytest.mark.parametrize("value", [None, {}, "not a dict", []])
     def test_handles_non_dict_inputs(self, value) -> None:
         assert validate_listing_gateway_base_urls(value) == []
+
+
+class TestServiceNameJinjaVar:
+    """``service_name`` is a platform-injected Jinja variable, so a base_url
+    referencing ``{{ service_name }}`` must not be flagged as undefined even
+    when the listing declares no params / routing_vars / enrollment_vars."""
+
+    def test_service_name_var_is_defined(self) -> None:
+        data = {
+            "user_access_interfaces": {
+                "default": {"access_method": "http", "base_url": "${API_GATEWAY_BASE_URL}/{{ service_name }}"}
+            }
+        }
+        assert validate_listing_jinja_var_references(data) == []
+
+    def test_service_name_var_with_enrollment_suffix(self) -> None:
+        data = {
+            "service_options": {"enrollment_vars": {"code": "{{ params.code }}"}},
+            "user_parameters_schema": {"properties": {"code": {"type": "string"}}},
+            "user_access_interfaces": {
+                "default": {
+                    "access_method": "http",
+                    "base_url": "${API_GATEWAY_BASE_URL}/{{ service_name }}/{{ enrollment_vars.code }}",
+                }
+            },
+        }
+        assert validate_listing_jinja_var_references(data) == []
+
+    def test_unknown_var_still_flagged(self) -> None:
+        data = {
+            "user_access_interfaces": {
+                "default": {"access_method": "http", "base_url": "${API_GATEWAY_BASE_URL}/{{ bogus_var }}"}
+            }
+        }
+        errors = validate_listing_jinja_var_references(data)
+        assert any("undefined" in e for e in errors)
