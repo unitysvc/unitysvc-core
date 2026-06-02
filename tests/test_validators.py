@@ -178,9 +178,6 @@ class TestValidateListingGatewayBaseUrls:
             # Dynamic per-enrollment suffix.
             "${API_GATEWAY_BASE_URL}/{{ service_name }}/{{ enrollment_vars.code }}",
             "${API_GATEWAY_BASE_URL}/{{ service_name }}/${enrollment_vars.code}",
-            # Wrapper-stack primitive prefix before the identifier.
-            "${API_GATEWAY_BASE_URL}/u/{{ service_name }}",
-            "${API_GATEWAY_BASE_URL}/u/{{ service_name }}/{{ enrollment_vars.code }}",
         ],
     )
     def test_accepts_service_name_var(self, base_url: str) -> None:
@@ -252,6 +249,10 @@ class TestValidateListingGatewayBaseUrls:
             "${API_GATEWAY_BASE_URL}/u/uptime",
             # Literal name with a dynamic suffix is still a hard-coded name.
             "${API_GATEWAY_BASE_URL}/anthropic/{{ params.model }}",
+            # {{ service_name }} behind a wrapper-stack prefix is not accepted —
+            # the identifier must be the first path segment (no /u/, /l/, …).
+            "${API_GATEWAY_BASE_URL}/u/{{ service_name }}",
+            "${API_GATEWAY_BASE_URL}/u/{{ service_name }}/{{ enrollment_vars.code }}",
         ],
     )
     def test_rejects_literal_paths(self, base_url: str) -> None:
