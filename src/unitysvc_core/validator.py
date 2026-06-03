@@ -12,6 +12,18 @@ from jsonschema.validators import Draft7Validator
 
 from .utils import load_data_file
 
+# svcpass api_key dispositions (#1198). On an upstream_access_config interface
+# these literal values are not credentials: "" / "__strip__" strip the
+# svcpass-bearing header, "__forward__" forwards svcpass verbatim. Any other
+# value is an override credential (a secrets reference).
+DISPOSITION_VALUES = ("", "__strip__", "__forward__")
+
+# Platform hosts svcpass may be forwarded to when api_key == "__forward__".
+# svcpass is a platform credential, so forwarding to anything else is a hard
+# validation error (the gateway enforces the same allowlist at runtime, #1198).
+# Matched as exact host or dot-prefixed suffix.
+TRUSTED_FORWARD_HOST_SUFFIXES = (".svcpass.com", ".unitysvc.com")
+
 
 class UnrecognizedDataFileWarning(UserWarning):
     """Emitted when ``validate_all`` skips a JSON/TOML file because it
@@ -250,6 +262,14 @@ class DataValidator:
                             errors.append(
                                 f"Invalid api_key at '{new_path}': expected string, got {type(value).__name__}"
                             )
+                        elif new_path.startswith("upstream_access_config.") and value in DISPOSITION_VALUES:
+                            # svcpass dispositions (#1198), not credentials:
+                            # "" / "__strip__" => strip, "__forward__" => forward
+                            # (host gate checked by validate_forward_disposition).
+                            # Reserved: a sentinel elsewhere (e.g. an actual
+                            # ops_testing api_key) still falls through to the
+                            # secrets-format check below and is rejected.
+                            pass
                         elif not seller_secrets_pattern.match(value) and not customer_secrets_pattern.match(value):
                             # Allow Jinja2 conditional templates (rendered at enrollment time)
                             if "{%" not in value:
@@ -269,6 +289,63 @@ class DataValidator:
                         check_api_key(item, f"{path}[{i}]")
 
         check_api_key(data)
+        return errors
+
+    @staticmethod
+    def _is_trusted_forward_host(host: str) -> bool:
+        """True if `host` is a platform host svcpass may be forwarded to."""
+        host = host.lower()
+        for suffix in TRUSTED_FORWARD_HOST_SUFFIXES:
+            if host == suffix.lstrip(".") or host.endswith(suffix):
+                return True
+        return False
+
+    @staticmethod
+    def _static_host(base_url: str) -> str | None:
+        """Return the literal host of `base_url`, or None when it can't be
+        statically resolved (no host, or the host portion is templated)."""
+        try:
+            host = urlparse(base_url).hostname
+        except (ValueError, TypeError):
+            return None
+        if not host or "${" in host or "{{" in host:
+            return None
+        return host.lower()
+
+    def validate_forward_disposition(self, data: dict[str, Any]) -> list[str]:
+        """Reject ``api_key == "__forward__"`` on an upstream interface whose
+        ``base_url`` does not point at a trusted platform host (#1198).
+
+        svcpass is a platform credential; forwarding it verbatim is only safe
+        to internal/platform hosts. The gateway enforces the same allowlist at
+        runtime, but catching it here fails the authoring/CI pass before deploy.
+        A ``base_url`` that can't be statically resolved to a trusted host
+        (templated/env-var host, external host, or missing) is a hard error.
+        """
+        errors: list[str] = []
+        upstream = data.get("upstream_access_config")
+        if not isinstance(upstream, dict):
+            return errors
+        allowed = ", ".join(TRUSTED_FORWARD_HOST_SUFFIXES)
+        for iface_name, iface in upstream.items():
+            if not isinstance(iface, dict) or iface.get("api_key") != "__forward__":
+                continue
+            path = f"upstream_access_config.{iface_name}"
+            base_url = iface.get("base_url")
+            host = self._static_host(base_url) if isinstance(base_url, str) else None
+            if not host:
+                errors.append(
+                    f"Invalid '__forward__' disposition at '{path}.api_key': base_url "
+                    f"({base_url!r}) has no statically resolvable host. svcpass is a "
+                    f"platform credential and must not be forwarded to an arbitrary host; "
+                    f"base_url must be a trusted platform host (allowed suffixes: {allowed})."
+                )
+            elif not self._is_trusted_forward_host(host):
+                errors.append(
+                    f"Invalid '__forward__' disposition at '{path}.api_key': base_url host "
+                    f"'{host}' is not a trusted platform host (allowed suffixes: {allowed}). "
+                    f"svcpass must never be forwarded to an external host."
+                )
         return errors
 
     # Matches any ${ secrets... } or ${ customer_secrets... } expression —
@@ -754,6 +831,9 @@ class DataValidator:
         # Validate api_key fields use secrets format
         api_key_errors = self.validate_api_key_secrets(data)
         errors.extend(api_key_errors)
+
+        # Validate the __forward__ svcpass disposition only targets trusted hosts
+        errors.extend(self.validate_forward_disposition(data))
 
         # Validate every ${ secrets.X } / ${ customer_secrets.X } in an
         # offering's upstream_access_config resolves to a plain identifier.

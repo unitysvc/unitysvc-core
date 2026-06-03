@@ -1434,9 +1434,7 @@ class TestListingNameNamespace:
         svc_dir.mkdir(parents=True)
         import json
 
-        (provider_root / "provider.json").write_text(
-            json.dumps({"schema": "provider_v1", "name": provider_name})
-        )
+        (provider_root / "provider.json").write_text(json.dumps({"schema": "provider_v1", "name": provider_name}))
         return svc_dir / "listing.json"
 
     def test_namespaced_first_segment_matches_provider(self, tmp_path, schema_dir):
@@ -1479,3 +1477,63 @@ class TestListingNameNamespace:
         listing_file = loose / "listing.json"
         errors = validator.validate_listing_name_namespace({"name": "openai/whatever"}, listing_file)
         assert errors == []
+
+
+class TestSvcpassDisposition:
+    """api_key svcpass dispositions: strip / forward / override (#1198)."""
+
+    @pytest.fixture
+    def validator(self, schema_dir, tmp_path):
+        return DataValidator(tmp_path, schema_dir)
+
+    def _offering(self, api_key, base_url="https://up.example.com"):
+        iface = {"access_method": "http", "base_url": base_url}
+        if api_key is not None:
+            iface["api_key"] = api_key
+        return {"upstream_access_config": {"http": iface}}
+
+    def test_strip_sentinels_accepted(self, validator):
+        for value in ("", "__strip__"):
+            assert validator.validate_api_key_secrets(self._offering(value)) == []
+
+    def test_secret_reference_still_accepted(self, validator):
+        data = self._offering("${ customer_secrets.HTTP_RELAY_API_KEY }")
+        assert validator.validate_api_key_secrets(data) == []
+
+    def test_literal_credential_still_rejected(self, validator):
+        errors = validator.validate_api_key_secrets(self._offering("sk-plaintext"))
+        assert errors and "secrets reference format" in errors[0]
+
+    def test_sentinel_outside_upstream_is_reserved(self, validator):
+        # A sentinel on an actual key field (not a disposition site) is rejected.
+        data = {"service_options": {"ops_testing_parameters": {"api_key": "__forward__"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert errors and "secrets reference format" in errors[0]
+
+    def test_forward_to_trusted_host_ok(self, validator):
+        data = self._offering("__forward__", base_url="https://api.svcpass.com/v1")
+        assert validator.validate_api_key_secrets(data) == []
+        assert validator.validate_forward_disposition(data) == []
+
+    def test_forward_to_external_host_rejected(self, validator):
+        data = self._offering("__forward__", base_url="https://evil.example.com")
+        errors = validator.validate_forward_disposition(data)
+        assert errors and "not a trusted platform host" in errors[0]
+
+    def test_forward_to_lookalike_host_rejected(self, validator):
+        data = self._offering("__forward__", base_url="https://evilsvcpass.com")
+        errors = validator.validate_forward_disposition(data)
+        assert errors and "not a trusted platform host" in errors[0]
+
+    def test_forward_to_templated_host_rejected(self, validator):
+        data = self._offering("__forward__", base_url="${API_GATEWAY_BASE_URL}/x")
+        errors = validator.validate_forward_disposition(data)
+        assert errors and "no statically resolvable host" in errors[0]
+
+    def test_forward_allows_templated_path_on_trusted_host(self, validator):
+        data = self._offering("__forward__", base_url="https://relay.svcpass.com/{{ enrollment_vars.code }}")
+        assert validator.validate_forward_disposition(data) == []
+
+    def test_override_disposition_skips_forward_gate(self, validator):
+        data = self._offering("${ secrets.KEY }", base_url="https://evil.example.com")
+        assert validator.validate_forward_disposition(data) == []

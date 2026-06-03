@@ -91,7 +91,20 @@ class AccessInterfaceData(BaseModel):
 
     base_url: str = Field(max_length=500, description="Base URL for api access")
 
-    api_key: str | None = Field(default=None, max_length=2000, description="API key if required")
+    api_key: str | None = Field(
+        default=None,
+        max_length=2000,
+        description=(
+            "Upstream API key, or a svcpass disposition (#1198). On an "
+            "upstream_access_config interface the value controls what the "
+            "gateway does with the inbound svcpass token before forwarding: "
+            "unset/'' or '__strip__' strip the svcpass-bearing header (other "
+            "auth headers pass through); '__forward__' keeps svcpass on its "
+            "original header (only to a trusted platform host); any other "
+            "value (a '${ secrets.X }' / '${ customer_secrets.X }' reference) "
+            "overrides svcpass with that credential on the source header."
+        ),
+    )
 
     description: str | None = Field(default=None, max_length=500, description="Interface description")
 
