@@ -342,37 +342,28 @@ _API_GATEWAY_PREFIX = "${API_GATEWAY_BASE_URL}"
 # with alphanumeric.
 _GATEWAY_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
-# The ``{{ service_name }}`` Jinja2 variable (injected at render time) must be
-# the **first** path segment after ``${API_GATEWAY_BASE_URL}/``. A gateway
-# base_url routes by the service identifier through this variable rather than
-# hard-coding a ``<provider>/<service-name>`` path, so that the routable path
-# always tracks ``listing.name`` (issue #1138). Wrapper-stack primitive
-# prefixes (``u/``, ``l/``, ``m/`` …) before the identifier are *not* allowed —
-# the only static-prefix form accepted is the ``/a/<alias>`` movable pointer.
-_SERVICE_NAME_PREFIX_RE = re.compile(r"^\{\{\s*service_name\s*\}\}(/|$)")
-
 
 def validate_listing_gateway_base_urls(user_access_interfaces: dict[str, Any] | None) -> list[str]:
-    """Validate ``${API_GATEWAY_BASE_URL}/...`` base_urls (issue #1138).
+    """Validate ``${API_GATEWAY_BASE_URL}/...`` base_urls.
 
-    A user-facing gateway base_url must route by the service identifier. It is
-    accepted when, after the ``${API_GATEWAY_BASE_URL}`` prefix, it is one of:
+    The gateway base_url is intentionally left almost unconstrained: a provider
+    may route many services through a single base_url and differentiate them by
+    other parts of the request (e.g. ``routing_key`` / ``model``), so we cannot
+    require the path to track the service name. For example
+    ``${API_GATEWAY_BASE_URL}/parasail`` with ``model: <model_name>`` is a valid
+    topology that does not need ``…/parasail/<model_name>``. Specs are also
+    frequently rendered from Jinja2 ``.j2`` templates, so forcing a literal
+    ``{{ service_name }}`` segment would require awkward ``{% raw %}`` wrapping.
 
-    - **Leads with ``{{ service_name }}``** as its first path segment. Static or
-      dynamic suffixes after it are allowed, but no static prefix may precede it
-      — e.g. ``${API_GATEWAY_BASE_URL}/{{ service_name }}``,
-      ``${API_GATEWAY_BASE_URL}/{{ service_name }}/{{ enrollment_vars.code }}``.
-      Wrapper-stack primitive prefixes (``u/``, ``l/``, ``m/`` …) before the
-      identifier are **not** accepted.
-    - **A ``/a/<alias>`` movable pointer** (#1139) — a static alias the platform
-      can re-point later; the alias segment must satisfy the per-segment grammar.
-    - **The gateway root** (``${API_GATEWAY_BASE_URL}`` alone) or a path that is
-      **entirely dynamic** from the first segment (e.g. a BYOE
-      ``${API_GATEWAY_BASE_URL}/{{ enrollment_vars.endpoint }}``) — nothing
-      static to pin to a service name.
-
-    Rejected: a literal ``<provider>/<service>`` path (use ``{{ service_name }}``
-    instead) and the removed ``/p/`` route primitive.
+    The **only** rule enforced: the first path segment after
+    ``${API_GATEWAY_BASE_URL}/``, when it is a single character, must be ``a`` —
+    single-letter prefixes are reserved for platform wrapper-stack primitives
+    (``b/``, ``m/``, ``l/``, ``t/``, ``f/`` …) and only the ``/a/<alias>``
+    movable pointer (#1139) is available to listings. For an ``a/`` path the
+    alias remainder must satisfy the per-segment grammar. The gateway root, a
+    fully dynamic first segment (``{{ … }}`` / ``${ … }``), and any
+    multi-character literal first segment (a provider path, a rendered
+    ``{{ service_name }}``, etc.) are all accepted.
 
     Returns a list of error messages (empty if all valid).
     """
@@ -394,29 +385,26 @@ def validate_listing_gateway_base_urls(user_access_interfaces: dict[str, Any] | 
         if suffix.startswith("/"):
             suffix = suffix[1:]
 
-        # Removed ``/p/`` route primitive — precise migration hint.
-        if suffix == "p" or suffix.startswith("p/"):
-            errors.append(
-                f"{field}: base_url '{base_url}' uses the removed '/p/' route primitive. "
-                f"Replace the listing path with '{{{{ service_name }}}}', e.g. "
-                f"'${{API_GATEWAY_BASE_URL}}/{{{{ service_name }}}}' (issue #1138)."
-            )
-            continue
-
-        # Gateway root, or a path that is entirely dynamic from its first
-        # segment — nothing static to pin to a service name. Allowed.
+        # Gateway root, or a path whose first segment is dynamic — nothing
+        # static to constrain. Allowed.
         if not suffix or _earliest_dynamic_marker(suffix) == 0:
             continue
 
-        # Routes by the service identifier via a leading ``{{ service_name }}``
-        # segment — allowed regardless of any trailing suffix. A static prefix
-        # before the identifier (e.g. ``u/{{ service_name }}``) is not accepted.
-        if _SERVICE_NAME_PREFIX_RE.match(suffix):
-            continue
+        first_segment = suffix.split("/", 1)[0]
 
-        # ``/a/<alias>`` movable pointer (#1139) — validate the static alias
-        # grammar (truncate any dynamic per-enrollment suffix first).
-        if suffix.startswith("a/"):
+        # Single-character first segments are reserved for platform primitives;
+        # only the ``a/`` movable pointer (#1139) is available to listings.
+        if len(first_segment) == 1:
+            if first_segment != "a":
+                errors.append(
+                    f"{field}: base_url '{base_url}' uses reserved single-letter prefix "
+                    f"'/{first_segment}/'. Single-character path prefixes are reserved for "
+                    f"platform primitives; only '${{API_GATEWAY_BASE_URL}}/a/<alias>' is "
+                    f"available to listings."
+                )
+                continue
+            # ``/a/<alias>`` movable pointer — validate the static alias grammar
+            # (truncate any dynamic per-enrollment suffix first).
             static = suffix
             dyn = _earliest_dynamic_marker(static)
             if dyn is not None:
@@ -424,17 +412,8 @@ def validate_listing_gateway_base_urls(user_access_interfaces: dict[str, Any] | 
             errors.extend(_validate_gateway_path_prefix(static, field))
             continue
 
-        # Anything else — a literal ``<provider>/<service>`` path, or a
-        # ``{{ service_name }}`` reference behind a static prefix (e.g.
-        # ``u/{{ service_name }}``), neither of which is accepted.
-        errors.append(
-            f"{field}: base_url '{base_url}' must route by the service identifier — "
-            f"lead the path with '{{{{ service_name }}}}' "
-            f"(e.g. '${{API_GATEWAY_BASE_URL}}/{{{{ service_name }}}}') or use a "
-            f"'${{API_GATEWAY_BASE_URL}}/a/<alias>' movable pointer. Static prefixes "
-            f"before '{{{{ service_name }}}}' and literal '<provider>/<service>' "
-            f"paths are not accepted (issue #1138)."
-        )
+        # Multi-character first segment (provider path, rendered service name,
+        # etc.) — unconstrained.
 
     return errors
 
