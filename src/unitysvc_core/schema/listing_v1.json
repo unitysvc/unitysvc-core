@@ -9,20 +9,6 @@
           "default": "http",
           "description": "Type of access method"
         },
-        "api_key": {
-          "anyOf": [
-            {
-              "maxLength": 2000,
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "API key if required",
-          "title": "Api Key"
-        },
         "base_url": {
           "description": "Base URL for api access",
           "maxLength": 500,
