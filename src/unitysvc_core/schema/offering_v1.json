@@ -1735,7 +1735,7 @@
             }
           ],
           "default": null,
-          "description": "Upstream API key, or a svcpass disposition (#1198). On an upstream_access_config interface the value controls what the gateway does with the inbound svcpass token before forwarding: unset/'' or '__strip__' strip the svcpass-bearing header (other auth headers pass through); '__forward__' keeps svcpass on its original header (only to a trusted platform host); any other value (a '${ secrets.X }' / '${ customer_secrets.X }' reference) overrides svcpass with that credential on the source header.",
+          "description": "Upstream API key, or a svcpass disposition (#1198). The value controls what the gateway does with the inbound svcpass token before forwarding upstream: unset/'' or '__strip__' strip the svcpass-bearing header (other auth headers pass through); '__forward__' keeps svcpass on its original header (only to a trusted platform host); any other value (a '${ secrets.X }' / '${ customer_secrets.X }' reference) overrides svcpass with that credential on the source header.",
           "title": "Api Key"
         },
         "base_url": {
