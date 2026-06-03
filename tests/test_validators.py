@@ -155,13 +155,14 @@ def _uai(base_url: str) -> dict:
 
 
 class TestValidateListingGatewayBaseUrls:
-    """Coverage for the gateway base_url validator (issue #1138).
+    """Coverage for the gateway base_url validator.
 
-    Under ``service_name = listing.name``, a gateway base_url must route by the
-    service identifier through the ``{{ service_name }}`` Jinja variable (or be
-    an ``/a/<alias>`` movable pointer, the gateway root, or entirely dynamic).
-    Literal ``<provider>/<service>`` paths and the removed ``/p/`` primitive are
-    rejected.
+    The gateway base_url is almost unconstrained — a provider may route many
+    services through one base_url and differentiate by request fields, and specs
+    are often rendered from Jinja2 templates. The only rule: a single-character
+    first path segment must be ``a`` (single-letter prefixes are reserved for
+    platform primitives; only ``/a/<alias>`` is available to listings). Literal
+    ``<provider>/<service>`` paths are accepted.
     """
 
     # --- Valid: routes via {{ service_name }} -----------------------------
@@ -236,41 +237,45 @@ class TestValidateListingGatewayBaseUrls:
     def test_skips_non_api_gateway_urls(self, base_url: str) -> None:
         assert validate_listing_gateway_base_urls(_uai(base_url)) == []
 
-    # --- Rejected: literal <provider>/<service> paths ---------------------
+    # --- Valid: literal multi-character first segments --------------------
 
     @pytest.mark.parametrize(
         "base_url",
         [
+            # Literal <provider>/<service> paths — accepted (a provider may route
+            # many services through one base_url and differentiate by request).
             "${API_GATEWAY_BASE_URL}/anthropic",
             "${API_GATEWAY_BASE_URL}/anthropic/claude-opus-4-7",
             "${API_GATEWAY_BASE_URL}/anthropic/claude-opus-4-7@byok",
             "${API_GATEWAY_BASE_URL}/huggingface/Qwen/Qwen2.5-Coder-7B-Instruct",
-            # Wrapper prefix but still a literal name (no {{ service_name }}).
-            "${API_GATEWAY_BASE_URL}/u/uptime",
-            # Literal name with a dynamic suffix is still a hard-coded name.
             "${API_GATEWAY_BASE_URL}/anthropic/{{ params.model }}",
-            # {{ service_name }} behind a wrapper-stack prefix is not accepted —
-            # the identifier must be the first path segment (no /u/, /l/, …).
-            "${API_GATEWAY_BASE_URL}/u/{{ service_name }}",
-            "${API_GATEWAY_BASE_URL}/u/{{ service_name }}/{{ enrollment_vars.code }}",
+            # Single base_url, differentiate by routing_key/model (parasail).
+            "${API_GATEWAY_BASE_URL}/parasail",
+            # A multi-character wrapper-stack prefix is just a literal segment.
+            "${API_GATEWAY_BASE_URL}/uptime",
+            # {{ service_name }} need not be the first segment.
+            "${API_GATEWAY_BASE_URL}/anthropic/{{ service_name }}",
         ],
     )
-    def test_rejects_literal_paths(self, base_url: str) -> None:
-        errors = validate_listing_gateway_base_urls(_uai(base_url))
-        assert any("service_name" in e for e in errors)
+    def test_accepts_literal_and_provider_paths(self, base_url: str) -> None:
+        assert validate_listing_gateway_base_urls(_uai(base_url)) == []
 
-    # --- Rejected: removed /p/ primitive ----------------------------------
+    # --- Rejected: reserved single-letter prefixes ------------------------
 
     @pytest.mark.parametrize(
         "base_url",
         [
             "${API_GATEWAY_BASE_URL}/p/anthropic",
             "${API_GATEWAY_BASE_URL}/p/{{ service_name }}",
+            "${API_GATEWAY_BASE_URL}/u/uptime",
+            "${API_GATEWAY_BASE_URL}/u/{{ service_name }}",
+            "${API_GATEWAY_BASE_URL}/b/my-alerts",
+            "${API_GATEWAY_BASE_URL}/m/foo",
         ],
     )
-    def test_rejects_legacy_p_primitive(self, base_url: str) -> None:
+    def test_rejects_reserved_single_letter_prefixes(self, base_url: str) -> None:
         errors = validate_listing_gateway_base_urls(_uai(base_url))
-        assert any("/p/" in e and "removed" in e for e in errors)
+        assert any("reserved single-letter prefix" in e for e in errors)
 
     # --- Multi-interface error attribution -------------------------------
 
