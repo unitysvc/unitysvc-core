@@ -192,17 +192,52 @@ def validate_service_identifier(name: str, entity_type: str) -> str:
 
 
 SUPPORTED_SERVICE_OPTIONS: dict[str, type | tuple[type, ...]] = {
-    "enrollment_code": dict,  # Per-enrollment code config, e.g. {"scope": "customer"|"global"}
+    "enrollment": dict,  # Per-enrollment config: {code_scope, limit, limit_per_customer, limit_per_user}
     "routing_vars": dict,  # Seller-managed operational variables for template resolution at request time
-    "enrollment_limit": int,
-    "enrollment_limit_per_customer": int,
-    "enrollment_limit_per_user": int,
     "ops_testing_parameters": dict,
     "prompt_recurrence": bool,  # Prompt recurrence options during enrollment
     "recurrence_min_interval_seconds": int,
     "recurrence_max_interval_seconds": int,
     "recurrence_allow_cron": bool,
 }
+
+# Inner keys of the ``enrollment`` service option and their expected types.
+SUPPORTED_ENROLLMENT_OPTIONS: dict[str, type | tuple[type, ...]] = {
+    "code_scope": str,  # "customer" (default) | "global"
+    "limit": int,  # global active-enrollment cap per service
+    "limit_per_customer": int,
+    "limit_per_user": int,
+}
+
+
+def _validate_enrollment_option(value: dict[str, Any]) -> list[str]:
+    """Light validation of the nested ``service_options.enrollment`` dict.
+
+    The top-level allowlist only requires ``enrollment`` to be a dict; this
+    checks the known inner keys (types + value constraints) and rejects
+    unknown inner keys so typos surface.
+    """
+    errors: list[str] = []
+    for key, val in value.items():
+        if key not in SUPPORTED_ENROLLMENT_OPTIONS:
+            errors.append(
+                f"Unrecognized service_options.enrollment key '{key}'. "
+                f"Supported: {', '.join(sorted(SUPPORTED_ENROLLMENT_OPTIONS))}"
+            )
+            continue
+        expected_type = SUPPORTED_ENROLLMENT_OPTIONS[key]
+        if expected_type is int and isinstance(val, bool):
+            errors.append(f"service_options.enrollment.{key} must be int, got bool")
+            continue
+        if not isinstance(val, expected_type):
+            type_name = expected_type.__name__ if isinstance(expected_type, type) else str(expected_type)
+            errors.append(f"service_options.enrollment.{key} must be {type_name}, got {type(val).__name__}")
+            continue
+        if key == "code_scope" and val not in ("customer", "global"):
+            errors.append(f"service_options.enrollment.code_scope must be 'customer' or 'global', got {val!r}")
+        if key.startswith("limit") and isinstance(val, int) and val <= 0:
+            errors.append(f"service_options.enrollment.{key} must be a positive integer, got {val}")
+    return errors
 
 
 def validate_service_options(service_options: dict[str, Any] | None) -> list[str]:
@@ -236,18 +271,9 @@ def validate_service_options(service_options: dict[str, Any] | None) -> list[str
             errors.append(f"service_options.{key} must be {type_name}, got {type(value).__name__}")
             continue
 
-        # Validate enrollment_code.scope is a recognized value
-        if key == "enrollment_code" and isinstance(value, dict):
-            scope = value.get("scope", "customer")
-            if scope not in ("customer", "global"):
-                errors.append(
-                    f"service_options.enrollment_code.scope must be 'customer' or 'global', got {scope!r}"
-                )
-
-        # Non-positive integers for enrollment_limit* keys
-        if expected_type is int and key.startswith("enrollment_limit") and isinstance(value, int):
-            if value <= 0:
-                errors.append(f"service_options.{key} must be a positive integer, got {value}")
+        # Validate the nested enrollment config (code_scope / limit*).
+        if key == "enrollment" and isinstance(value, dict):
+            errors.extend(_validate_enrollment_option(value))
 
         # Recurrence interval bounds
         if key in ("recurrence_min_interval_seconds", "recurrence_max_interval_seconds") and isinstance(value, int):
