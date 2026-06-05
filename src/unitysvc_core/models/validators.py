@@ -192,17 +192,52 @@ def validate_service_identifier(name: str, entity_type: str) -> str:
 
 
 SUPPORTED_SERVICE_OPTIONS: dict[str, type | tuple[type, ...]] = {
-    "enrollment_vars": dict,  # Named Jinja2 template values rendered per-enrollment
+    "enrollment": dict,  # Per-enrollment config: {scope, limit, limit_per_customer, limit_per_user}
     "routing_vars": dict,  # Seller-managed operational variables for template resolution at request time
-    "enrollment_limit": int,
-    "enrollment_limit_per_customer": int,
-    "enrollment_limit_per_user": int,
     "ops_testing_parameters": dict,
     "prompt_recurrence": bool,  # Prompt recurrence options during enrollment
     "recurrence_min_interval_seconds": int,
     "recurrence_max_interval_seconds": int,
     "recurrence_allow_cron": bool,
 }
+
+# Inner keys of the ``enrollment`` service option and their expected types.
+SUPPORTED_ENROLLMENT_OPTIONS: dict[str, type | tuple[type, ...]] = {
+    "scope": str,  # "customer" (default) | "global"
+    "limit": int,  # global active-enrollment cap per service
+    "limit_per_customer": int,
+    "limit_per_user": int,
+}
+
+
+def _validate_enrollment_option(value: dict[str, Any]) -> list[str]:
+    """Light validation of the nested ``service_options.enrollment`` dict.
+
+    The top-level allowlist only requires ``enrollment`` to be a dict; this
+    checks the known inner keys (types + value constraints) and rejects
+    unknown inner keys so typos surface.
+    """
+    errors: list[str] = []
+    for key, val in value.items():
+        if key not in SUPPORTED_ENROLLMENT_OPTIONS:
+            errors.append(
+                f"Unrecognized service_options.enrollment key '{key}'. "
+                f"Supported: {', '.join(sorted(SUPPORTED_ENROLLMENT_OPTIONS))}"
+            )
+            continue
+        expected_type = SUPPORTED_ENROLLMENT_OPTIONS[key]
+        if expected_type is int and isinstance(val, bool):
+            errors.append(f"service_options.enrollment.{key} must be int, got bool")
+            continue
+        if not isinstance(val, expected_type):
+            type_name = expected_type.__name__ if isinstance(expected_type, type) else str(expected_type)
+            errors.append(f"service_options.enrollment.{key} must be {type_name}, got {type(val).__name__}")
+            continue
+        if key == "scope" and val not in ("customer", "global"):
+            errors.append(f"service_options.enrollment.scope must be 'customer' or 'global', got {val!r}")
+        if key.startswith("limit") and isinstance(val, int) and val <= 0:
+            errors.append(f"service_options.enrollment.{key} must be a positive integer, got {val}")
+    return errors
 
 
 def validate_service_options(service_options: dict[str, Any] | None) -> list[str]:
@@ -236,20 +271,9 @@ def validate_service_options(service_options: dict[str, Any] | None) -> list[str
             errors.append(f"service_options.{key} must be {type_name}, got {type(value).__name__}")
             continue
 
-        # Validate enrollment_vars values are all strings (Jinja2 templates)
-        if key == "enrollment_vars" and isinstance(value, dict):
-            for env_key, env_val in value.items():
-                if not isinstance(env_key, str):
-                    errors.append(f"service_options.enrollment_vars key must be str, got {type(env_key).__name__}")
-                elif not isinstance(env_val, str):
-                    errors.append(
-                        f"service_options.enrollment_vars.{env_key} must be str, got {type(env_val).__name__}"
-                    )
-
-        # Non-positive integers for enrollment_limit* keys
-        if expected_type is int and key.startswith("enrollment_limit") and isinstance(value, int):
-            if value <= 0:
-                errors.append(f"service_options.{key} must be a positive integer, got {value}")
+        # Validate the nested enrollment config (scope / limit*).
+        if key == "enrollment" and isinstance(value, dict):
+            errors.extend(_validate_enrollment_option(value))
 
         # Recurrence interval bounds
         if key in ("recurrence_min_interval_seconds", "recurrence_max_interval_seconds") and isinstance(value, int):
@@ -425,7 +449,7 @@ def _earliest_dynamic_marker(s: str) -> int | None:
 
     - ``{{`` — Jinja variable
     - ``{%`` — Jinja block tag
-    - ``${`` — shell-style env-var reference (e.g. ``${enrollment_vars.code}``)
+    - ``${`` — shell-style env-var reference (e.g. ``${ customer_secrets.X }``)
 
     Returns the smallest index where one of these markers begins, or
     ``None`` if no markers are present.
@@ -666,7 +690,7 @@ def build_jinja_var_context(
     service_options: dict[str, Any] | None,
     user_parameters_schema: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Build the ``{ service_name, params, routing_vars, enrollment_vars }``
+    """Build the ``{ service_name, params, routing_vars, enrollment }``
     context used to render Jinja templates in listing/offering data.
 
     A name is "defined" for validation purposes if it appears in:
@@ -678,7 +702,9 @@ def build_jinja_var_context(
       *or* ``service_options.ops_testing_parameters`` (test defaults). Either
       means the runtime will have a value, so referencing it is safe.
     - ``routing_vars``: keys of ``service_options.routing_vars``.
-    - ``enrollment_vars``: keys of ``service_options.enrollment_vars``.
+    - ``enrollment``: intrinsic per-enrollment fields ``code`` / ``id`` — always
+      available at render time (#1202), so ``{{ enrollment.code }}`` is always
+      defined.
 
     Values are placeholder strings — only key presence matters for
     StrictUndefined checks.
@@ -695,14 +721,14 @@ def build_jinja_var_context(
         params_keys.update(k for k in ops_testing if isinstance(k, str))
 
     routing_vars = service_options.get("routing_vars") if isinstance(service_options, dict) else None
-    enrollment_vars = service_options.get("enrollment_vars") if isinstance(service_options, dict) else None
 
     return {
         # Platform-injected at render time (= listing.name). Always defined.
         "service_name": "",
         "params": {k: "" for k in params_keys},
         "routing_vars": {k: "" for k in routing_vars} if isinstance(routing_vars, dict) else {},
-        "enrollment_vars": {k: "" for k in enrollment_vars} if isinstance(enrollment_vars, dict) else {},
+        # Intrinsic per-enrollment fields, always available at render time (#1202).
+        "enrollment": {"code": "", "id": ""},
     }
 
 
@@ -720,16 +746,17 @@ def _iter_strings(value: Any, path: str):
 
 def validate_listing_jinja_var_references(data: dict[str, Any] | None) -> list[str]:
     """Validate that every ``{{ params.X }}`` / ``{{ routing_vars.X }}`` /
-    ``{{ enrollment_vars.X }}`` reference inside ``user_access_interfaces``
+    ``{{ enrollment.X }}`` reference inside ``user_access_interfaces``
     resolves to a name declared in the listing's own
-    ``service_options`` / ``user_parameters_schema``.
+    ``service_options`` / ``user_parameters_schema`` (or the intrinsic
+    ``enrollment`` namespace).
 
     A reference is undefined when:
 
     - ``params.X``: ``X`` is not in ``user_parameters_schema.properties`` and
       not in ``service_options.ops_testing_parameters``.
     - ``routing_vars.X``: ``X`` is not in ``service_options.routing_vars``.
-    - ``enrollment_vars.X``: ``X`` is not in ``service_options.enrollment_vars``.
+    - ``enrollment.X``: ``X`` is not an intrinsic field (``code`` / ``id``).
 
     Returns a list of error messages (empty if all references resolve).
     """
@@ -755,7 +782,8 @@ def validate_listing_jinja_var_references(data: dict[str, Any] | None) -> list[s
                 errors.append(
                     f"{field_path}: Jinja reference is undefined — {exc.message}. "
                     f"Define the variable in the listing's service_options "
-                    f"(enrollment_vars / routing_vars) or user_parameters_schema.properties (for params)."
+                    f"(routing_vars), user_parameters_schema.properties (for params), "
+                    f"or use the intrinsic enrollment.code / enrollment.id."
                 )
             except TemplateSyntaxError as exc:
                 errors.append(f"{field_path}: Jinja syntax error in '{value}' — {exc.message}.")

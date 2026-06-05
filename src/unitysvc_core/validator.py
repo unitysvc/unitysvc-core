@@ -390,11 +390,11 @@ class DataValidator:
         1. A literal name (letters, digits, underscores only) such as
            ``${ customer_secrets.ECHO_API_KEY }``.
         2. A Jinja substitution that references the listing's
-           ``service_options``, rendered with the context
-           ``{ params, routing_vars, enrollment_vars }`` — where each
-           namespace maps to the corresponding ``service_options`` key
-           (``ops_testing_parameters``, ``routing_vars``,
-           ``enrollment_vars``). After expansion, the result must also be
+           ``service_options`` or the intrinsic enrollment, rendered with the
+           context ``{ params, routing_vars, enrollment }`` — where ``params``
+           maps to ``ops_testing_parameters``, ``routing_vars`` to
+           ``routing_vars``, and ``enrollment`` to the intrinsic per-enrollment
+           fields (``code`` / ``id``). After expansion, the result must also be
            a plain identifier.
 
         Anything else — bracket lookup (``customer_secrets[X]``),
@@ -432,7 +432,10 @@ class DataValidator:
         context = {
             "params": service_options.get("ops_testing_parameters") or {},
             "routing_vars": service_options.get("routing_vars") or {},
-            "enrollment_vars": service_options.get("enrollment_vars") or {},
+            # Intrinsic per-enrollment fields, always available at render time
+            # (#1202); placeholder values so `{{ enrollment.code }}` renders to a
+            # non-empty identifier for the secret-reference regex below.
+            "enrollment": {"code": "code", "id": "id"},
         }
 
         jinja_env = Environment(undefined=StrictUndefined, autoescape=False)
@@ -459,7 +462,7 @@ class DataValidator:
                         f"{field_path}: Jinja expansion failed — {exc.message}. "
                         f"Check that the listing's service_options provides the "
                         f"referenced namespace "
-                        f"(params / routing_vars / enrollment_vars)."
+                        f"(params / routing_vars / enrollment)."
                     )
                     continue
                 except TemplateSyntaxError as exc:
