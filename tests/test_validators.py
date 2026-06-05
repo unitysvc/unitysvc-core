@@ -177,8 +177,8 @@ class TestValidateListingGatewayBaseUrls:
             # Static suffix after the identifier.
             "${API_GATEWAY_BASE_URL}/{{ service_name }}/v1/messages",
             # Dynamic per-enrollment suffix.
-            "${API_GATEWAY_BASE_URL}/{{ service_name }}/{{ enrollment_vars.code }}",
-            "${API_GATEWAY_BASE_URL}/{{ service_name }}/${enrollment_vars.code}",
+            "${API_GATEWAY_BASE_URL}/{{ service_name }}/{{ enrollment.code }}",
+            "${API_GATEWAY_BASE_URL}/{{ service_name }}/${enrollment.code}",
         ],
     )
     def test_accepts_service_name_var(self, base_url: str) -> None:
@@ -193,9 +193,9 @@ class TestValidateListingGatewayBaseUrls:
             "${API_GATEWAY_BASE_URL}",
             "${API_GATEWAY_BASE_URL}/",
             # Entirely dynamic from the first segment — nothing static to pin.
-            "${API_GATEWAY_BASE_URL}/{{ enrollment_vars.endpoint }}",
+            "${API_GATEWAY_BASE_URL}/{{ enrollment.code }}",
             "${API_GATEWAY_BASE_URL}/{% if x %}a{% else %}b{% endif %}",
-            "${API_GATEWAY_BASE_URL}/${enrollment_vars.code}",
+            "${API_GATEWAY_BASE_URL}/${enrollment.code}",
         ],
     )
     def test_accepts_root_or_fully_dynamic(self, base_url: str) -> None:
@@ -209,7 +209,7 @@ class TestValidateListingGatewayBaseUrls:
             "${API_GATEWAY_BASE_URL}/a/cohere-latest",
             "${API_GATEWAY_BASE_URL}/a/anthropic/claude-opus-latest",
             "${API_GATEWAY_BASE_URL}/a/cohere-latest@byok",
-            "${API_GATEWAY_BASE_URL}/a/cohere-latest/{{ enrollment_vars.code }}",
+            "${API_GATEWAY_BASE_URL}/a/cohere-latest/{{ enrollment.code }}",
         ],
     )
     def test_accepts_a_prefix_movable_pointer(self, base_url: str) -> None:
@@ -298,7 +298,7 @@ class TestValidateListingGatewayBaseUrls:
 class TestServiceNameJinjaVar:
     """``service_name`` is a platform-injected Jinja variable, so a base_url
     referencing ``{{ service_name }}`` must not be flagged as undefined even
-    when the listing declares no params / routing_vars / enrollment_vars."""
+    when the listing declares no params / routing_vars."""
 
     def test_service_name_var_is_defined(self) -> None:
         data = {
@@ -310,12 +310,10 @@ class TestServiceNameJinjaVar:
 
     def test_service_name_var_with_enrollment_suffix(self) -> None:
         data = {
-            "service_options": {"enrollment_vars": {"code": "{{ params.code }}"}},
-            "user_parameters_schema": {"properties": {"code": {"type": "string"}}},
             "user_access_interfaces": {
                 "default": {
                     "access_method": "http",
-                    "base_url": "${API_GATEWAY_BASE_URL}/{{ service_name }}/{{ enrollment_vars.code }}",
+                    "base_url": "${API_GATEWAY_BASE_URL}/{{ service_name }}/{{ enrollment.code }}",
                 }
             },
         }

@@ -738,57 +738,78 @@ class TestServiceOptionsValidation:
         assert len(errors) == 1
         assert "must be int, got bool" in errors[0]
 
-    def test_valid_env_option(self, schema_dir, example_data_dir):
+    def test_valid_enrollment_code_option(self, schema_dir, example_data_dir):
         validator = DataValidator(example_data_dir, schema_dir)
         data = {
             "schema": "listing_v1",
             "service_options": {
-                "enrollment_vars": {"user_id": "{{ enrollment_code(6) }}"},
+                "enrollment_code": {"scope": "global"},
             },
         }
         errors = validator.validate_service_options_keys(data, "listing_v1")
         assert errors == []
 
-    def test_enrollment_vars_empty_dict_valid(self, schema_dir, example_data_dir):
+    def test_enrollment_code_scope_customer_valid(self, schema_dir, example_data_dir):
         validator = DataValidator(example_data_dir, schema_dir)
         data = {
             "schema": "listing_v1",
-            "service_options": {"enrollment_vars": {}},
+            "service_options": {"enrollment_code": {"scope": "customer"}},
         }
         errors = validator.validate_service_options_keys(data, "listing_v1")
         assert errors == []
 
-    def test_enrollment_vars_wrong_type(self, schema_dir, example_data_dir):
+    def test_enrollment_code_empty_dict_valid(self, schema_dir, example_data_dir):
+        """An empty dict defaults scope to 'customer', which is valid."""
         validator = DataValidator(example_data_dir, schema_dir)
         data = {
             "schema": "listing_v1",
-            "service_options": {"enrollment_vars": "not a dict"},
+            "service_options": {"enrollment_code": {}},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert errors == []
+
+    def test_enrollment_code_wrong_type(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"enrollment_code": "not a dict"},
         }
         errors = validator.validate_service_options_keys(data, "listing_v1")
         assert len(errors) == 1
         assert "must be dict, got str" in errors[0]
 
-    def test_enrollment_vars_value_must_be_string(self, schema_dir, example_data_dir):
+    def test_enrollment_code_invalid_scope(self, schema_dir, example_data_dir):
         validator = DataValidator(example_data_dir, schema_dir)
         data = {
             "schema": "listing_v1",
-            "service_options": {"enrollment_vars": {"count": 42}},
+            "service_options": {"enrollment_code": {"scope": "bogus"}},
         }
         errors = validator.validate_service_options_keys(data, "listing_v1")
         assert len(errors) == 1
-        assert "service_options.enrollment_vars.count must be str" in errors[0]
+        assert "scope must be 'customer' or 'global'" in errors[0]
 
-    def test_enrollment_vars_with_other_options(self, schema_dir, example_data_dir):
+    def test_enrollment_code_with_other_options(self, schema_dir, example_data_dir):
         validator = DataValidator(example_data_dir, schema_dir)
         data = {
             "schema": "listing_v1",
             "service_options": {
-                "enrollment_vars": {"topic": "{{ enrollment_code() }}"},
+                "enrollment_code": {"scope": "global"},
                 "enrollment_limit_per_customer": 5,
             },
         }
         errors = validator.validate_service_options_keys(data, "listing_v1")
         assert errors == []
+
+    def test_enrollment_vars_now_rejected(self, schema_dir, example_data_dir):
+        """The removed `enrollment_vars` option is no longer recognized."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"enrollment_vars": {"env": "PROD"}},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "Unrecognized service_option 'enrollment_vars'" in errors[0]
 
 
 class TestSecretReferencesValidation:
@@ -848,21 +869,21 @@ class TestSecretReferencesValidation:
         errors = validator.validate_secret_references(data, "offering_v1", offering_path)
         assert errors == []
 
-    def test_jinja_routing_vars_and_enrollment_vars(self, schema_dir, example_data_dir, tmp_path):
-        """`routing_vars` and `enrollment_vars` namespaces are also accepted."""
+    def test_jinja_routing_vars_and_params(self, schema_dir, example_data_dir, tmp_path):
+        """`routing_vars` and `params` namespaces are also accepted."""
         validator = DataValidator(example_data_dir, schema_dir)
         offering_path = self._write_pair(
             tmp_path,
             offering={
                 "upstream_access_config": {
                     "A": {"api_key": "${ secrets.{{ routing_vars.region }}_KEY }"},
-                    "B": {"api_key": "${ secrets.{{ enrollment_vars.env }}_KEY }"},
+                    "B": {"api_key": "${ secrets.{{ params.env }}_KEY }"},
                 }
             },
             listing={
                 "service_options": {
                     "routing_vars": {"region": "US"},
-                    "enrollment_vars": {"env": "PROD"},
+                    "ops_testing_parameters": {"env": "PROD"},
                 }
             },
         )
@@ -1278,15 +1299,15 @@ class TestLLMOfferingMetadataValidation:
 class TestListingJinjaVarReferences:
     """Tests for ``validate_listing_jinja_var_references``.
 
-    Catches the exact failure mode that bit unitysvc-services-http: a
-    ``{{ enrollment_vars.code }}`` in ``user_access_interfaces`` with no
-    matching key in ``service_options.enrollment_vars`` (commit
-    9fb93aa). Covers ``params`` / ``routing_vars`` / ``enrollment_vars``.
+    Catches the exact failure mode that bit unitysvc-services-http: an
+    undefined namespace in ``user_access_interfaces`` (commit 9fb93aa).
+    Covers ``params`` / ``routing_vars`` and the intrinsic ``enrollment``
+    namespace (with fields ``code`` / ``id``).
     """
 
-    def test_undefined_enrollment_var_rejected(self):
-        """The exact unitysvc-services-http regression: enrollment_vars.code
-        referenced but service_options has no enrollment_vars."""
+    def test_removed_enrollment_vars_namespace_rejected(self):
+        """The removed ``enrollment_vars`` namespace is now undefined: a
+        ``{{ enrollment_vars.code }}`` reference must be flagged."""
         from unitysvc_core.models.validators import validate_listing_jinja_var_references
 
         data = {
@@ -1298,7 +1319,6 @@ class TestListingJinjaVarReferences:
         errors = validate_listing_jinja_var_references(data)
         assert len(errors) == 1
         assert "user_access_interfaces.http_gateway.base_url" in errors[0]
-        assert "code" in errors[0]
         assert "enrollment_vars" in errors[0]
 
     def test_defined_enrollment_var_passes(self):
@@ -1306,9 +1326,8 @@ class TestListingJinjaVarReferences:
 
         data = {
             "user_access_interfaces": {
-                "http_gateway": {"base_url": "${API_GATEWAY_BASE_URL}/{{ enrollment_vars.code }}"},
+                "http_gateway": {"base_url": "${API_GATEWAY_BASE_URL}/{{ enrollment.code }}"},
             },
-            "service_options": {"enrollment_vars": {"code": "{{ enrollment_code(6) }}"}},
         }
         assert validate_listing_jinja_var_references(data) == []
 
@@ -1383,7 +1402,7 @@ class TestListingJinjaVarReferences:
             "user_access_interfaces": {
                 "smtp": {
                     "base_url": "${SMTP_GATEWAY_BASE_URL}",
-                    "routing_key": {"username": "{{ enrollment_vars.mailbox }}"},
+                    "routing_key": {"username": "{{ bogus_vars.mailbox }}"},
                 },
             },
             "service_options": {},
@@ -1531,7 +1550,7 @@ class TestSvcpassDisposition:
         assert errors and "no statically resolvable host" in errors[0]
 
     def test_forward_allows_templated_path_on_trusted_host(self, validator):
-        data = self._offering("__forward__", base_url="https://relay.svcpass.com/{{ enrollment_vars.code }}")
+        data = self._offering("__forward__", base_url="https://relay.svcpass.com/{{ enrollment.code }}")
         assert validator.validate_forward_disposition(data) == []
 
     def test_override_disposition_skips_forward_gate(self, validator):
