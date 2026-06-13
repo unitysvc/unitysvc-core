@@ -369,9 +369,16 @@ class DataValidator:
         Returns ``None`` if no sibling listing exists (e.g., offering-only
         fixture directories in tests).
         """
-        for candidate in sorted(offering_file.parent.glob("listing*.json")):
+        # Match by schema field (legacy ``data/`` layout) or by filename (flat
+        # ``specs/`` layout, where files carry no ``schema`` field and the
+        # listing is named exactly ``listing.{json,toml}``).
+        for candidate in sorted(offering_file.parent.glob("listing*.*")):
+            if candidate.suffix not in (".json", ".toml"):
+                continue
             data, _ = load_data_file(candidate)
-            if isinstance(data, dict) and data.get("schema") == "listing_v1":
+            if not isinstance(data, dict):
+                continue
+            if data.get("schema") == "listing_v1" or candidate.stem == "listing":
                 return data
         return None
 
@@ -774,8 +781,26 @@ class DataValidator:
             format_name = {".json": "JSON", ".toml": "TOML"}.get(file_path.suffix, "data")
             return None, [f"Failed to parse {format_name}: {e}"]
 
-    def validate_data_file(self, file_path: Path) -> tuple[bool, list[str]]:
-        """Validate a single data file (JSON or TOML)."""
+    def validate_data_file(
+        self,
+        file_path: Path,
+        schema_name: str | None = None,
+        check_name_consistency: bool = True,
+    ) -> tuple[bool, list[str]]:
+        """Validate a single data file (JSON or TOML).
+
+        Args:
+            file_path: File to validate.
+            schema_name: Schema to validate against. When ``None`` (the legacy
+                ``data/`` layout), the schema is read from the file's ``schema``
+                field, which is required. When provided (the flat ``specs/``
+                layout, where the *filename* is the discriminator), the file
+                need not — and by convention does not — carry a ``schema`` field.
+            check_name_consistency: Whether to enforce that a provider's ``name``
+                matches its directory name. Off for the flat ``specs/`` layout,
+                where ``provider.json`` lives inside the per-service folder
+                rather than a provider-named directory.
+        """
         errors: list[str] = []
 
         data, load_errors = self.load_data_file(file_path)
@@ -786,11 +811,11 @@ class DataValidator:
         if data is None:
             return False, ["Failed to load data file"]
 
-        # Check for schema field
-        if "schema" not in data:
-            return False, ["Missing 'schema' field in data file"]
-
-        schema_name = data["schema"]
+        if schema_name is None:
+            # Legacy ``data/`` layout: the schema is carried in the file.
+            if "schema" not in data:
+                return False, ["Missing 'schema' field in data file"]
+            schema_name = data["schema"]
 
         # Check if schema exists
         if schema_name not in self.schemas:
@@ -819,9 +844,10 @@ class DataValidator:
         file_ref_errors = self.validate_file_references(data, file_path, union_fields)
         errors.extend(file_ref_errors)
 
-        # Validate name consistency with directory name
-        name_errors = self.validate_name_consistency(data, file_path, schema_name)
-        errors.extend(name_errors)
+        # Validate name consistency with directory name (legacy layout only)
+        if check_name_consistency:
+            name_errors = self.validate_name_consistency(data, file_path, schema_name)
+            errors.extend(name_errors)
 
         # Validate duplicate document titles
         dup_title_errors = self.validate_duplicate_document_titles(data, file_path)
