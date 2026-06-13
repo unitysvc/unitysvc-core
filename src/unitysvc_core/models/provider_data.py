@@ -5,7 +5,7 @@ for provider data that is shared between:
 - unitysvc-core (CLI): Used for file-based provider definitions
 - unitysvc (backend): Used for API payloads and database operations
 
-The `ProviderV1` model extends this with file-specific fields like `schema_version`
+The `ProviderV1` model extends this with file-specific fields
 and `time_created` for data file validation.
 """
 
@@ -24,7 +24,7 @@ class ProviderData(BaseModel):
     without file-specific validation fields. It serves as:
 
     1. The base class for `ProviderV1` in unitysvc-core (with additional
-       schema_version, time_created, and services_populator fields for file validation)
+       time_created and services_populator fields for file validation)
 
     2. The data structure imported by unitysvc backend for:
        - API payload validation

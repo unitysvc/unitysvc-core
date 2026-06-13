@@ -1,4 +1,4 @@
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict
 
 from .promotion_data import PromotionData
 
@@ -8,7 +8,6 @@ class PromotionV1(PromotionData):
     Promotion model for file-based definitions (promotion_v1 schema).
 
     Extends PromotionData with:
-    - schema_version: Schema identifier for file validation
     - extra="forbid" to catch typos in promotion files
 
     This model is used for validating promotion TOML/JSON files
@@ -22,8 +21,3 @@ class PromotionV1(PromotionData):
     model_config = ConfigDict(extra="forbid")
 
     # File-specific field
-    schema_version: str = Field(
-        default="promotion_v1",
-        description="Schema identifier",
-        alias="schema",
-    )

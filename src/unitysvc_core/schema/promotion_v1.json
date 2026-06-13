@@ -21,7 +21,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Promotion model for file-based definitions (promotion_v1 schema).\n\nExtends PromotionData with:\n- schema_version: Schema identifier for file validation\n- extra=\"forbid\" to catch typos in promotion files\n\nThis model is used for validating promotion TOML/JSON files\ncreated by the CLI tool.\n\nNote: pricing stays as dict[str, Any] because promotion pricing\n(e.g., {\"type\": \"multiply\", \"factor\": \"0.80\"}) uses a simplified\nformat without a base field — the base is implicit (existing price).",
+  "description": "Promotion model for file-based definitions (promotion_v1 schema).\n\nExtends PromotionData with:\n- extra=\"forbid\" to catch typos in promotion files\n\nThis model is used for validating promotion TOML/JSON files\ncreated by the CLI tool.\n\nNote: pricing stays as dict[str, Any] because promotion pricing\n(e.g., {\"type\": \"multiply\", \"factor\": \"0.80\"}) uses a simplified\nformat without a base field — the base is implicit (existing price).",
   "properties": {
     "apply_at": {
       "$ref": "#/$defs/PriceRuleApplyAtEnum",
@@ -86,12 +86,6 @@
       "description": "Higher priority rules are applied first",
       "title": "Priority",
       "type": "integer"
-    },
-    "schema": {
-      "default": "promotion_v1",
-      "description": "Schema identifier",
-      "title": "Schema",
-      "type": "string"
     },
     "scope": {
       "anyOf": [

@@ -146,18 +146,18 @@ def test_validate_jinja2_files(schema_dir, example_data_dir, tmp_path):
 
 
 def test_validate_all_skips_unrecognized_data_files(schema_dir, tmp_path):
-    """Files without a recognized ``schema`` field aren't service data —
-    e.g. ``gorse-config.example.toml`` (Docker config), ad-hoc TOML siblings.
-    ``validate_all`` must skip them with an :class:`UnrecognizedDataFileWarning`
-    rather than reporting them as ``Missing 'schema' field`` failures, so
-    they don't drown out real validation errors.
+    """Files whose name isn't a recognized spec file (provider/offering/listing/…)
+    aren't service data — e.g. ``gorse-config.example.toml`` (Docker config),
+    ad-hoc TOML siblings. ``validate_all`` must skip them with an
+    :class:`UnrecognizedDataFileWarning` rather than reporting them as failures,
+    so they don't drown out real validation errors.
     """
     from unitysvc_core.validator import UnrecognizedDataFileWarning
 
     no_schema_toml = tmp_path / "gorse-config.example.toml"
     no_schema_toml.write_text('[database]\nurl = "redis://..."\n')
-    unknown_schema_json = tmp_path / "unrelated.json"
-    unknown_schema_json.write_text('{"schema": "not_a_real_schema", "foo": 1}\n')
+    unrelated_json = tmp_path / "unrelated.json"
+    unrelated_json.write_text('{"foo": 1}\n')
 
     validator = DataValidator(tmp_path, schema_dir)
 
@@ -170,8 +170,8 @@ def test_validate_all_skips_unrecognized_data_files(schema_dir, tmp_path):
     assert "unrelated.json" not in paths
 
     messages = [str(w.message) for w in caught if issubclass(w.category, UnrecognizedDataFileWarning)]
-    assert any("gorse-config.example.toml" in m and "no 'schema' field" in m for m in messages)
-    assert any("unrelated.json" in m and "unrecognized schema 'not_a_real_schema'" in m for m in messages)
+    assert any("gorse-config.example.toml" in m and "not a recognized spec file" in m for m in messages)
+    assert any("unrelated.json" in m and "not a recognized spec file" in m for m in messages)
 
 
 def test_validate_all_files(schema_dir, example_data_dir):

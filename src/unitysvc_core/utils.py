@@ -491,6 +491,27 @@ def _warn_skipped(file_path: Path, exc: Exception) -> None:
     )
 
 
+# Canonical filename stem ↔ schema. A data file's TYPE is determined by its
+# FILENAME (provider.json, offering.json, …), not an in-file ``schema`` field —
+# which the spec files no longer carry.
+SCHEMA_TO_STEM: dict[str, str] = {
+    "provider_v1": "provider",
+    "offering_v1": "offering",
+    "listing_v1": "listing",
+    "promotion_v1": "promotion",
+    "service_group_v1": "service_group",
+    "seller_v1": "seller",
+}
+STEM_TO_SCHEMA: dict[str, str] = {stem: schema for schema, stem in SCHEMA_TO_STEM.items()}
+
+
+def schema_for_path(path: Path) -> str | None:
+    """Return the schema a data file maps to by FILENAME, or ``None`` if its
+    name is not a recognized spec file (e.g. ``service.json`` provenance,
+    ``package-lock.json``)."""
+    return STEM_TO_SCHEMA.get(path.stem)
+
+
 def find_file_by_schema_and_name(
     data_dir: Path, schema: str, name_field: str, name_value: str
 ) -> tuple[Path, str, dict[str, Any]] | None:
@@ -521,7 +542,7 @@ def find_file_by_schema_and_name(
         # crashes ``.get`` — skip non-dict roots instead.
         if not isinstance(data, dict):
             continue
-        if data.get("schema") == schema and data.get(name_field) == name_value:
+        if data_file.stem == SCHEMA_TO_STEM.get(schema) and data.get(name_field) == name_value:
             return data_file, file_format, data
 
     return None
@@ -551,10 +572,17 @@ def find_files_by_schema(
     data_files = find_data_files(data_dir)
     matching_files: list[tuple[Path, str, dict[str, Any]]] = []
 
+    # The file TYPE is its filename, not an in-file ``schema`` field.
+    target_stem = SCHEMA_TO_STEM.get(schema)
+
     # Convert field_filter tuple back to dict for filtering
     field_filter_dict = dict(field_filter) if field_filter else None
 
     for data_file in data_files:
+        # Filter by filename (cheap; do before the load). Unknown schema →
+        # no stem → matches nothing.
+        if data_file.stem != target_stem:
+            continue
         # Apply path filter (cheap; do before the load).
         if path_filter and path_filter not in str(data_file):
             continue
@@ -565,16 +593,10 @@ def find_files_by_schema(
             _warn_skipped(data_file, exc)
             continue
 
-        # Discovery sweeps in every ``*.json`` / ``*.toml`` under
-        # ``data_dir`` — including non-catalog files like openapi specs
-        # (top-level list), mypy cache, and Node lock files. ``.get``
-        # below blows up on a list root; skip non-dict roots cleanly so
-        # the catalog scan keeps going.
+        # ``find_data_files`` only yields ``provider/offering/listing/...``-named
+        # files now, but a stray top-level list (bad TOML/JSON) would still crash
+        # ``.get`` below — skip non-dict roots cleanly.
         if not isinstance(data, dict):
-            continue
-
-        # Check schema
-        if data.get("schema") != schema:
             continue
 
         # Apply field filters

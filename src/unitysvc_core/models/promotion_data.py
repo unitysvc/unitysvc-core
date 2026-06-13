@@ -38,7 +38,7 @@ class PromotionData(BaseModel):
     without file-specific validation fields. It serves as:
 
     1. The base class for file-level validation in unitysvc-core
-       (with additional schema_version field)
+       (file-based variant)
 
     2. The data structure imported by unitysvc backend for:
        - API payload validation (SellerPromotionCreate)

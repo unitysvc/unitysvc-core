@@ -8,13 +8,20 @@
     "maxResolution": "2048x2048",
     "modelType": "diffusion",
     "parameterCount": "12000000000",
-    "supportedFormats": ["PNG", "JPEG", "WEBP"],
-    "supportedSchedulers": ["DDIM", "DDPM", "DPMSolverMultistep"],
+    "supportedFormats": [
+      "PNG",
+      "JPEG",
+      "WEBP"
+    ],
+    "supportedSchedulers": [
+      "DDIM",
+      "DDPM",
+      "DPMSolverMultistep"
+    ],
     "supportsImageInput": false,
     "supportsTools": false
   },
   "name": "service2",
-  "schema": "offering_v1",
   "service_type": "image_generation",
   "time_created": "2024-03-15T10:30:00.000Z",
   "upstream_access_config": {

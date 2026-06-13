@@ -32,7 +32,6 @@ class ProviderV1(ProviderData):
     Provider information for service providers (provider_v1 schema).
 
     Extends ProviderData with:
-    - schema_version: Schema identifier for file validation
     - time_created: Timestamp for file creation
     - services_populator: How to automatically populate service data (with envs)
     - logo, terms_of_service: Convenience fields (converted to documents during import)
@@ -43,7 +42,6 @@ class ProviderV1(ProviderData):
     model_config = ConfigDict(extra="forbid")
 
     # File-specific fields for validation
-    schema_version: str = Field(default="provider_v1", description="Schema identifier", alias="schema")
     time_created: datetime
 
     # How to automatically populate service data, if available

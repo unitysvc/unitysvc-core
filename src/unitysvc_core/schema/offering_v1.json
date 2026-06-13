@@ -1856,7 +1856,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Service offering model for file-based definitions (offering_v1 schema).\n\nExtends ServiceOfferingData with:\n- schema_version: Schema identifier for file validation\n- time_created: Timestamp for file creation\n- logo: Convenience field (converted to documents during import)\n- tags: Tags for the service (e.g., bring your own API key)\n- Typed models (AccessInterface, Document, Pricing) instead of dicts\n- Field validators for name format\n\nThis model is used for validating offering.json/offering.toml files\ncreated by the CLI tool.",
+  "description": "Service offering model for file-based definitions (offering_v1 schema).\n\nExtends ServiceOfferingData with:\n- time_created: Timestamp for file creation\n- logo: Convenience field (converted to documents during import)\n- tags: Tags for the service (e.g., bring your own API key)\n- Typed models (AccessInterface, Document, Pricing) instead of dicts\n- Field validators for name format\n\nThis model is used for validating offering.json/offering.toml files\ncreated by the CLI tool.",
   "properties": {
     "capabilities": {
       "description": "Specific features this service provides (e.g., 'text_to_speech', 'embedding')",
@@ -2028,12 +2028,6 @@
       "default": null,
       "description": "Payout pricing: How to calculate seller payout",
       "title": "Payout Price"
-    },
-    "schema": {
-      "default": "offering_v1",
-      "description": "Schema identifier",
-      "title": "Schema",
-      "type": "string"
     },
     "service_type": {
       "$ref": "#/$defs/ServiceTypeEnum",

@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedError
 from jsonschema.validators import Draft7Validator
 
-from .utils import load_data_file
+from .utils import SCHEMA_TO_STEM, load_data_file, schema_for_path
 
 # svcpass api_key dispositions (#1198). On an upstream_access_config interface
 # these literal values are not credentials: "" / "__strip__" strip the
@@ -812,10 +812,13 @@ class DataValidator:
             return False, ["Failed to load data file"]
 
         if schema_name is None:
-            # Legacy ``data/`` layout: the schema is carried in the file.
-            if "schema" not in data:
-                return False, ["Missing 'schema' field in data file"]
-            schema_name = data["schema"]
+            # The file's type is its FILENAME (provider.json, offering.json, …).
+            schema_name = schema_for_path(file_path)
+            if schema_name is None:
+                return False, [
+                    f"Unrecognized data file name {file_path.name!r}: expected one of "
+                    f"{', '.join(sorted(SCHEMA_TO_STEM.values()))} (.json/.toml)"
+                ]
 
         # Check if schema exists
         if schema_name not in self.schemas:
@@ -920,7 +923,7 @@ class DataValidator:
                     cand_data, _ = load_data_file(cand)
                 except Exception:
                     continue
-                if isinstance(cand_data, dict) and cand_data.get("schema") == "provider_v1":
+                if cand.stem == "provider" and isinstance(cand_data, dict):
                     name = cand_data.get("name")
                     return name if isinstance(name, str) else None
         return None
@@ -1046,28 +1049,20 @@ class DataValidator:
         still flow through :meth:`validate_data_file` so the user sees
         the syntax error.
         """
-        data, _load_errors = self.load_data_file(file_path)
-        # Parse failure → let validate_data_file surface it.
-        if data is None:
-            return True
-        if not isinstance(data, dict):
-            warnings.warn(
-                f"Skipping {file_path}: not a dict at the top level",
-                UnrecognizedDataFileWarning,
-                stacklevel=3,
-            )
-            return False
-        schema_name = data.get("schema")
+        # A data file is recognized by its FILENAME (provider.json, offering.json,
+        # …), not an in-file ``schema`` field. Non-spec files (``service.json``
+        # provenance, ``package-lock.json``, ad-hoc TOML) are skipped.
+        schema_name = schema_for_path(file_path)
         if schema_name is None:
             warnings.warn(
-                f"Skipping {file_path}: no 'schema' field — not service data",
+                f"Skipping {file_path}: not a recognized spec file ({', '.join(sorted(SCHEMA_TO_STEM.values()))})",
                 UnrecognizedDataFileWarning,
                 stacklevel=3,
             )
             return False
         if schema_name not in self.schemas:
             warnings.warn(
-                f"Skipping {file_path}: unrecognized schema {schema_name!r}",
+                f"Skipping {file_path}: no schema {schema_name!r} in the schema directory",
                 UnrecognizedDataFileWarning,
                 stacklevel=3,
             )
