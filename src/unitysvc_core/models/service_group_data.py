@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .base import GroupOwnerTypeEnum, GroupTypeEnum, ServiceGroupStatusEnum
 
@@ -249,3 +249,25 @@ def validate_service_group(data: dict[str, Any]) -> list[str]:
             errors.append("sort_order must be an integer")
 
     return errors
+
+
+class ServiceGroupV1(ServiceGroupData):
+    """Strict file-authoring variant of :class:`ServiceGroupData`.
+
+    Identical fields to ``ServiceGroupData`` but with ``extra="forbid"`` so the
+    CLI's file validation rejects typo'd keys. Its JSON Schema
+    (``additionalProperties: false``) is what ``usvc_seller specs validate``
+    checks ``service_group.{json,toml}`` files against.
+
+    Example file::
+
+        {
+            "name": "my-llm-services",
+            "display_name": "My LLM Services",
+            "description": "LLM services for targeted promotions",
+            "membership_rules": {"expression": "service_type == 'llm'"},
+            "status": "private"
+        }
+    """
+
+    model_config = ConfigDict(extra="forbid")

@@ -32,7 +32,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Service group file model with schema version validation.\n\nExample file:\n```json\n{\n    \"schema\": \"service_group_v1\",\n    \"name\": \"my-llm-services\",\n    \"display_name\": \"My LLM Services\",\n    \"description\": \"LLM services for targeted promotions\",\n    \"membership_rules\": {\n        \"expression\": \"service_type == 'llm'\"\n    },\n    \"status\": \"private\"\n}\n```",
+  "description": "Strict file-authoring variant of :class:`ServiceGroupData`.\n\nIdentical fields to ``ServiceGroupData`` but with ``extra=\"forbid\"`` so the\nCLI's file validation rejects typo'd keys. Its JSON Schema\n(``additionalProperties: false``) is what ``usvc_seller specs validate``\nchecks ``service_group.{json,toml}`` files against.\n\nExample file::\n\n    {\n        \"name\": \"my-llm-services\",\n        \"display_name\": \"My LLM Services\",\n        \"description\": \"LLM services for targeted promotions\",\n        \"membership_rules\": {\"expression\": \"service_type == 'llm'\"},\n        \"status\": \"private\"\n    }",
   "properties": {
     "access_interface_data_template": {
       "anyOf": [

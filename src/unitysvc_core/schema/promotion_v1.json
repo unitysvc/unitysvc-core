@@ -21,7 +21,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Promotion model for file-based definitions (promotion_v1 schema).\n\nExtends PromotionData with:\n- extra=\"forbid\" to catch typos in promotion files\n\nThis model is used for validating promotion TOML/JSON files\ncreated by the CLI tool.\n\nNote: pricing stays as dict[str, Any] because promotion pricing\n(e.g., {\"type\": \"multiply\", \"factor\": \"0.80\"}) uses a simplified\nformat without a base field — the base is implicit (existing price).",
+  "description": "Strict file-authoring variant of :class:`PromotionData`.\n\nIdentical fields to ``PromotionData`` but with ``extra=\"forbid\"`` so the\nCLI's file validation rejects typo'd keys that the lenient API model would\nsilently ignore. Its JSON Schema (``additionalProperties: false``) is what\n``usvc_seller specs validate`` checks ``promotion.{json,toml}`` files\nagainst.\n\nNote: pricing stays ``dict[str, Any]`` because promotion pricing\n(e.g. ``{\"type\": \"multiply\", \"factor\": \"0.80\"}``) uses a simplified format\nwithout a base field — the base is implicit (the existing price).",
   "properties": {
     "apply_at": {
       "$ref": "#/$defs/PriceRuleApplyAtEnum",

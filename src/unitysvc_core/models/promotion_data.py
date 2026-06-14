@@ -15,7 +15,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .base import PriceRuleApplyAtEnum, PriceRuleStatusEnum
 from .pricing import validate_pricing
@@ -272,3 +272,20 @@ def describe_scope(scope: dict[str, Any] | None) -> str:
             parts.append(f"{len(services)} service(s)")
 
     return "; ".join(parts)
+
+
+class PromotionV1(PromotionData):
+    """Strict file-authoring variant of :class:`PromotionData`.
+
+    Identical fields to ``PromotionData`` but with ``extra="forbid"`` so the
+    CLI's file validation rejects typo'd keys that the lenient API model would
+    silently ignore. Its JSON Schema (``additionalProperties: false``) is what
+    ``usvc_seller specs validate`` checks ``promotion.{json,toml}`` files
+    against.
+
+    Note: pricing stays ``dict[str, Any]`` because promotion pricing
+    (e.g. ``{"type": "multiply", "factor": "0.80"}``) uses a simplified format
+    without a base field — the base is implicit (the existing price).
+    """
+
+    model_config = ConfigDict(extra="forbid")
