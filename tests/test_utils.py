@@ -18,8 +18,6 @@ from unitysvc_core.utils import (
     get_file_extension,
     load_data_file,
     mime_type_to_extension,
-    read_override_file,
-    write_override_file,
 )
 
 # =============================================================================
@@ -129,53 +127,6 @@ def test_load_data_file_toml(tmp_path: Path) -> None:
 # =============================================================================
 # Override files
 # =============================================================================
-
-
-def test_load_data_file_json_with_override(tmp_path: Path) -> None:
-    base = tmp_path / "offering.json"
-    base.write_text(json.dumps({"schema": "offering_v1", "name": "svc", "version": 1}))
-    override = tmp_path / "offering.override.json"
-    override.write_text(json.dumps({"version": 2, "service_id": "abc"}))
-
-    data, fmt = load_data_file(base)
-    assert fmt == "json"
-    assert data == {"schema": "offering_v1", "name": "svc", "version": 2, "service_id": "abc"}
-
-
-def test_load_data_file_skip_override(tmp_path: Path) -> None:
-    base = tmp_path / "offering.json"
-    base.write_text(json.dumps({"name": "svc", "version": 1}))
-    (tmp_path / "offering.override.json").write_text(json.dumps({"version": 2}))
-
-    data, _ = load_data_file(base, skip_override=True)
-    assert data == {"name": "svc", "version": 1}
-
-
-def test_write_and_read_override_file(tmp_path: Path) -> None:
-    base = tmp_path / "listing.json"
-    base.write_text(json.dumps({"name": "thing"}))
-
-    override_path = write_override_file(base, {"service_id": "xyz"})
-    assert override_path is not None
-    assert override_path.name == "listing.override.json"
-
-    assert read_override_file(base) == {"service_id": "xyz"}
-
-    # Subsequent writes deep-merge
-    write_override_file(base, {"extra": 1})
-    assert read_override_file(base) == {"service_id": "xyz", "extra": 1}
-
-
-def test_write_override_file_delete_if_empty(tmp_path: Path) -> None:
-    base = tmp_path / "listing.json"
-    base.write_text(json.dumps({"name": "thing"}))
-    override_path = write_override_file(base, {"tmp": 1})
-    assert override_path is not None and override_path.exists()
-
-    # Clear the override and request deletion
-    override_path.unlink()
-    override_path = write_override_file(base, {}, delete_if_empty=True)
-    assert override_path is None
 
 
 # =============================================================================
@@ -343,12 +294,12 @@ def test_load_data_file_preset_fns_none_preserves_sentinel(tmp_path: Path) -> No
     assert data["documents"]["Test"] == {"$doc_preset": "s3_connectivity_v1"}
 
 
-def test_load_data_file_expands_after_override_merge(tmp_path: Path) -> None:
+def test_load_data_file_expands_presets(tmp_path: Path) -> None:
     base = tmp_path / "listing.json"
     base.write_text(
         json.dumps(
             {
-                "schema": "listing_v1",
+                "name": "svc",
                 "documents": {
                     "Test": {
                         "$doc_preset": {"name": "s3_connectivity_v1", "is_active": True},
@@ -357,11 +308,9 @@ def test_load_data_file_expands_after_override_merge(tmp_path: Path) -> None:
             }
         )
     )
-    override = tmp_path / "listing.override.json"
-    override.write_text(json.dumps({"name": "from-override"}))
 
     data, _ = load_data_file(base)
-    assert data["name"] == "from-override"
+    assert data["name"] == "svc"
     assert data["documents"]["Test"]["category"] == "connectivity_test"
 
 

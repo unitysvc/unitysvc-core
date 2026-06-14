@@ -270,30 +270,19 @@ def deep_merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str
 def load_data_file(
     file_path: Path,
     *,
-    skip_override: bool = False,
     preset_fns: Mapping[str, Callable[[Any], Any]] | None = DEFAULT_PRESET_FNS,
 ) -> tuple[dict[str, Any], str]:
     """
     Load a data file (JSON/JSON5 or TOML) and return (data, format).
 
-    Automatically checks for and merges override files with the pattern:
-    ``<base_name>.override.<extension>``. For example:
-
-    - ``offering.json`` -> ``offering.override.json``
-    - ``provider.toml`` -> ``provider.override.toml``
-
-    If an override file exists, it is deep-merged on top of the base file,
-    with override values taking precedence.
-
-    After the merge, :func:`expand_presets` walks the result and replaces
-    every ``$doc_preset`` / ``$file_preset`` sentinel with the matching
-    preset record from ``unitysvc-data``. Pass ``preset_fns=None`` to
-    skip the walk entirely (useful for tooling that wants to preserve
-    sentinels on round-trip).
+    :func:`expand_presets` walks the result and replaces every
+    ``$doc_preset`` / ``$file_preset`` sentinel with the matching preset
+    record from ``unitysvc-data``. Pass ``preset_fns=None`` to skip the walk
+    entirely (useful for tooling that wants to preserve sentinels on
+    round-trip).
 
     Args:
         file_path: Path to the data file
-        skip_override: If True, skip loading and merging override files.
         preset_fns: Mapping of sentinel key → callable for
             :func:`expand_presets`. Defaults to :data:`DEFAULT_PRESET_FNS`
             (``doc_preset`` and ``file_preset`` from ``unitysvc-data``).
@@ -316,103 +305,10 @@ def load_data_file(
     else:
         raise ValueError(f"Unsupported file format: {file_path.suffix}")
 
-    if not skip_override:
-        override_path = file_path.with_stem(f"{file_path.stem}.override")
-        if override_path.exists():
-            if override_path.suffix == ".json":
-                with open(override_path, encoding="utf-8") as f:
-                    override_data = json5.load(f)
-            elif override_path.suffix == ".toml":
-                with open(override_path, "rb") as f:
-                    override_data = tomllib.load(f)
-            else:
-                override_data = {}
-            data = deep_merge_dicts(data, override_data)
-
     if preset_fns:
         data = expand_presets(data, preset_fns)
 
     return data, file_format
-
-
-def write_override_file(
-    base_file: Path,
-    override_data: dict[str, Any],
-    delete_if_empty: bool = False,
-) -> Path | None:
-    """
-    Write or update an override file for a data file.
-
-    Override files follow the pattern: ``<stem>.override.<suffix>``.
-    For example: ``listing.json`` -> ``listing.override.json``.
-
-    If the override file exists, the new data is deep-merged with existing data.
-    If it doesn't exist, a new file is created.
-
-    Args:
-        base_file: Path to the base data file (e.g., ``listing.json``)
-        override_data: Data to write/merge into the override file
-        delete_if_empty: If True, delete the override file when data is empty
-
-    Returns:
-        Path to the override file, or None if deleted
-    """
-    override_path = base_file.with_stem(f"{base_file.stem}.override")
-
-    if base_file.suffix == ".json":
-        file_format = "json"
-    elif base_file.suffix == ".toml":
-        file_format = "toml"
-    else:
-        file_format = "json"
-        override_path = base_file.parent / f"{base_file.stem}.override.json"
-
-    if override_path.exists():
-        if file_format == "json":
-            with open(override_path, encoding="utf-8") as f:
-                existing_data = json5.load(f)
-        else:
-            with open(override_path, "rb") as f:
-                existing_data = tomllib.load(f)
-        merged_data = deep_merge_dicts(existing_data, override_data)
-    else:
-        merged_data = override_data
-
-    if delete_if_empty and not merged_data:
-        if override_path.exists():
-            override_path.unlink()
-        return None
-
-    write_data_file(override_path, merged_data, file_format)
-    return override_path
-
-
-def read_override_file(base_file: Path) -> dict[str, Any]:
-    """
-    Read an override file for a data file if it exists.
-
-    Args:
-        base_file: Path to the base data file (e.g., ``listing.json``)
-
-    Returns:
-        Override data dict, or empty dict if no override file exists
-    """
-    override_path = base_file.with_stem(f"{base_file.stem}.override")
-
-    if not override_path.exists():
-        return {}
-
-    if base_file.suffix == ".json":
-        with open(override_path, encoding="utf-8") as f:
-            return json5.load(f)
-    if base_file.suffix == ".toml":
-        with open(override_path, "rb") as f:
-            return tomllib.load(f)
-    try:
-        with open(override_path, encoding="utf-8") as f:
-            return json5.load(f)
-    except Exception:
-        return {}
 
 
 def write_data_file(file_path: Path, data: dict[str, Any], format: str) -> None:
@@ -554,17 +450,16 @@ def find_files_by_schema(
     schema: str,
     path_filter: str | None = None,
     field_filter: tuple[tuple[str, Any], ...] | None = None,
-    skip_override: bool = False,
 ) -> list[tuple[Path, str, dict[str, Any]]]:
     """
-    Find all data files matching a schema with optional filters.
+    Find all data files of a given kind (by filename) with optional filters.
 
     Args:
         data_dir: Directory to search
-        schema: Schema identifier (e.g., "offering_v1", "listing_v1")
+        schema: Schema identifier (e.g., "offering_v1", "listing_v1") — mapped
+            to its filename stem (``offering``, ``listing``, …) for discovery.
         path_filter: Optional string that must be in the file path
         field_filter: Optional tuple of (key, value) pairs to filter by
-        skip_override: If True, skip loading override files (use base data only)
 
     Returns:
         List of tuples (file_path, format, data) for matching files
@@ -588,7 +483,7 @@ def find_files_by_schema(
             continue
 
         try:
-            data, file_format = load_data_file(data_file, skip_override=skip_override)
+            data, file_format = load_data_file(data_file)
         except Exception as exc:
             _warn_skipped(data_file, exc)
             continue
