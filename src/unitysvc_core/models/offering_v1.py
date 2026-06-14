@@ -15,7 +15,6 @@ class OfferingV1(ServiceOfferingData):
     Service offering model for file-based definitions (offering_v1 schema).
 
     Extends ServiceOfferingData with:
-    - schema_version: Schema identifier for file validation
     - time_created: Timestamp for file creation
     - logo: Convenience field (converted to documents during import)
     - tags: Tags for the service (e.g., bring your own API key)
@@ -29,7 +28,6 @@ class OfferingV1(ServiceOfferingData):
     model_config = ConfigDict(extra="forbid")
 
     # File-specific fields for validation
-    schema_version: str = Field(default="offering_v1", description="Schema identifier", alias="schema")
     time_created: datetime
 
     # Override to make required in file validation (base has Optional for API flexibility)

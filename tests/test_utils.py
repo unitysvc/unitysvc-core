@@ -184,19 +184,20 @@ def test_write_override_file_delete_if_empty(tmp_path: Path) -> None:
 
 
 def test_find_files_by_schema(tmp_path: Path) -> None:
-    (tmp_path / "a.json").write_text(json.dumps({"schema": "provider_v1", "name": "a"}))
-    (tmp_path / "b.json").write_text(json.dumps({"schema": "offering_v1", "name": "b"}))
+    # File TYPE is the filename now, not an in-file ``schema`` field.
+    (tmp_path / "provider.json").write_text(json.dumps({"name": "a"}))
+    (tmp_path / "offering.json").write_text(json.dumps({"name": "b"}))
     sub = tmp_path / "sub"
     sub.mkdir()
-    (sub / "c.json").write_text(json.dumps({"schema": "provider_v1", "name": "c"}))
+    (sub / "provider.json").write_text(json.dumps({"name": "c"}))
 
     provider_files = find_files_by_schema(tmp_path, "provider_v1")
-    provider_paths = {Path(fp).name for fp, _fmt, _data in provider_files}
-    assert provider_paths == {"a.json", "c.json"}
+    provider_paths = {Path(fp).relative_to(tmp_path).as_posix() for fp, _fmt, _data in provider_files}
+    assert provider_paths == {"provider.json", "sub/provider.json"}
 
     offering_files = find_files_by_schema(tmp_path, "offering_v1")
     offering_paths = {Path(fp).name for fp, _fmt, _data in offering_files}
-    assert offering_paths == {"b.json"}
+    assert offering_paths == {"offering.json"}
 
 
 def test_find_files_by_schema_skips_non_dict_roots(tmp_path: Path) -> None:
@@ -209,29 +210,30 @@ def test_find_files_by_schema_skips_non_dict_roots(tmp_path: Path) -> None:
     attribute 'get'`` on the first such file.  Skip them cleanly so the
     catalog scan keeps going.
     """
-    # One real catalog file, plus three non-dict roots discovery should
-    # tolerate without crashing.
-    (tmp_path / "good.json").write_text(json.dumps({"schema": "provider_v1", "name": "good"}))
-    (tmp_path / "list_root.json").write_text(json.dumps([1, 2, 3]))
-    (tmp_path / "string_root.json").write_text(json.dumps("hello"))
-    (tmp_path / "null_root.json").write_text("null")
+    # One real catalog file, plus spec-named files with non-dict roots that
+    # discovery should tolerate without crashing.
+    (tmp_path / "provider.json").write_text(json.dumps({"name": "good"}))
+    (tmp_path / "list").mkdir()
+    (tmp_path / "list" / "provider.json").write_text(json.dumps([1, 2, 3]))
+    (tmp_path / "str").mkdir()
+    (tmp_path / "str" / "provider.json").write_text(json.dumps("hello"))
+    (tmp_path / "null").mkdir()
+    (tmp_path / "null" / "provider.json").write_text("null")
 
-    # Use a unique schema name to bypass ``find_files_by_schema``'s
-    # ``lru_cache`` — the prior test in this file populates the cache
-    # with ``provider_v1`` on a different ``tmp_path``.
     files = find_files_by_schema(tmp_path, "provider_v1")
-    assert {Path(fp).name for fp, _fmt, _data in files} == {"good.json"}
+    assert {Path(fp).relative_to(tmp_path).as_posix() for fp, _fmt, _data in files} == {"provider.json"}
 
 
 def test_find_file_by_schema_and_name_skips_non_dict_roots(tmp_path: Path) -> None:
     """Sibling discovery helper has the same surface — pin both."""
-    (tmp_path / "good.json").write_text(json.dumps({"schema": "listing_v1", "name": "wanted"}))
-    (tmp_path / "list_root.json").write_text(json.dumps([{"schema": "listing_v1"}]))
+    (tmp_path / "listing.json").write_text(json.dumps({"name": "wanted"}))
+    (tmp_path / "bad").mkdir()
+    (tmp_path / "bad" / "listing.json").write_text(json.dumps([{"x": 1}]))
 
     result = find_file_by_schema_and_name(tmp_path, "listing_v1", "name", "wanted")
     assert result is not None
     fp, _fmt, data = result
-    assert Path(fp).name == "good.json"
+    assert Path(fp).name == "listing.json"
     assert data["name"] == "wanted"
 
 
@@ -415,11 +417,11 @@ def test_find_files_by_schema_warns_on_unknown_preset(tmp_path: Path) -> None:
 
 
 def test_find_files_by_schema_warns_on_malformed_json(tmp_path: Path) -> None:
-    bad = tmp_path / "broken.json"
+    bad = tmp_path / "listing.json"  # spec-named so discovery loads it
     bad.write_text("{ this is not json")
 
     find_files_by_schema.cache_clear()
-    with pytest.warns(DataFileLoadWarning, match="broken.json"):
+    with pytest.warns(DataFileLoadWarning, match="listing.json"):
         results = find_files_by_schema(tmp_path, "listing_v1")
     assert results == []
 
@@ -428,10 +430,10 @@ def test_find_file_by_schema_and_name_warns_on_load_failure(tmp_path: Path) -> N
     """A malformed file in the search directory must surface as a warning,
     not as a silent ``None`` (which would be indistinguishable from
     "the name didn't match anything")."""
-    bad = tmp_path / "broken.json"
+    bad = tmp_path / "provider.json"  # spec-named so discovery loads it
     bad.write_text("{ this is not json")
 
-    with pytest.warns(DataFileLoadWarning, match="broken.json"):
+    with pytest.warns(DataFileLoadWarning, match="provider.json"):
         result = find_file_by_schema_and_name(tmp_path, "provider_v1", "name", "p")
     assert result is None
 

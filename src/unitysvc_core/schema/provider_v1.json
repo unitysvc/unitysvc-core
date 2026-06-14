@@ -223,7 +223,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Provider information for service providers (provider_v1 schema).\n\nExtends ProviderData with:\n- schema_version: Schema identifier for file validation\n- time_created: Timestamp for file creation\n- services_populator: How to automatically populate service data (with envs)\n- logo, terms_of_service: Convenience fields (converted to documents during import)\n- Typed Document model instead of dict for file validation\n- Field validators for name format",
+  "description": "Provider information for service providers (provider_v1 schema).\n\nExtends ProviderData with:\n- time_created: Timestamp for file creation\n- services_populator: How to automatically populate service data (with envs)\n- logo, terms_of_service: Convenience fields (converted to documents during import)\n- Typed Document model instead of dict for file validation\n- Field validators for name format",
   "properties": {
     "contact_email": {
       "description": "Primary contact email for the provider",
@@ -305,12 +305,6 @@
       "maxLength": 100,
       "minLength": 2,
       "title": "Name",
-      "type": "string"
-    },
-    "schema": {
-      "default": "provider_v1",
-      "description": "Schema identifier",
-      "title": "Schema",
       "type": "string"
     },
     "secondary_contact_email": {

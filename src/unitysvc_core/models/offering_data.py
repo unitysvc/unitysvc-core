@@ -5,7 +5,7 @@ for service offering data that is shared between:
 - unitysvc-core (CLI): Used for file-based service definitions
 - unitysvc (backend): Used for API payloads and database operations
 
-The `OfferingV1` model extends this with file-specific fields like `schema_version`
+The `OfferingV1` model extends this with file-specific fields
 and `time_created` for data file validation.
 """
 
@@ -24,7 +24,7 @@ class ServiceOfferingData(BaseModel):
     without file-specific validation fields. It serves as:
 
     1. The base class for `OfferingV1` in unitysvc-core (with additional
-       schema_version and time_created fields for file validation)
+       time_created field for file validation)
 
     2. The data structure imported by unitysvc backend for:
        - API payload validation

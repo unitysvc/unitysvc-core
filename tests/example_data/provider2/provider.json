@@ -2,7 +2,6 @@
   "contact_email": "support@openai.com",
   "homepage": "https://openai.com/",
   "name": "provider2",
-  "schema": "provider_v1",
   "secondary_contact_email": "enterprise@openai.com",
   "services_populator": {
     "command": "scripts/update_openai_services.py --force",

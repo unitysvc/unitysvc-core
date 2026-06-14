@@ -4,9 +4,9 @@ Adds the ``schema`` field required for file identification and
 strict validation (``extra="forbid"``).
 """
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict
 
-from .service_group_data import SERVICE_GROUP_SCHEMA_VERSION, ServiceGroupData
+from .service_group_data import ServiceGroupData
 
 
 class ServiceGroupV1(ServiceGroupData):
@@ -28,9 +28,3 @@ class ServiceGroupV1(ServiceGroupData):
     """
 
     model_config = ConfigDict(extra="forbid")
-
-    schema_version: str = Field(
-        default=SERVICE_GROUP_SCHEMA_VERSION,
-        description="Schema identifier for validation",
-        alias="schema",
-    )

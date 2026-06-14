@@ -1817,7 +1817,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Service listing model for file-based definitions (listing_v1 schema).\n\nExtends ServiceListingData with:\n- schema_version: Schema identifier for file validation\n- time_created: Timestamp for file creation\n- Typed models (AccessInterface, Document, Pricing) instead of dicts\n- Field validators for name format\n\nThis model is used for validating listing.json/listing.toml files\ncreated by the CLI tool.",
+  "description": "Service listing model for file-based definitions (listing_v1 schema).\n\nExtends ServiceListingData with:\n- time_created: Timestamp for file creation\n- Typed models (AccessInterface, Document, Pricing) instead of dicts\n- Field validators for name format\n\nThis model is used for validating listing.json/listing.toml files\ncreated by the CLI tool.",
   "properties": {
     "currency": {
       "$ref": "#/$defs/CurrencyEnum",
@@ -1951,12 +1951,6 @@
       "description": "Service identifier (service_name). REQUIRED. Either a namespaced '<provider>/<service-name>[@variant]' or a bare top-level name.",
       "maxLength": 255,
       "title": "Name",
-      "type": "string"
-    },
-    "schema": {
-      "default": "listing_v1",
-      "description": "Schema identifier",
-      "title": "Schema",
       "type": "string"
     },
     "service_id": {

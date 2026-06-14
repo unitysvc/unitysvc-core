@@ -14,7 +14,6 @@ class ListingV1(ServiceListingData):
     Service listing model for file-based definitions (listing_v1 schema).
 
     Extends ServiceListingData with:
-    - schema_version: Schema identifier for file validation
     - time_created: Timestamp for file creation
     - Typed models (AccessInterface, Document, Pricing) instead of dicts
     - Field validators for name format
@@ -26,7 +25,6 @@ class ListingV1(ServiceListingData):
     model_config = ConfigDict(extra="forbid")
 
     # File-specific fields for validation
-    schema_version: str = Field(default="listing_v1", description="Schema identifier", alias="schema")
     time_created: datetime
 
     # listing.name IS the service identifier (service_name) and is REQUIRED.

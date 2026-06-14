@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedError
 from jsonschema.validators import Draft7Validator
 
-from .utils import load_data_file
+from .utils import SCHEMA_TO_STEM, load_data_file, schema_for_path
 
 # svcpass api_key dispositions (#1198). On an upstream_access_config interface
 # these literal values are not credentials: "" / "__strip__" strip the
@@ -369,9 +369,16 @@ class DataValidator:
         Returns ``None`` if no sibling listing exists (e.g., offering-only
         fixture directories in tests).
         """
-        for candidate in sorted(offering_file.parent.glob("listing*.json")):
+        # Match by schema field (legacy ``data/`` layout) or by filename (flat
+        # ``specs/`` layout, where files carry no ``schema`` field and the
+        # listing is named exactly ``listing.{json,toml}``).
+        for candidate in sorted(offering_file.parent.glob("listing*.*")):
+            if candidate.suffix not in (".json", ".toml"):
+                continue
             data, _ = load_data_file(candidate)
-            if isinstance(data, dict) and data.get("schema") == "listing_v1":
+            if not isinstance(data, dict):
+                continue
+            if data.get("schema") == "listing_v1" or candidate.stem == "listing":
                 return data
         return None
 
@@ -774,8 +781,26 @@ class DataValidator:
             format_name = {".json": "JSON", ".toml": "TOML"}.get(file_path.suffix, "data")
             return None, [f"Failed to parse {format_name}: {e}"]
 
-    def validate_data_file(self, file_path: Path) -> tuple[bool, list[str]]:
-        """Validate a single data file (JSON or TOML)."""
+    def validate_data_file(
+        self,
+        file_path: Path,
+        schema_name: str | None = None,
+        check_name_consistency: bool = True,
+    ) -> tuple[bool, list[str]]:
+        """Validate a single data file (JSON or TOML).
+
+        Args:
+            file_path: File to validate.
+            schema_name: Schema to validate against. When ``None`` (the legacy
+                ``data/`` layout), the schema is read from the file's ``schema``
+                field, which is required. When provided (the flat ``specs/``
+                layout, where the *filename* is the discriminator), the file
+                need not — and by convention does not — carry a ``schema`` field.
+            check_name_consistency: Whether to enforce that a provider's ``name``
+                matches its directory name. Off for the flat ``specs/`` layout,
+                where ``provider.json`` lives inside the per-service folder
+                rather than a provider-named directory.
+        """
         errors: list[str] = []
 
         data, load_errors = self.load_data_file(file_path)
@@ -786,11 +811,14 @@ class DataValidator:
         if data is None:
             return False, ["Failed to load data file"]
 
-        # Check for schema field
-        if "schema" not in data:
-            return False, ["Missing 'schema' field in data file"]
-
-        schema_name = data["schema"]
+        if schema_name is None:
+            # The file's type is its FILENAME (provider.json, offering.json, …).
+            schema_name = schema_for_path(file_path)
+            if schema_name is None:
+                return False, [
+                    f"Unrecognized data file name {file_path.name!r}: expected one of "
+                    f"{', '.join(sorted(SCHEMA_TO_STEM.values()))} (.json/.toml)"
+                ]
 
         # Check if schema exists
         if schema_name not in self.schemas:
@@ -819,9 +847,10 @@ class DataValidator:
         file_ref_errors = self.validate_file_references(data, file_path, union_fields)
         errors.extend(file_ref_errors)
 
-        # Validate name consistency with directory name
-        name_errors = self.validate_name_consistency(data, file_path, schema_name)
-        errors.extend(name_errors)
+        # Validate name consistency with directory name (legacy layout only)
+        if check_name_consistency:
+            name_errors = self.validate_name_consistency(data, file_path, schema_name)
+            errors.extend(name_errors)
 
         # Validate duplicate document titles
         dup_title_errors = self.validate_duplicate_document_titles(data, file_path)
@@ -894,7 +923,7 @@ class DataValidator:
                     cand_data, _ = load_data_file(cand)
                 except Exception:
                     continue
-                if isinstance(cand_data, dict) and cand_data.get("schema") == "provider_v1":
+                if cand.stem == "provider" and isinstance(cand_data, dict):
                     name = cand_data.get("name")
                     return name if isinstance(name, str) else None
         return None
@@ -1020,28 +1049,20 @@ class DataValidator:
         still flow through :meth:`validate_data_file` so the user sees
         the syntax error.
         """
-        data, _load_errors = self.load_data_file(file_path)
-        # Parse failure → let validate_data_file surface it.
-        if data is None:
-            return True
-        if not isinstance(data, dict):
-            warnings.warn(
-                f"Skipping {file_path}: not a dict at the top level",
-                UnrecognizedDataFileWarning,
-                stacklevel=3,
-            )
-            return False
-        schema_name = data.get("schema")
+        # A data file is recognized by its FILENAME (provider.json, offering.json,
+        # …), not an in-file ``schema`` field. Non-spec files (``service.json``
+        # provenance, ``package-lock.json``, ad-hoc TOML) are skipped.
+        schema_name = schema_for_path(file_path)
         if schema_name is None:
             warnings.warn(
-                f"Skipping {file_path}: no 'schema' field — not service data",
+                f"Skipping {file_path}: not a recognized spec file ({', '.join(sorted(SCHEMA_TO_STEM.values()))})",
                 UnrecognizedDataFileWarning,
                 stacklevel=3,
             )
             return False
         if schema_name not in self.schemas:
             warnings.warn(
-                f"Skipping {file_path}: unrecognized schema {schema_name!r}",
+                f"Skipping {file_path}: no schema {schema_name!r} in the schema directory",
                 UnrecognizedDataFileWarning,
                 stacklevel=3,
             )
