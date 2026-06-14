@@ -27,9 +27,9 @@ from pathlib import Path
 
 from unitysvc_core.models.listing_v1 import ListingV1
 from unitysvc_core.models.offering_v1 import OfferingV1
-from unitysvc_core.models.promotion_v1 import PromotionV1
+from unitysvc_core.models.promotion_data import PromotionV1
 from unitysvc_core.models.provider_v1 import ProviderV1
-from unitysvc_core.models.service_group_v1 import ServiceGroupV1
+from unitysvc_core.models.service_group_data import ServiceGroupV1
 
 SCHEMA_DIR = Path(__file__).resolve().parent.parent / "src" / "unitysvc_core" / "schema"
 

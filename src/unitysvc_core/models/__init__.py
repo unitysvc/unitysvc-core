@@ -59,12 +59,12 @@ from .pricing import (
 from .promotion_data import (
     PROMOTION_SCHEMA_VERSION,
     PromotionData,
+    PromotionV1,
     describe_scope,
     is_promotion_file,
     strip_schema_field,
     validate_promotion,
 )
-from .promotion_v1 import PromotionV1
 from .provider_data import ProviderData
 from .provider_v1 import ProviderV1
 from .service import (
@@ -76,10 +76,10 @@ from .service import (
 from .service_group_data import (
     SERVICE_GROUP_SCHEMA_VERSION,
     ServiceGroupData,
+    ServiceGroupV1,
     is_service_group_file,
     validate_service_group,
 )
-from .service_group_v1 import ServiceGroupV1
 from .validators import (
     SUPPORTED_SERVICE_OPTIONS,
     suggest_valid_name,
