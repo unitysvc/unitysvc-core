@@ -408,42 +408,6 @@ def schema_for_path(path: Path) -> str | None:
     return STEM_TO_SCHEMA.get(path.stem)
 
 
-def find_file_by_schema_and_name(
-    data_dir: Path, schema: str, name_field: str, name_value: str
-) -> tuple[Path, str, dict[str, Any]] | None:
-    """
-    Find a data file by schema type and name field value.
-
-    Args:
-        data_dir: Directory to search
-        schema: Schema identifier (e.g., "offering_v1", "listing_v1")
-        name_field: Field name to match (e.g., "name", "seller_name")
-        name_value: Value to match in the name field
-
-    Returns:
-        Tuple of (file_path, format, data) if found, None otherwise
-    """
-    data_files = find_data_files(data_dir)
-
-    for data_file in data_files:
-        try:
-            data, file_format = load_data_file(data_file)
-        except Exception as exc:
-            _warn_skipped(data_file, exc)
-            continue
-        # Discovery walks every ``*.json`` / ``*.toml`` under ``data_dir``,
-        # which sweeps in things like ``package-lock.json`` (top-level dict
-        # but no ``schema`` field) and openapi/mypy-cache files (top-level
-        # list). The schema check ignores the former, but the latter
-        # crashes ``.get`` — skip non-dict roots instead.
-        if not isinstance(data, dict):
-            continue
-        if data_file.stem == SCHEMA_TO_STEM.get(schema) and data.get(name_field) == name_value:
-            return data_file, file_format, data
-
-    return None
-
-
 @lru_cache(maxsize=256)
 def find_files_by_schema(
     data_dir: Path,
