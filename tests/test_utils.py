@@ -11,7 +11,6 @@ from unitysvc_core.utils import (
     compute_file_hash,
     deep_merge_dicts,
     expand_presets,
-    find_file_by_schema_and_name,
     find_files_by_schema,
     generate_content_based_key,
     get_basename,
@@ -173,19 +172,6 @@ def test_find_files_by_schema_skips_non_dict_roots(tmp_path: Path) -> None:
 
     files = find_files_by_schema(tmp_path, "provider_v1")
     assert {Path(fp).relative_to(tmp_path).as_posix() for fp, _fmt, _data in files} == {"provider.json"}
-
-
-def test_find_file_by_schema_and_name_skips_non_dict_roots(tmp_path: Path) -> None:
-    """Sibling discovery helper has the same surface — pin both."""
-    (tmp_path / "listing.json").write_text(json.dumps({"name": "wanted"}))
-    (tmp_path / "bad").mkdir()
-    (tmp_path / "bad" / "listing.json").write_text(json.dumps([{"x": 1}]))
-
-    result = find_file_by_schema_and_name(tmp_path, "listing_v1", "name", "wanted")
-    assert result is not None
-    fp, _fmt, data = result
-    assert Path(fp).name == "listing.json"
-    assert data["name"] == "wanted"
 
 
 # =============================================================================
@@ -373,18 +359,6 @@ def test_find_files_by_schema_warns_on_malformed_json(tmp_path: Path) -> None:
     with pytest.warns(DataFileLoadWarning, match="listing.json"):
         results = find_files_by_schema(tmp_path, "listing_v1")
     assert results == []
-
-
-def test_find_file_by_schema_and_name_warns_on_load_failure(tmp_path: Path) -> None:
-    """A malformed file in the search directory must surface as a warning,
-    not as a silent ``None`` (which would be indistinguishable from
-    "the name didn't match anything")."""
-    bad = tmp_path / "provider.json"  # spec-named so discovery loads it
-    bad.write_text("{ this is not json")
-
-    with pytest.warns(DataFileLoadWarning, match="provider.json"):
-        result = find_file_by_schema_and_name(tmp_path, "provider_v1", "name", "p")
-    assert result is None
 
 
 def test_find_files_by_schema_can_be_promoted_to_error(tmp_path: Path) -> None:

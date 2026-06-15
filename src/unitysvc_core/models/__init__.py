@@ -61,7 +61,6 @@ from .promotion_data import (
     PromotionData,
     PromotionV1,
     describe_scope,
-    is_promotion_file,
     strip_schema_field,
     validate_promotion,
 )
@@ -77,7 +76,6 @@ from .service_group_data import (
     SERVICE_GROUP_SCHEMA_VERSION,
     ServiceGroupData,
     ServiceGroupV1,
-    is_service_group_file,
     validate_service_group,
 )
 from .validators import (
@@ -176,12 +174,10 @@ __all__ = [
     "suggest_valid_name",
     # Promotions
     "PROMOTION_SCHEMA_VERSION",
-    "is_promotion_file",
     "describe_scope",
     "strip_schema_field",
     "validate_promotion",
     # Service Groups
     "SERVICE_GROUP_SCHEMA_VERSION",
-    "is_service_group_file",
     "validate_service_group",
 ]

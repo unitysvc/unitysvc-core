@@ -131,11 +131,6 @@ class ServiceGroupData(BaseModel):
 SERVICE_GROUP_SCHEMA_VERSION = "service_group_v1"
 
 
-def is_service_group_file(data: dict[str, Any]) -> bool:
-    """Check if a data dict is a service group file (by schema version)."""
-    return data.get("schema") == SERVICE_GROUP_SCHEMA_VERSION
-
-
 def strip_schema_field(data: dict[str, Any]) -> dict[str, Any]:
     """Return a copy of the data dict without the ``schema`` field."""
     return {k: v for k, v in data.items() if k != "schema"}

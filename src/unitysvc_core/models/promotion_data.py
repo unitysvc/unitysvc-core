@@ -100,11 +100,6 @@ class PromotionData(BaseModel):
     )
 
 
-def is_promotion_file(data: dict[str, Any]) -> bool:
-    """Check if a data dict is a promotion file (by schema version)."""
-    return data.get("schema") == PROMOTION_SCHEMA_VERSION
-
-
 def strip_schema_field(data: dict[str, Any]) -> dict[str, Any]:
     """Return a copy of the data dict without the ``schema`` field.
 
