@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -139,4 +141,62 @@ class UpstreamAccessConfigData(AccessInterfaceData):
             "'${ customer_secrets.X }' reference) overrides svcpass with that "
             "credential on the source header."
         ),
+    )
+
+
+class ServiceData(BaseModel):
+    """Backend-assigned service identity record (the ``service.json`` file).
+
+    A service's ``provider_data`` / ``offering_data`` / ``listing_data`` are
+    authored by the seller; this is the *other* half — the record the backend
+    materializes once a service exists. It is the **round-trip** structure:
+    the ingest task returns it, the seller stores it in ``service.json`` beside
+    the spec files, and it travels back as the top-level ``service_data`` field
+    on the next upload/revision so the backend can match the upload to the
+    existing service.
+
+    Of these fields, only ``service_id`` is consumed on the way *in* (it
+    targets revise/replace vs create); the rest are populated on the way *out*
+    and are informational provenance for the seller. ``extra="ignore"`` keeps
+    unknown keys from breaking either direction.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    service_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Backend-assigned service id from a previous publish. When present "
+            "on upload, the request targets the existing service (revise/"
+            "replace) instead of creating a new one."
+        ),
+    )
+
+    revision_of: UUID | None = Field(
+        default=None,
+        description=(
+            "Set when this record describes a revision: the canonical service "
+            "id the revision derives from. ``service_id`` is then the revision's "
+            "own id."
+        ),
+    )
+
+    status: str | None = Field(
+        default=None,
+        description="Service identity status as resolved by the last ingest.",
+    )
+
+    name: str | None = Field(
+        default=None,
+        description="Backend-derived service name (from listing/offering).",
+    )
+
+    display_name: str | None = Field(
+        default=None,
+        description="Backend-derived human-readable service name.",
+    )
+
+    time_created: datetime | None = Field(
+        default=None,
+        description="When the service was first created (informational provenance).",
     )
