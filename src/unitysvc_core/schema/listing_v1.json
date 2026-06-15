@@ -1953,20 +1953,6 @@
       "title": "Name",
       "type": "string"
     },
-    "service_id": {
-      "anyOf": [
-        {
-          "format": "uuid",
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Service ID from previous publish. If provided, updates existing service. Stored in override file (e.g., listing.override.json) by SDK after first publish.",
-      "title": "Service Id"
-    },
     "service_options": {
       "anyOf": [
         {

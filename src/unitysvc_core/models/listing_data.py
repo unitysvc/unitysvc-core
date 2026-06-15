@@ -10,7 +10,6 @@ and `time_created` for data file validation.
 """
 
 from typing import Any
-from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -43,13 +42,10 @@ class ServiceListingData(BaseModel):
 
     model_config = {"extra": "ignore"}
 
-    # Service ID for updates (set by SDK after first publish)
-    # When provided, updates the existing service. When absent, creates a new service.
-    service_id: UUID | None = Field(
-        default=None,
-        description="Service ID from previous publish. If provided, updates existing service. "
-        "Stored in override file (e.g., listing.override.json) by SDK after first publish.",
-    )
+    # NOTE: a listing carries no service_id. Service identity is backend-
+    # assigned provenance, not authored listing content — it lives in
+    # ``service.json`` and travels as the top-level ``ServiceDataInput.service_id``
+    # field on upload/revision, never embedded in the listing.
 
     # Listing identification
     name: str | None = Field(
