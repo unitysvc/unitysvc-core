@@ -70,6 +70,7 @@ from .service import (
     AccessInterfaceData,
     RateLimit,
     ServiceConstraints,
+    ServiceData,
     UpstreamAccessConfigData,
 )
 from .service_group_data import (
@@ -109,6 +110,7 @@ __all__ = [
     "UpstreamAccessConfigData",
     "RateLimit",
     "ServiceConstraints",
+    "ServiceData",
     # Enums
     "AccessMethodEnum",
     "AuthMethodEnum",
