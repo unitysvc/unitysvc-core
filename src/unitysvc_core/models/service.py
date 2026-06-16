@@ -144,21 +144,22 @@ class UpstreamAccessConfigData(AccessInterfaceData):
     )
 
 
-class ServiceData(BaseModel):
-    """Backend-assigned service identity record (the ``service.json`` file).
+class ServiceStatus(BaseModel):
+    """Backend-assigned service **status / identity sidecar** (the ``service.json``
+    file) — *not* the authored service data.
 
-    A service's ``provider_data`` / ``offering_data`` / ``listing_data`` are
-    authored by the seller; this is the *other* half — the record the backend
-    materializes once a service exists. It is the **round-trip** structure:
-    the ingest task returns it, the seller stores it in ``service.json`` beside
-    the spec files, and it travels back as the top-level ``service_data`` field
-    on the next upload/revision so the backend can match the upload to the
-    existing service.
+    A service's ``provider_data`` / ``offering_data`` / ``listing_data`` are the
+    authored service data; this is the *other*, backend-owned half — the status
+    record the backend materializes once a service exists. It is the
+    **round-trip** sidecar: the ingest task returns it, the seller stores it in
+    ``service.json`` beside the spec files, and replays it on the next
+    upload/revision so the backend can match the upload to the existing service.
 
-    Of these fields, only ``service_id`` is consumed on the way *in* (it
-    targets revise/replace vs create); the rest are populated on the way *out*
-    and are informational provenance for the seller. ``extra="ignore"`` keeps
-    unknown keys from breaking either direction.
+    Of these fields, ``service_id`` and ``template_instance_id`` are consumed on
+    the way *in* (they declare which service / which template the publish
+    targets); the rest are populated on the way *out* as informational status /
+    provenance for the seller. ``extra="ignore"`` keeps unknown keys from
+    breaking either direction.
     """
 
     model_config = ConfigDict(extra="ignore")

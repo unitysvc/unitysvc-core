@@ -44,8 +44,8 @@ class ServiceListingData(BaseModel):
 
     # NOTE: a listing carries no service_id. Service identity is backend-
     # assigned provenance, not authored listing content — it lives in
-    # ``service.json`` and travels as the top-level ``ServiceDataInput.service_id``
-    # field on upload/revision, never embedded in the listing.
+    # ``service.json`` (the ``ServiceStatus`` sidecar) and travels separately
+    # on upload/revision, never embedded in the listing.
 
     # Listing identification
     name: str | None = Field(
