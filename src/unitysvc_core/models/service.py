@@ -200,3 +200,16 @@ class ServiceData(BaseModel):
         default=None,
         description="When the service was first created (informational provenance).",
     )
+
+    template_instance_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Set when the service was published from a seller TemplateInstance "
+            "(the seller-instances flow). Like ``service_id`` it is consumed on "
+            "the way *in* to declare the operation — with no ``service_id`` it "
+            "creates a service from the template (the backend pins the form's "
+            "service_id); with one it updates an existing template-generated "
+            "service — and echoed on the way *out* so ``service.json`` records "
+            "the template association. Absent for plain (non-template) services."
+        ),
+    )
