@@ -280,6 +280,7 @@ class TokenPriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Calculate cost for token-based pricing.
 
@@ -346,6 +347,7 @@ class TimePriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Calculate cost for time-based pricing.
 
@@ -386,6 +388,7 @@ class ImagePriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Calculate cost for image-based pricing.
 
@@ -422,6 +425,7 @@ class StepPriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Calculate cost for step-based pricing.
 
@@ -461,6 +465,7 @@ class DataPriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Calculate cost for data-volume pricing.
 
@@ -504,6 +509,7 @@ class CountPriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Calculate cost for count-scaled pricing.
 
@@ -566,6 +572,7 @@ class RevenueSharePriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Calculate cost for revenue share pricing.
 
@@ -605,6 +612,7 @@ class ConstantPriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Return the constant price regardless of usage.
 
@@ -677,6 +685,7 @@ class AddPriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Calculate total cost by summing all price components.
 
@@ -691,7 +700,7 @@ class AddPriceData(BasePriceData):
         total = Decimal("0")
         for price_data in self.prices:
             component = validate_pricing(price_data)
-            total += component.calculate_cost(usage, customer_charge, request_count)
+            total += component.calculate_cost(usage, customer_charge, request_count, mode)
         return total
 
 
@@ -736,6 +745,7 @@ class MultiplyPriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Calculate cost by multiplying base price by factor.
 
@@ -748,7 +758,7 @@ class MultiplyPriceData(BasePriceData):
             Base cost multiplied by factor
         """
         base_pricing = validate_pricing(self.base)
-        base_cost = base_pricing.calculate_cost(usage, customer_charge, request_count)
+        base_cost = base_pricing.calculate_cost(usage, customer_charge, request_count, mode)
         return base_cost * Decimal(self.factor)
 
 
@@ -789,6 +799,7 @@ class MaxPriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Return the highest cost among applicable children.
 
@@ -799,7 +810,7 @@ class MaxPriceData(BasePriceData):
         for price_data in self.prices:
             try:
                 component = validate_pricing(price_data)
-                costs.append(component.calculate_cost(usage, customer_charge, request_count))
+                costs.append(component.calculate_cost(usage, customer_charge, request_count, mode))
             except ValueError:
                 continue
         if not costs:
@@ -846,6 +857,7 @@ class MinPriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Return the lowest cost among applicable children.
 
@@ -856,7 +868,7 @@ class MinPriceData(BasePriceData):
         for price_data in self.prices:
             try:
                 component = validate_pricing(price_data)
-                costs.append(component.calculate_cost(usage, customer_charge, request_count))
+                costs.append(component.calculate_cost(usage, customer_charge, request_count, mode))
             except ValueError:
                 continue
         if not costs:
@@ -902,6 +914,7 @@ class FirstPriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Return the cost from the first child that can handle the usage.
 
@@ -912,7 +925,7 @@ class FirstPriceData(BasePriceData):
         for price_data in self.prices:
             try:
                 component = validate_pricing(price_data)
-                return component.calculate_cost(usage, customer_charge, request_count)
+                return component.calculate_cost(usage, customer_charge, request_count, mode)
             except ValueError:
                 continue
         raise ValueError("No child pricing could handle the provided usage data")
@@ -1127,6 +1140,7 @@ class ExprPriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Calculate cost by evaluating the expression with usage data.
 
@@ -1200,6 +1214,7 @@ class TieredPriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Calculate cost based on which tier the usage falls into.
 
@@ -1217,7 +1232,7 @@ class TieredPriceData(BasePriceData):
         for tier in self.tiers:
             if tier.up_to is None or metric_value <= tier.up_to:
                 tier_pricing = validate_pricing(tier.price)
-                return tier_pricing.calculate_cost(usage, customer_charge, request_count)
+                return tier_pricing.calculate_cost(usage, customer_charge, request_count, mode)
 
         # Should not reach here if tiers are properly configured
         raise ValueError("No matching tier found")
@@ -1282,6 +1297,7 @@ class GraduatedPriceData(BasePriceData):
         usage: UsageData,
         customer_charge: Decimal | None = None,
         request_count: int | None = None,
+        mode: str | None = None,
     ) -> Decimal:
         """Calculate cost with graduated pricing across tiers.
 
@@ -1317,6 +1333,83 @@ class GraduatedPriceData(BasePriceData):
         return total_cost
 
 
+class ModePriceData(BasePriceData):
+    """
+    Mode-based pricing that selects a sub-price by the request's resolved mode.
+
+    The active mode is decided elsewhere — e.g. the gateway picks which keyed
+    ``upstream_access_config`` a request routes through (``"managed"``,
+    ``"byok"``, ``"byoe"``, …) — and threads it into
+    ``calculate_cost(..., mode=...)``. The matching entry in ``modes`` is
+    evaluated; when the mode is unknown or unset, the ``default`` mode is used.
+
+    There is no special-casing on the consumer side: every pricing type accepts
+    an optional ``mode`` and a mode-independent price simply ignores it, so a
+    plain price behaves identically for all modes. Mode-dependent pricing is
+    just this one extra optional pricing type.
+
+    Each ``modes`` value is itself any pricing object (flat, composite, tiered,
+    or even nested mode-based), validated lazily — mirroring how tiered pricing
+    holds per-tier prices.
+
+    Example:
+        {
+            "type": "mode",
+            "default": "managed",
+            "modes": {
+                "managed": {"type": "one_million_tokens", "input": "0.50", "output": "1.50"},
+                "byok": {"type": "constant", "price": "0"}
+            }
+        }
+    """
+
+    type: Literal["mode"] = "mode"
+
+    default: str = Field(
+        description="Mode key evaluated when the request's mode is unknown or unset. "
+        "Must be one of the keys in `modes`.",
+    )
+
+    modes: dict[str, dict[str, Any]] = Field(
+        description="Per-mode pricing keyed by mode name (e.g. 'managed', 'byok'). "
+        "Each value is a nested pricing object of any type.",
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_default_and_price(self) -> ModePriceData:
+        """Require ``default`` to exist and auto-compute the nominal price from it."""
+        if self.default not in self.modes:
+            raise ValueError(f"default mode {self.default!r} is not defined in modes ({sorted(self.modes)})")
+        if self.price is None:
+            self.price = _extract_nominal_price(self.modes[self.default])
+        return self
+
+    def calculate_cost(
+        self,
+        usage: UsageData,
+        customer_charge: Decimal | None = None,
+        request_count: int | None = None,
+        mode: str | None = None,
+    ) -> Decimal:
+        """Evaluate the price for the resolved ``mode`` (falling back to ``default``).
+
+        Args:
+            usage: Usage data passed to the selected mode's price.
+            customer_charge: Customer charge passed through.
+            request_count: Request count passed through.
+            mode: The resolved mode; unknown/``None`` falls back to ``default``.
+
+        Returns:
+            Cost from the selected mode's pricing.
+        """
+        selected = self.modes.get(mode) if mode is not None else None
+        if selected is None:
+            selected = self.modes[self.default]
+        pricing = validate_pricing(selected)
+        return pricing.calculate_cost(usage, customer_charge, request_count, mode)
+
+
 # Discriminated union of all pricing types
 # This is the type used for payout_price and list_price fields
 # Note: ExprPriceData should only be used for payout_price
@@ -1336,7 +1429,8 @@ Pricing = Annotated[
     | FirstPriceData
     | TieredPriceData
     | GraduatedPriceData
-    | ExprPriceData,
+    | ExprPriceData
+    | ModePriceData,
     Field(discriminator="type"),
 ]
 
@@ -1360,6 +1454,7 @@ def validate_pricing(
     | TieredPriceData
     | GraduatedPriceData
     | ExprPriceData
+    | ModePriceData
 ):
     """
     Validate pricing dict and return the appropriate typed model.

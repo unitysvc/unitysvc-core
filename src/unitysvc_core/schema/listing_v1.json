@@ -964,6 +964,78 @@
       "title": "MinPriceData",
       "type": "object"
     },
+    "ModePriceData": {
+      "additionalProperties": false,
+      "description": "Mode-based pricing that selects a sub-price by the request's resolved mode.\n\nThe active mode is decided elsewhere — e.g. the gateway picks which keyed\n``upstream_access_config`` a request routes through (``\"managed\"``,\n``\"byok\"``, ``\"byoe\"``, …) — and threads it into\n``calculate_cost(..., mode=...)``. The matching entry in ``modes`` is\nevaluated; when the mode is unknown or unset, the ``default`` mode is used.\n\nThere is no special-casing on the consumer side: every pricing type accepts\nan optional ``mode`` and a mode-independent price simply ignores it, so a\nplain price behaves identically for all modes. Mode-dependent pricing is\njust this one extra optional pricing type.\n\nEach ``modes`` value is itself any pricing object (flat, composite, tiered,\nor even nested mode-based), validated lazily — mirroring how tiered pricing\nholds per-tier prices.\n\nExample:\n    {\n        \"type\": \"mode\",\n        \"default\": \"managed\",\n        \"modes\": {\n            \"managed\": {\"type\": \"one_million_tokens\", \"input\": \"0.50\", \"output\": \"1.50\"},\n            \"byok\": {\"type\": \"constant\", \"price\": \"0\"}\n        }\n    }",
+      "properties": {
+        "default": {
+          "description": "Mode key evaluated when the request's mode is unknown or unset. Must be one of the keys in `modes`.",
+          "title": "Default",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "modes": {
+          "additionalProperties": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "description": "Per-mode pricing keyed by mode name (e.g. 'managed', 'byok'). Each value is a nested pricing object of any type.",
+          "minProperties": 1,
+          "title": "Modes",
+          "type": "object"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "mode",
+          "default": "mode",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "default",
+        "modes"
+      ],
+      "title": "ModePriceData",
+      "type": "object"
+    },
     "MultiplyPriceData": {
       "additionalProperties": false,
       "description": "Composite pricing that multiplies a base price by a factor.\n\nUseful for applying percentage-based adjustments to a base price.\n\nExample:\n    {\n        \"type\": \"multiply\",\n        \"factor\": \"0.70\",\n        \"base\": {\"type\": \"one_million_tokens\", \"input\": \"0.50\", \"output\": \"1.50\"}\n    }",
@@ -1867,6 +1939,7 @@
               "image": "#/$defs/ImagePriceData",
               "max": "#/$defs/MaxPriceData",
               "min": "#/$defs/MinPriceData",
+              "mode": "#/$defs/ModePriceData",
               "multiply": "#/$defs/MultiplyPriceData",
               "one_byte": "#/$defs/DataPriceData",
               "one_day": "#/$defs/TimePriceData",
@@ -1936,6 +2009,9 @@
             },
             {
               "$ref": "#/$defs/ExprPriceData"
+            },
+            {
+              "$ref": "#/$defs/ModePriceData"
             }
           ]
         },

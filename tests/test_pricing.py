@@ -1806,3 +1806,124 @@ class TestNominalPriceAutoCompute:
         )
         # Explicit price on the child is preserved
         assert pricing.price == "9.00"
+
+
+class TestModePriceData:
+    """Tests for mode-based pricing (select a sub-price by resolved mode)."""
+
+    def _managed_byok(self) -> dict:
+        """Canonical managed+byok: managed is paid, byok is free.
+
+        Uses ``constant`` sub-prices so the tests exercise mode *selection*
+        independently of any usage-metric math.
+        """
+        return {
+            "type": "mode",
+            "default": "managed",
+            "modes": {
+                "managed": {"type": "constant", "price": "6.00"},
+                "byok": {"type": "constant", "price": "0"},
+            },
+        }
+
+    def test_selects_matching_mode(self) -> None:
+        """The resolved mode picks that mode's price."""
+        pricing = validate_pricing(self._managed_byok())
+        usage = UsageData()
+
+        assert pricing.calculate_cost(usage, mode="managed") == Decimal("6.00")
+        assert pricing.calculate_cost(usage, mode="byok") == Decimal("0")
+
+    def test_unknown_mode_falls_back_to_default(self) -> None:
+        """An unrecognised mode evaluates the default mode."""
+        pricing = validate_pricing(self._managed_byok())
+
+        assert pricing.calculate_cost(UsageData(), mode="nonexistent") == Decimal("6.00")
+
+    def test_none_mode_falls_back_to_default(self) -> None:
+        """No mode (the common case for non-mode-aware callers) uses the default."""
+        pricing = validate_pricing(self._managed_byok())
+
+        assert pricing.calculate_cost(UsageData()) == Decimal("6.00")
+
+    def test_non_mode_price_ignores_mode(self) -> None:
+        """A plain (mode-independent) price yields the same cost for every mode."""
+        pricing = validate_pricing({"type": "constant", "price": "6.00"})
+        usage = UsageData()
+
+        base = pricing.calculate_cost(usage)
+        assert pricing.calculate_cost(usage, mode="byok") == base
+        assert pricing.calculate_cost(usage, mode="managed") == base
+        assert base == Decimal("6.00")
+
+    def test_default_must_exist(self) -> None:
+        """`default` must name one of the modes."""
+        with pytest.raises(ValueError, match="default mode"):
+            validate_pricing(
+                {
+                    "type": "mode",
+                    "default": "missing",
+                    "modes": {"managed": {"type": "constant", "price": "1"}},
+                }
+            )
+
+    def test_nominal_price_from_default_mode(self) -> None:
+        """The summary price auto-computes from the default mode when unset."""
+        pricing = validate_pricing(self._managed_byok())
+        assert pricing.price == "6.00"  # managed (default) summary price
+
+    def test_explicit_nominal_price_preserved(self) -> None:
+        """A seller-provided summary price is not overwritten."""
+        data = self._managed_byok()
+        data["price"] = "1.50"
+        pricing = validate_pricing(data)
+        assert pricing.price == "1.50"
+
+    def test_mode_threads_through_composite(self) -> None:
+        """`mode` propagates into nested children (e.g. a mode price inside `add`)."""
+        pricing = validate_pricing(
+            {
+                "type": "add",
+                "prices": [
+                    {
+                        "type": "mode",
+                        "default": "managed",
+                        "modes": {
+                            "managed": {"type": "constant", "price": "10"},
+                            "byok": {"type": "constant", "price": "0"},
+                        },
+                    },
+                    {"type": "constant", "price": "1.00"},  # flat platform fee
+                ],
+            }
+        )
+        usage = UsageData()
+
+        # byok: 0 (mode price) + 1.00 (fee); managed: 10 + 1.00
+        assert pricing.calculate_cost(usage, mode="byok") == Decimal("1.00")
+        assert pricing.calculate_cost(usage, mode="managed") == Decimal("11.00")
+
+    def test_mode_price_can_nest_tiered(self) -> None:
+        """A mode's pricing may itself be any pricing type (here: tiered)."""
+        pricing = validate_pricing(
+            {
+                "type": "mode",
+                "default": "managed",
+                "modes": {
+                    "managed": {
+                        "type": "tiered",
+                        "based_on": "request_count",
+                        "tiers": [
+                            {"up_to": 100, "price": {"type": "constant", "price": "5"}},
+                            {"up_to": None, "price": {"type": "constant", "price": "50"}},
+                        ],
+                    },
+                    "byok": {"type": "constant", "price": "0"},
+                },
+            }
+        )
+        usage = UsageData()
+
+        assert pricing.calculate_cost(usage, request_count=10, mode="managed") == Decimal("5")
+        assert pricing.calculate_cost(usage, request_count=10_000, mode="managed") == Decimal("50")
+        assert pricing.calculate_cost(usage, request_count=10_000, mode="byok") == Decimal("0")
