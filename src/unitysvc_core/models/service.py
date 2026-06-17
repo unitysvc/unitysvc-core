@@ -116,7 +116,18 @@ class AccessInterfaceData(BaseModel):
 
 
 class UpstreamAccessConfigData(AccessInterfaceData):
-    """Upstream (seller-facing) access config data.
+    """One upstream access channel — a named entry in ``upstream_access_config``.
+
+    Each channel is a complete way for the gateway to reach the upstream: a wire
+    protocol (``access_method``), endpoint (``base_url``), credential (``api_key``),
+    routing key, and rate-limit/quality restrictions. A service may declare several
+    channels (keyed by free-form channel name, e.g. ``"managed"``, ``"byok"``,
+    ``"managed-eu"``); the gateway selects one per request.
+
+    The channel's *type* is derived from its credential/endpoint provenance:
+    ``managed`` (seller's key, ``${ secrets.* }``), ``byok`` (customer's key,
+    ``${ customer_secrets.* }``), or ``byoe`` (customer's key + customer-templated
+    ``base_url``).
 
     Extends AccessInterfaceData with extra="allow" to support protocol-specific
     configuration fields (e.g., S3 bucket/region, SMTP host/port) that the

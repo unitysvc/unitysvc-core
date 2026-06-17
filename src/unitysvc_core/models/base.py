@@ -216,8 +216,8 @@ class PricingTypeEnum(StrEnum):
     graduated = "graduated"  # Graduated tiers (each tier's units at that rate)
     # Expression-based pricing (payout_price only)
     expr = "expr"  # Arbitrary expression using usage metrics
-    # Mode-based pricing: select a sub-price by the request's resolved mode
-    mode = "mode"  # Per-mode pricing keyed by mode name (e.g. managed, byok)
+    # Channel-based pricing: select a sub-price by the request's resolved channel
+    channel = "channel"  # Per-channel pricing keyed by channel name (e.g. managed, byok)
 
 
 class QuotaResetCycleEnum(StrEnum):
