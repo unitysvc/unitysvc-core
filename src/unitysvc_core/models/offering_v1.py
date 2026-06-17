@@ -46,7 +46,7 @@ class OfferingV1(ServiceOfferingData):
 
     # Override with typed models for file validation
     upstream_access_config: dict[str, UpstreamAccessConfigData] = Field(  # type: ignore[assignment]
-        description="Upstream access interfaces, keyed by name",
+        description="Upstream access channels, keyed by channel name",
     )
 
     documents: dict[str, DocumentData] | None = Field(  # type: ignore[assignment]

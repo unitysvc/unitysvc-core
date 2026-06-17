@@ -1808,67 +1808,67 @@ class TestNominalPriceAutoCompute:
         assert pricing.price == "9.00"
 
 
-class TestModePriceData:
-    """Tests for mode-based pricing (select a sub-price by resolved mode)."""
+class TestChannelPriceData:
+    """Tests for channel-based pricing (select a sub-price by resolved channel)."""
 
     def _managed_byok(self) -> dict:
         """Canonical managed+byok: managed is paid, byok is free.
 
-        Uses ``constant`` sub-prices so the tests exercise mode *selection*
+        Uses ``constant`` sub-prices so the tests exercise channel *selection*
         independently of any usage-metric math.
         """
         return {
-            "type": "mode",
+            "type": "channel",
             "default": "managed",
-            "modes": {
+            "channels": {
                 "managed": {"type": "constant", "price": "6.00"},
                 "byok": {"type": "constant", "price": "0"},
             },
         }
 
-    def test_selects_matching_mode(self) -> None:
-        """The resolved mode picks that mode's price."""
+    def test_selects_matching_channel(self) -> None:
+        """The resolved channel picks that channel's price."""
         pricing = validate_pricing(self._managed_byok())
         usage = UsageData()
 
-        assert pricing.calculate_cost(usage, mode="managed") == Decimal("6.00")
-        assert pricing.calculate_cost(usage, mode="byok") == Decimal("0")
+        assert pricing.calculate_cost(usage, channel="managed") == Decimal("6.00")
+        assert pricing.calculate_cost(usage, channel="byok") == Decimal("0")
 
-    def test_unknown_mode_falls_back_to_default(self) -> None:
-        """An unrecognised mode evaluates the default mode."""
+    def test_unknown_channel_falls_back_to_default(self) -> None:
+        """An unrecognised channel evaluates the default channel."""
         pricing = validate_pricing(self._managed_byok())
 
-        assert pricing.calculate_cost(UsageData(), mode="nonexistent") == Decimal("6.00")
+        assert pricing.calculate_cost(UsageData(), channel="nonexistent") == Decimal("6.00")
 
-    def test_none_mode_falls_back_to_default(self) -> None:
-        """No mode (the common case for non-mode-aware callers) uses the default."""
+    def test_none_channel_falls_back_to_default(self) -> None:
+        """No channel (the common case for non-channel-aware callers) uses the default."""
         pricing = validate_pricing(self._managed_byok())
 
         assert pricing.calculate_cost(UsageData()) == Decimal("6.00")
 
-    def test_non_mode_price_ignores_mode(self) -> None:
-        """A plain (mode-independent) price yields the same cost for every mode."""
+    def test_non_channel_price_ignores_channel(self) -> None:
+        """A plain (channel-independent) price yields the same cost for every channel."""
         pricing = validate_pricing({"type": "constant", "price": "6.00"})
         usage = UsageData()
 
         base = pricing.calculate_cost(usage)
-        assert pricing.calculate_cost(usage, mode="byok") == base
-        assert pricing.calculate_cost(usage, mode="managed") == base
+        assert pricing.calculate_cost(usage, channel="byok") == base
+        assert pricing.calculate_cost(usage, channel="managed") == base
         assert base == Decimal("6.00")
 
     def test_default_must_exist(self) -> None:
-        """`default` must name one of the modes."""
-        with pytest.raises(ValueError, match="default mode"):
+        """`default` must name one of the channels."""
+        with pytest.raises(ValueError, match="default channel"):
             validate_pricing(
                 {
-                    "type": "mode",
+                    "type": "channel",
                     "default": "missing",
-                    "modes": {"managed": {"type": "constant", "price": "1"}},
+                    "channels": {"managed": {"type": "constant", "price": "1"}},
                 }
             )
 
-    def test_nominal_price_from_default_mode(self) -> None:
-        """The summary price auto-computes from the default mode when unset."""
+    def test_nominal_price_from_default_channel(self) -> None:
+        """The summary price auto-computes from the default channel when unset."""
         pricing = validate_pricing(self._managed_byok())
         assert pricing.price == "6.00"  # managed (default) summary price
 
@@ -1879,16 +1879,16 @@ class TestModePriceData:
         pricing = validate_pricing(data)
         assert pricing.price == "1.50"
 
-    def test_mode_threads_through_composite(self) -> None:
-        """`mode` propagates into nested children (e.g. a mode price inside `add`)."""
+    def test_channel_threads_through_composite(self) -> None:
+        """`channel` propagates into nested children (e.g. a channel price inside `add`)."""
         pricing = validate_pricing(
             {
                 "type": "add",
                 "prices": [
                     {
-                        "type": "mode",
+                        "type": "channel",
                         "default": "managed",
-                        "modes": {
+                        "channels": {
                             "managed": {"type": "constant", "price": "10"},
                             "byok": {"type": "constant", "price": "0"},
                         },
@@ -1899,17 +1899,17 @@ class TestModePriceData:
         )
         usage = UsageData()
 
-        # byok: 0 (mode price) + 1.00 (fee); managed: 10 + 1.00
-        assert pricing.calculate_cost(usage, mode="byok") == Decimal("1.00")
-        assert pricing.calculate_cost(usage, mode="managed") == Decimal("11.00")
+        # byok: 0 (channel price) + 1.00 (fee); managed: 10 + 1.00
+        assert pricing.calculate_cost(usage, channel="byok") == Decimal("1.00")
+        assert pricing.calculate_cost(usage, channel="managed") == Decimal("11.00")
 
-    def test_mode_price_can_nest_tiered(self) -> None:
-        """A mode's pricing may itself be any pricing type (here: tiered)."""
+    def test_channel_price_can_nest_tiered(self) -> None:
+        """A channel's pricing may itself be any pricing type (here: tiered)."""
         pricing = validate_pricing(
             {
-                "type": "mode",
+                "type": "channel",
                 "default": "managed",
-                "modes": {
+                "channels": {
                     "managed": {
                         "type": "tiered",
                         "based_on": "request_count",
@@ -1924,6 +1924,6 @@ class TestModePriceData:
         )
         usage = UsageData()
 
-        assert pricing.calculate_cost(usage, request_count=10, mode="managed") == Decimal("5")
-        assert pricing.calculate_cost(usage, request_count=10_000, mode="managed") == Decimal("50")
-        assert pricing.calculate_cost(usage, request_count=10_000, mode="byok") == Decimal("0")
+        assert pricing.calculate_cost(usage, request_count=10, channel="managed") == Decimal("5")
+        assert pricing.calculate_cost(usage, request_count=10_000, channel="managed") == Decimal("50")
+        assert pricing.calculate_cost(usage, request_count=10_000, channel="byok") == Decimal("0")
