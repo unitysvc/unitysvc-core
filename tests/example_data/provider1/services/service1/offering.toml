@@ -68,7 +68,7 @@ targetModules = []
 code = "OK"
 message = ""
 
-[upstream_access_config."Fireworks API"]
+[upstream_access_config."fireworks-api"]
 access_method = "http"
 base_url = "https://api.fireworks.ai/inference/v1"
 api_key = "${ secrets.FIREWORKS_API_KEY }"

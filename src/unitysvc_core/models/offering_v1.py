@@ -7,7 +7,7 @@ from .documents import DocumentData
 from .offering_data import ServiceOfferingData
 from .pricing import Pricing
 from .service import UpstreamAccessConfigData
-from .validators import validate_service_identifier
+from .validators import validate_channel_name, validate_service_identifier
 
 
 class OfferingV1(ServiceOfferingData):
@@ -69,3 +69,16 @@ class OfferingV1(ServiceOfferingData):
         ``validate_service_identifier`` for full rules.
         """
         return validate_service_identifier(v, "service")
+
+    @field_validator("upstream_access_config")
+    @classmethod
+    def validate_channel_names(cls, v: dict[str, UpstreamAccessConfigData]) -> dict[str, UpstreamAccessConfigData]:
+        """Validate every channel name (key of ``upstream_access_config``).
+
+        Channel names are selected via the ``<name>@<channel>`` identifier
+        suffix, so each must follow the channel-name grammar and must not
+        contain ``@``. See ``validate_channel_name``.
+        """
+        for channel_name in v:
+            validate_channel_name(channel_name)
+        return v
