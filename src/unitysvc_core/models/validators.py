@@ -191,6 +191,67 @@ def validate_service_identifier(name: str, entity_type: str) -> str:
     return name
 
 
+def validate_channel_name(name: str, entity_type: str = "channel") -> str:
+    """Validate an upstream access-channel name.
+
+    A channel name is the key of an entry in ``upstream_access_config`` (and
+    the keys of channel-based pricing). It is also the value selected by the
+    ``@<channel>`` suffix of a service identifier (``<name>@<channel>``), so it
+    must satisfy the same per-segment grammar as a variant tag and, critically,
+    must **not** contain ``@`` — that character is the channel-selector
+    delimiter and would make the identifier ambiguous.
+
+    Rules:
+
+    - Non-empty.
+    - No ``@`` (reserved as the ``<name>@<channel>`` selector delimiter).
+    - Each ``/``-separated segment uses only letters, digits, ``.``, ``-``,
+      ``_`` and must start with an alphanumeric character. (Single-character
+      channel names are allowed, matching variant-tag rules — only bare
+      *service* names carry the ≥2-char primitive-prefix restriction.)
+
+    Args:
+        name: The channel name to validate.
+        entity_type: Label used in error messages (default ``"channel"``).
+
+    Returns:
+        The validated channel name (unchanged if valid).
+
+    Raises:
+        ValueError: If the channel name is empty, contains ``@``, or has an
+            invalid segment.
+
+    Examples:
+        Valid: ``managed``, ``byok``, ``byoe``, ``gateway``, ``apprise``,
+        ``eu-west``, ``p``.
+
+        Invalid: ``""`` (empty), ``byok@eu`` (contains ``@``),
+        ``-byok`` (must start alphanumeric), ``by//ok`` (empty segment).
+    """
+    if not name:
+        raise ValueError(f"Invalid {entity_type} name: name cannot be empty")
+
+    if "@" in name:
+        raise ValueError(
+            f"Invalid {entity_type} name '{name}': '@' is not allowed — it is the "
+            f"channel-selector delimiter in '<name>@<channel>' identifiers."
+        )
+
+    for segment in name.split("/"):
+        if not segment:
+            raise ValueError(
+                f"Invalid {entity_type} name '{name}': empty segment (consecutive or leading/trailing '/')."
+            )
+        if not _SERVICE_NAME_SEGMENT_RE.match(segment):
+            raise ValueError(
+                f"Invalid {entity_type} name '{name}': segment '{segment}' "
+                f"has invalid characters (allowed: letters, digits, '.', '-', "
+                f"'_'; must start with an alphanumeric character)."
+            )
+
+    return name
+
+
 SUPPORTED_SERVICE_OPTIONS: dict[str, type | tuple[type, ...]] = {
     "enrollment": dict,  # Per-enrollment config: {scope, limit, limit_per_customer, limit_per_user}
     "routing_vars": dict,  # Seller-managed operational variables for template resolution at request time

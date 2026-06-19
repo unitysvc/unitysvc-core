@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from unitysvc_core.models.validators import (
+    validate_channel_name,
     validate_listing_gateway_base_urls,
     validate_listing_jinja_var_references,
     validate_service_identifier,
@@ -327,3 +328,42 @@ class TestServiceNameJinjaVar:
         }
         errors = validate_listing_jinja_var_references(data)
         assert any("undefined" in e for e in errors)
+
+
+class TestValidateChannelName:
+    """Coverage for channel-name grammar (issue #1312).
+
+    Channel names key ``upstream_access_config`` and channel-based pricing,
+    and are selected via the ``<name>@<channel>`` identifier suffix, so they
+    must follow the variant-tag grammar and must not contain ``@``.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        ["managed", "byok", "byoe", "gateway", "apprise", "eu-west", "premium_1", "v2.1", "p"],
+    )
+    def test_accepts_valid_channel_names(self, name: str) -> None:
+        assert validate_channel_name(name) == name
+
+    def test_rejects_empty(self) -> None:
+        with pytest.raises(ValueError, match="cannot be empty"):
+            validate_channel_name("")
+
+    @pytest.mark.parametrize("name", ["byok@eu", "managed@", "@gateway", "a@b"])
+    def test_rejects_at_sign(self, name: str) -> None:
+        with pytest.raises(ValueError, match="'@' is not allowed"):
+            validate_channel_name(name)
+
+    @pytest.mark.parametrize("name", ["-byok", ".managed", "_gateway"])
+    def test_rejects_bad_start(self, name: str) -> None:
+        with pytest.raises(ValueError, match="invalid characters"):
+            validate_channel_name(name)
+
+    @pytest.mark.parametrize("name", ["by//ok", "/byok", "byok/"])
+    def test_rejects_empty_segments(self, name: str) -> None:
+        with pytest.raises(ValueError, match="empty segment"):
+            validate_channel_name(name)
+
+    def test_uses_entity_type_in_error_message(self) -> None:
+        with pytest.raises(ValueError, match="custom-label"):
+            validate_channel_name("", "custom-label")

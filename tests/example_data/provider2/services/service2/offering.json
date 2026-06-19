@@ -25,7 +25,7 @@
   "service_type": "image_generation",
   "time_created": "2024-03-15T10:30:00.000Z",
   "upstream_access_config": {
-    "Fireworks Image API": {
+    "fireworks-image-api": {
       "access_method": "http",
       "base_url": "https://api.fireworks.ai/inference/v1/image/generation",
       "api_key": "${ secrets.FIREWORKS_API_KEY }"
