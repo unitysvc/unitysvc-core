@@ -416,12 +416,17 @@ def find_files_by_schema(
     field_filter: tuple[tuple[str, Any], ...] | None = None,
 ) -> list[tuple[Path, str, dict[str, Any]]]:
     """
-    Find all data files of a given kind (by filename) with optional filters.
+    Find all data files matching a schema via the in-file ``"schema"`` field.
+
+    Loads every ``.json`` / ``.toml`` file under ``data_dir`` and keeps those
+    whose ``"schema"`` value matches.  Prefer :func:`find_files_by_pattern`
+    for canonical ``specs/``-style layouts where the file *name* is the
+    type discriminator — it is faster (no I/O for non-matching files).
 
     Args:
         data_dir: Directory to search
-        schema: Schema identifier (e.g., "offering_v1", "listing_v1") — mapped
-            to its filename stem (``offering``, ``listing``, …) for discovery.
+        schema: Schema identifier (e.g., "offering_v1", "listing_v1") — the
+            literal value expected in the ``"schema"`` key.
         path_filter: Optional string that must be in the file path
         field_filter: Optional tuple of (key, value) pairs to filter by
 
@@ -431,15 +436,79 @@ def find_files_by_schema(
     data_files = find_data_files(data_dir)
     matching_files: list[tuple[Path, str, dict[str, Any]]] = []
 
-    # The file TYPE is its filename, not an in-file ``schema`` field.
+    # Convert field_filter tuple back to dict for filtering
+    field_filter_dict = dict(field_filter) if field_filter else None
+
+    for data_file in data_files:
+        # Apply path filter (cheap; do before the load).
+        if path_filter and path_filter not in str(data_file):
+            continue
+
+        try:
+            data, file_format = load_data_file(data_file)
+        except Exception:
+            # Skip files that can't be loaded
+            continue
+
+        if not isinstance(data, dict):
+            continue
+
+        # Check schema
+        if data.get("schema") != schema:
+            continue
+
+        # Apply field filters
+        if field_filter_dict:
+            if not all(data.get(k) == v for k, v in field_filter_dict.items()):
+                continue
+
+        matching_files.append((data_file, file_format, data))
+
+    return matching_files
+
+
+@lru_cache(maxsize=256)
+def find_files_by_pattern(
+    data_dir: Path,
+    schema: str,
+    path_filter: str | None = None,
+    field_filter: tuple[tuple[str, Any], ...] | None = None,
+) -> list[tuple[Path, str, dict[str, Any]]]:
+    """
+    Find all data files matching a schema by **filename stem**.
+
+    A data file's type is its filename (``provider.json``, ``offering.json``,
+    ``listing.json``, …) — not an in-file ``"schema"`` field.  The mapping
+    from schema to filename stem is in :data:`SCHEMA_TO_STEM`.
+
+    This is the preferred discovery function for the flat ``specs/`` layout
+    where every spec file carries its type in its name.  It is faster than
+    :func:`find_files_by_schema` because it filters by filename stem before
+    loading.
+
+    Args:
+        data_dir: Directory to search
+        schema: Schema identifier (e.g., "offering_v1", "listing_v1") —
+            mapped to its filename stem (``offering``, ``listing``, …) for
+            discovery.
+        path_filter: Optional string that must be in the file path
+        field_filter: Optional tuple of (key, value) pairs to filter by
+
+    Returns:
+        List of tuples (file_path, format, data) for matching files
+    """
+    data_files = find_data_files(data_dir)
+    matching_files: list[tuple[Path, str, dict[str, Any]]] = []
+
     target_stem = SCHEMA_TO_STEM.get(schema)
+    if target_stem is None:
+        return matching_files
 
     # Convert field_filter tuple back to dict for filtering
     field_filter_dict = dict(field_filter) if field_filter else None
 
     for data_file in data_files:
-        # Filter by filename (cheap; do before the load). Unknown schema →
-        # no stem → matches nothing.
+        # Filter by filename (cheap; do before the load).
         if data_file.stem != target_stem:
             continue
         # Apply path filter (cheap; do before the load).
@@ -452,16 +521,11 @@ def find_files_by_schema(
             _warn_skipped(data_file, exc)
             continue
 
-        # ``find_data_files`` only yields ``provider/offering/listing/...``-named
-        # files now, but a stray top-level list (bad TOML/JSON) would still crash
-        # ``.get`` below — skip non-dict roots cleanly.
         if not isinstance(data, dict):
             continue
 
-        # Apply field filters
-        if field_filter_dict:
-            if not all(data.get(k) == v for k, v in field_filter_dict.items()):
-                continue
+        if field_filter_dict and not all(data.get(k) == v for k, v in field_filter_dict.items()):
+            continue
 
         matching_files.append((data_file, file_format, data))
 
