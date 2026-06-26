@@ -11,6 +11,7 @@ from unitysvc_core.utils import (
     compute_file_hash,
     deep_merge_dicts,
     expand_presets,
+    find_files_by_pattern,
     find_files_by_schema,
     generate_content_based_key,
     get_basename,
@@ -129,28 +130,27 @@ def test_load_data_file_toml(tmp_path: Path) -> None:
 
 
 # =============================================================================
-# find_files_by_schema
+# find_files_by_pattern
 # =============================================================================
 
 
-def test_find_files_by_schema(tmp_path: Path) -> None:
-    # File TYPE is the filename now, not an in-file ``schema`` field.
+def test_find_files_by_pattern(tmp_path: Path) -> None:
     (tmp_path / "provider.json").write_text(json.dumps({"name": "a"}))
     (tmp_path / "offering.json").write_text(json.dumps({"name": "b"}))
     sub = tmp_path / "sub"
     sub.mkdir()
     (sub / "provider.json").write_text(json.dumps({"name": "c"}))
 
-    provider_files = find_files_by_schema(tmp_path, "provider_v1")
+    provider_files = find_files_by_pattern(tmp_path, "provider_v1")
     provider_paths = {Path(fp).relative_to(tmp_path).as_posix() for fp, _fmt, _data in provider_files}
     assert provider_paths == {"provider.json", "sub/provider.json"}
 
-    offering_files = find_files_by_schema(tmp_path, "offering_v1")
+    offering_files = find_files_by_pattern(tmp_path, "offering_v1")
     offering_paths = {Path(fp).name for fp, _fmt, _data in offering_files}
     assert offering_paths == {"offering.json"}
 
 
-def test_find_files_by_schema_skips_non_dict_roots(tmp_path: Path) -> None:
+def test_find_files_by_pattern_skips_non_dict_roots(tmp_path: Path) -> None:
     """Discovery walks every ``*.json``/``*.toml`` under ``data_dir``.  A
     real seller catalog directory typically has *some* sibling content
     whose root isn't a dict — openapi specs (top-level array of routes),
@@ -170,7 +170,7 @@ def test_find_files_by_schema_skips_non_dict_roots(tmp_path: Path) -> None:
     (tmp_path / "null").mkdir()
     (tmp_path / "null" / "provider.json").write_text("null")
 
-    files = find_files_by_schema(tmp_path, "provider_v1")
+    files = find_files_by_pattern(tmp_path, "provider_v1")
     assert {Path(fp).relative_to(tmp_path).as_posix() for fp, _fmt, _data in files} == {"provider.json"}
 
 
@@ -327,7 +327,7 @@ def test_default_preset_fns_exports_doc_and_file() -> None:
 # =============================================================================
 
 
-def test_find_files_by_schema_warns_on_unknown_preset(tmp_path: Path) -> None:
+def test_find_files_by_pattern_warns_on_unknown_preset(tmp_path: Path) -> None:
     """A listing referencing a non-existent preset must not be silently skipped.
 
     Discovery used to swallow every exception with a bare ``except Exception:``,
@@ -339,29 +339,28 @@ def test_find_files_by_schema_warns_on_unknown_preset(tmp_path: Path) -> None:
     listing.write_text(
         json.dumps(
             {
-                "schema": "listing_v1",
                 "documents": {"T": {"$doc_preset": "this_preset_does_not_exist"}},
             }
         )
     )
 
-    find_files_by_schema.cache_clear()
+    find_files_by_pattern.cache_clear()
     with pytest.warns(DataFileLoadWarning, match="this_preset_does_not_exist"):
-        results = find_files_by_schema(tmp_path, "listing_v1")
+        results = find_files_by_pattern(tmp_path, "listing_v1")
     assert results == []
 
 
-def test_find_files_by_schema_warns_on_malformed_json(tmp_path: Path) -> None:
+def test_find_files_by_pattern_warns_on_malformed_json(tmp_path: Path) -> None:
     bad = tmp_path / "listing.json"  # spec-named so discovery loads it
     bad.write_text("{ this is not json")
 
-    find_files_by_schema.cache_clear()
+    find_files_by_pattern.cache_clear()
     with pytest.warns(DataFileLoadWarning, match="listing.json"):
-        results = find_files_by_schema(tmp_path, "listing_v1")
+        results = find_files_by_pattern(tmp_path, "listing_v1")
     assert results == []
 
 
-def test_find_files_by_schema_can_be_promoted_to_error(tmp_path: Path) -> None:
+def test_find_files_by_pattern_can_be_promoted_to_error(tmp_path: Path) -> None:
     """Callers that want fail-fast can promote the warning to an exception."""
     import warnings as _warnings
 
@@ -369,14 +368,13 @@ def test_find_files_by_schema_can_be_promoted_to_error(tmp_path: Path) -> None:
     listing.write_text(
         json.dumps(
             {
-                "schema": "listing_v1",
                 "documents": {"T": {"$doc_preset": "this_preset_does_not_exist"}},
             }
         )
     )
 
-    find_files_by_schema.cache_clear()
+    find_files_by_pattern.cache_clear()
     with _warnings.catch_warnings():
         _warnings.simplefilter("error", DataFileLoadWarning)
         with pytest.raises(DataFileLoadWarning):
-            find_files_by_schema(tmp_path, "listing_v1")
+            find_files_by_pattern(tmp_path, "listing_v1")
