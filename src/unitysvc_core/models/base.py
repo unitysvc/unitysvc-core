@@ -243,11 +243,11 @@ class RequestTransformEnum(StrEnum):
     body_transformer = "body_transformer"
     # Simple body replacement from rendered enrollment data
     set_body = "set_body"
-    # Translate the request/response between the client's LLM API format and the
-    # format the upstream provider accepts (e.g. Anthropic Messages -> OpenAI
-    # Chat). Config carries ``upstream_format``; the gateway performs the
-    # conversion in-process (#923/#929).
-    llm_translate = "llm_translate"
+    # Translate the request/response between LLM API formats (Anthropic Messages
+    # <-> OpenAI Chat). The value names the converter (e.g. ``anthropic_to_openai``);
+    # the gateway auto-detects the incoming format and translates in-process only
+    # when needed (#923/#929/#1400). Replaces the earlier ``llm_translate`` key.
+    llm_translator = "llm_translator"
 
 
 class ServiceTypeEnum(StrEnum):
