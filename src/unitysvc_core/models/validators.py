@@ -253,7 +253,7 @@ def validate_channel_name(name: str, entity_type: str = "channel") -> str:
 
 
 SUPPORTED_SERVICE_OPTIONS: dict[str, type | tuple[type, ...]] = {
-    "enrollment": dict,  # Per-enrollment config: {scope, limit, limit_per_customer, limit_per_user}
+    "enrollment": dict,  # Per-enrollment config: {limit, limit_per_customer, limit_per_user}
     "routing_vars": dict,  # Seller-managed operational variables for template resolution at request time
     "ops_testing_parameters": dict,
     "prompt_recurrence": bool,  # Prompt recurrence options during enrollment
@@ -264,7 +264,6 @@ SUPPORTED_SERVICE_OPTIONS: dict[str, type | tuple[type, ...]] = {
 
 # Inner keys of the ``enrollment`` service option and their expected types.
 SUPPORTED_ENROLLMENT_OPTIONS: dict[str, type | tuple[type, ...]] = {
-    "scope": str,  # "customer" (default) | "global"
     "limit": int,  # global active-enrollment cap per service
     "limit_per_customer": int,
     "limit_per_user": int,
@@ -294,8 +293,6 @@ def _validate_enrollment_option(value: dict[str, Any]) -> list[str]:
             type_name = expected_type.__name__ if isinstance(expected_type, type) else str(expected_type)
             errors.append(f"service_options.enrollment.{key} must be {type_name}, got {type(val).__name__}")
             continue
-        if key == "scope" and val not in ("customer", "global"):
-            errors.append(f"service_options.enrollment.scope must be 'customer' or 'global', got {val!r}")
         if key.startswith("limit") and isinstance(val, int) and val <= 0:
             errors.append(f"service_options.enrollment.{key} must be a positive integer, got {val}")
     return errors
@@ -332,7 +329,7 @@ def validate_service_options(service_options: dict[str, Any] | None) -> list[str
             errors.append(f"service_options.{key} must be {type_name}, got {type(value).__name__}")
             continue
 
-        # Validate the nested enrollment config (scope / limit*).
+        # Validate the nested enrollment config (limit*).
         if key == "enrollment" and isinstance(value, dict):
             errors.extend(_validate_enrollment_option(value))
 
