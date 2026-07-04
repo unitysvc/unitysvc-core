@@ -740,26 +740,6 @@ class TestServiceOptionsValidation:
         assert len(errors) == 1
         assert "must be int, got bool" in errors[0]
 
-    def test_valid_enrollment_scope_option(self, schema_dir, example_data_dir):
-        validator = DataValidator(example_data_dir, schema_dir)
-        data = {
-            "schema": "listing_v1",
-            "service_options": {
-                "enrollment": {"scope": "global"},
-            },
-        }
-        errors = validator.validate_service_options_keys(data, "listing_v1")
-        assert errors == []
-
-    def test_enrollment_scope_customer_valid(self, schema_dir, example_data_dir):
-        validator = DataValidator(example_data_dir, schema_dir)
-        data = {
-            "schema": "listing_v1",
-            "service_options": {"enrollment": {"scope": "customer"}},
-        }
-        errors = validator.validate_service_options_keys(data, "listing_v1")
-        assert errors == []
-
     def test_enrollment_empty_dict_valid(self, schema_dir, example_data_dir):
         """An empty enrollment dict is valid (all inner keys optional)."""
         validator = DataValidator(example_data_dir, schema_dir)
@@ -780,16 +760,6 @@ class TestServiceOptionsValidation:
         assert len(errors) == 1
         assert "service_options.enrollment must be dict, got str" in errors[0]
 
-    def test_enrollment_scope_invalid(self, schema_dir, example_data_dir):
-        validator = DataValidator(example_data_dir, schema_dir)
-        data = {
-            "schema": "listing_v1",
-            "service_options": {"enrollment": {"scope": "bogus"}},
-        }
-        errors = validator.validate_service_options_keys(data, "listing_v1")
-        assert len(errors) == 1
-        assert "service_options.enrollment.scope must be 'customer' or 'global'" in errors[0]
-
     def test_enrollment_unknown_inner_key_rejected(self, schema_dir, example_data_dir):
         validator = DataValidator(example_data_dir, schema_dir)
         data = {
@@ -800,15 +770,15 @@ class TestServiceOptionsValidation:
         assert len(errors) == 1
         assert (
             "Unrecognized service_options.enrollment key 'scop'. "
-            "Supported: limit, limit_per_customer, limit_per_user, scope" in errors[0]
+            "Supported: limit, limit_per_customer, limit_per_user" in errors[0]
         )
 
-    def test_enrollment_scope_with_other_options(self, schema_dir, example_data_dir):
+    def test_enrollment_limit_with_other_options(self, schema_dir, example_data_dir):
         validator = DataValidator(example_data_dir, schema_dir)
         data = {
             "schema": "listing_v1",
             "service_options": {
-                "enrollment": {"scope": "global", "limit_per_customer": 5},
+                "enrollment": {"limit": 10, "limit_per_customer": 5},
             },
         }
         errors = validator.validate_service_options_keys(data, "listing_v1")
