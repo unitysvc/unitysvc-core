@@ -38,6 +38,15 @@ class RateLimit(BaseModel):
 
 
 class ServiceConstraints(BaseModel):
+    """DEPRECATED — planned SLA/quota surface that was never enforced.
+
+    No routing resolver or gateway path ever read these fields; they were
+    authored nowhere in seller data. The ``constraints`` field has been removed
+    from ``AccessInterfaceData``. The class is retained (still exported) only so
+    existing imports do not break; it is unused and slated for removal. Do not
+    add new references. See unitysvc/unitysvc#1717.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     # Usage Quotas & Billing
@@ -81,7 +90,21 @@ class ServiceConstraints(BaseModel):
 
 
 class AccessInterfaceData(BaseModel):
-    """User-facing access interface data (customer side).
+    """User-facing access interface data — a **pure routing-resolution object**.
+
+    It answers "which candidate does this request address?" — nothing more. It
+    carries only the customer-facing address (``base_url``), the request
+    ``routing_key``, and selection/visibility metadata (``is_active`` /
+    ``is_primary`` / ``sort_order``). All upstream-access and enforcement
+    concerns (endpoint credentials, transformers, response-eval rules, rate
+    limits) live on the per-channel ``upstream_access_config`` entry — an
+    opaque JSON object the gateway reads as raw JSONB — which is where the
+    gateway resolves them.
+
+    Historically this also carried ``rate_limits`` / ``constraints`` /
+    ``response_rules``; those were authored nowhere in customer-facing
+    interfaces and have moved to the channel (rate limits) or been dropped
+    (``constraints`` — never enforced). See unitysvc/unitysvc#1717.
 
     Note: The interface name is NOT stored here - it's the key in the interfaces dict.
     When stored in the database, the backend extracts the key as the name field.
@@ -100,59 +123,9 @@ class AccessInterfaceData(BaseModel):
         description="Request routing key for matching (e.g., {'model': 'gpt-4'})",
     )
 
-    rate_limits: list[RateLimit] | None = Field(
-        default=None,
-        description="Rate limit",
-    )
-    constraints: ServiceConstraints | None = Field(default=None, description="Service constraints and conditions")
-    response_rules: dict[str, dict[str, Any] | str] | None = Field(
-        default=None,
-        description="Response evaluation rules keyed by rule name. "
-        "Values are either a rule dict or a Jinja2 template string. Validated by the backend.",
-    )
     is_active: bool = Field(default=True, description="Whether interface is active")
     is_primary: bool = Field(default=False, description="Whether this is the primary interface")
     sort_order: int = Field(default=0, description="Display order")
-
-
-class UpstreamAccessConfigData(AccessInterfaceData):
-    """One upstream access channel — a named entry in ``upstream_access_config``.
-
-    Each channel is a complete way for the gateway to reach the upstream: a wire
-    protocol (``access_method``), endpoint (``base_url``), credential (``api_key``),
-    routing key, and rate-limit/quality restrictions. A service may declare several
-    channels (keyed by free-form channel name, e.g. ``"managed"``, ``"byok"``,
-    ``"managed-eu"``); the gateway selects one per request.
-
-    The channel's *type* is derived from its credential/endpoint provenance:
-    ``managed`` (seller's key, ``${ secrets.* }``), ``byok`` (customer's key,
-    ``${ customer_secrets.* }``), or ``byoe`` (customer's key + customer-templated
-    ``base_url``).
-
-    Extends AccessInterfaceData with extra="allow" to support protocol-specific
-    configuration fields (e.g., S3 bucket/region, SMTP host/port) that the
-    gateway needs to reach the upstream service.
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-    # base_url is optional for upstream configs (e.g., S3 uses bucket + region instead)
-    base_url: str | None = Field(default=None, max_length=500, description="Base URL for api access")  # type: ignore[assignment]
-
-    api_key: str | None = Field(
-        default=None,
-        max_length=2000,
-        description=(
-            "Upstream API key, or a svcpass disposition (#1198). The value "
-            "controls what the gateway does with the inbound svcpass token "
-            "before forwarding upstream: unset/'' or '__strip__' strip the "
-            "svcpass-bearing header (other auth headers pass through); "
-            "'__forward__' keeps svcpass on its original header (only to a "
-            "trusted platform host); any other value (a '${ secrets.X }' / "
-            "'${ customer_secrets.X }' reference) overrides svcpass with that "
-            "credential on the source header."
-        ),
-    )
 
 
 class ServiceStatus(BaseModel):

@@ -2,7 +2,7 @@
   "$defs": {
     "AccessInterfaceData": {
       "additionalProperties": false,
-      "description": "User-facing access interface data (customer side).\n\nNote: The interface name is NOT stored here - it's the key in the interfaces dict.\nWhen stored in the database, the backend extracts the key as the name field.",
+      "description": "User-facing access interface data — a **pure routing-resolution object**.\n\nIt answers \"which candidate does this request address?\" — nothing more. It\ncarries only the customer-facing address (``base_url``), the request\n``routing_key``, and selection/visibility metadata (``is_active`` /\n``is_primary`` / ``sort_order``). All upstream-access and enforcement\nconcerns (endpoint credentials, transformers, response-eval rules, rate\nlimits) live on the per-channel ``upstream_access_config`` entry — an\nopaque JSON object the gateway reads as raw JSONB — which is where the\ngateway resolves them.\n\nHistorically this also carried ``rate_limits`` / ``constraints`` /\n``response_rules``; those were authored nowhere in customer-facing\ninterfaces and have moved to the channel (rate limits) or been dropped\n(``constraints`` — never enforced). See unitysvc/unitysvc#1717.\n\nNote: The interface name is NOT stored here - it's the key in the interfaces dict.\nWhen stored in the database, the backend extracts the key as the name field.",
       "properties": {
         "access_method": {
           "$ref": "#/$defs/AccessMethodEnum",
@@ -14,18 +14,6 @@
           "maxLength": 500,
           "title": "Base Url",
           "type": "string"
-        },
-        "constraints": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ServiceConstraints"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Service constraints and conditions"
         },
         "description": {
           "anyOf": [
@@ -52,46 +40,6 @@
           "description": "Whether this is the primary interface",
           "title": "Is Primary",
           "type": "boolean"
-        },
-        "rate_limits": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/RateLimit"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Rate limit",
-          "title": "Rate Limits"
-        },
-        "response_rules": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "anyOf": [
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "string"
-                  }
-                ]
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Response evaluation rules keyed by rule name. Values are either a rule dict or a Jinja2 template string. Validated by the backend.",
-          "title": "Response Rules"
         },
         "routing_key": {
           "anyOf": [
@@ -195,17 +143,6 @@
       ],
       "title": "AddPriceData",
       "type": "object"
-    },
-    "AuthMethodEnum": {
-      "enum": [
-        "api_key",
-        "oauth",
-        "jwt",
-        "bearer_token",
-        "basic_auth"
-      ],
-      "title": "AuthMethodEnum",
-      "type": "string"
     },
     "ChannelPriceData": {
       "additionalProperties": false,
@@ -326,17 +263,6 @@
       ],
       "title": "ConstantPriceData",
       "type": "object"
-    },
-    "ContentFilterEnum": {
-      "enum": [
-        "adult",
-        "violence",
-        "hate_speech",
-        "profanity",
-        "pii"
-      ],
-      "title": "ContentFilterEnum",
-      "type": "string"
     },
     "CountPriceData": {
       "additionalProperties": false,
@@ -1104,16 +1030,6 @@
       "title": "MultiplyPriceData",
       "type": "object"
     },
-    "OveragePolicyEnum": {
-      "enum": [
-        "block",
-        "throttle",
-        "charge",
-        "queue"
-      ],
-      "title": "OveragePolicyEnum",
-      "type": "string"
-    },
     "PriceTier": {
       "additionalProperties": false,
       "description": "A single tier in tiered pricing.",
@@ -1143,87 +1059,6 @@
       ],
       "title": "PriceTier",
       "type": "object"
-    },
-    "QuotaResetCycleEnum": {
-      "enum": [
-        "daily",
-        "weekly",
-        "monthly",
-        "yearly"
-      ],
-      "title": "QuotaResetCycleEnum",
-      "type": "string"
-    },
-    "RateLimit": {
-      "additionalProperties": false,
-      "description": "Store rate limiting rules for services.",
-      "properties": {
-        "burst_limit": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Short-term burst allowance",
-          "title": "Burst Limit"
-        },
-        "description": {
-          "anyOf": [
-            {
-              "maxLength": 255,
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Human-readable description",
-          "title": "Description"
-        },
-        "is_active": {
-          "default": true,
-          "description": "Whether rate limit is active",
-          "title": "Is Active",
-          "type": "boolean"
-        },
-        "limit": {
-          "description": "Maximum allowed in the time window",
-          "title": "Limit",
-          "type": "integer"
-        },
-        "unit": {
-          "$ref": "#/$defs/RateLimitUnitEnum",
-          "description": "What is being limited"
-        },
-        "window": {
-          "$ref": "#/$defs/TimeWindowEnum",
-          "description": "Time window for the limit"
-        }
-      },
-      "required": [
-        "limit",
-        "unit",
-        "window"
-      ],
-      "title": "RateLimit",
-      "type": "object"
-    },
-    "RateLimitUnitEnum": {
-      "enum": [
-        "requests",
-        "tokens",
-        "input_tokens",
-        "output_tokens",
-        "bytes",
-        "concurrent"
-      ],
-      "title": "RateLimitUnitEnum",
-      "type": "string"
     },
     "RevenueSharePriceData": {
       "additionalProperties": false,
@@ -1284,327 +1119,6 @@
         "percentage"
       ],
       "title": "RevenueSharePriceData",
-      "type": "object"
-    },
-    "ServiceConstraints": {
-      "additionalProperties": false,
-      "properties": {
-        "auth_methods": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/AuthMethodEnum"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Supported authentication methods",
-          "title": "Auth Methods"
-        },
-        "connection_timeout_seconds": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Connection timeout in seconds",
-          "title": "Connection Timeout Seconds"
-        },
-        "content_filters": {
-          "anyOf": [
-            {
-              "items": {
-                "$ref": "#/$defs/ContentFilterEnum"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Active content filtering policies",
-          "title": "Content Filters"
-        },
-        "daily_quota": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Daily usage quota (requests, tokens, etc.)",
-          "title": "Daily Quota"
-        },
-        "input_languages": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Supported input languages (ISO 639-1 codes)",
-          "title": "Input Languages"
-        },
-        "ip_whitelist_required": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Whether IP whitelisting is required",
-          "title": "Ip Whitelist Required"
-        },
-        "maintenance_windows": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Scheduled maintenance windows",
-          "title": "Maintenance Windows"
-        },
-        "max_batch_size": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Maximum number of items in batch requests",
-          "title": "Max Batch Size"
-        },
-        "max_concurrent_requests": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Maximum concurrent requests allowed",
-          "title": "Max Concurrent Requests"
-        },
-        "max_connections_per_ip": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Maximum connections per IP address",
-          "title": "Max Connections Per Ip"
-        },
-        "max_context_length": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Maximum context length in tokens",
-          "title": "Max Context Length"
-        },
-        "max_request_size_bytes": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Maximum request payload size in bytes",
-          "title": "Max Request Size Bytes"
-        },
-        "max_response_size_bytes": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Maximum response payload size in bytes",
-          "title": "Max Response Size Bytes"
-        },
-        "monthly_quota": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Monthly usage quota (requests, tokens, etc.)",
-          "title": "Monthly Quota"
-        },
-        "output_languages": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Supported output languages (ISO 639-1 codes)",
-          "title": "Output Languages"
-        },
-        "overage_policy": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/OveragePolicyEnum"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "What happens when quota is exceeded"
-        },
-        "quota_reset_cycle": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/QuotaResetCycleEnum"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "How often quotas reset"
-        },
-        "quota_unit": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RateLimitUnitEnum"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Unit for quota limits"
-        },
-        "region_restrictions": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Geographic restrictions (ISO country codes)",
-          "title": "Region Restrictions"
-        },
-        "response_time_sla_ms": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Response time SLA in milliseconds",
-          "title": "Response Time Sla Ms"
-        },
-        "timeout_seconds": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Request timeout in seconds",
-          "title": "Timeout Seconds"
-        },
-        "tls_version_min": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Minimum TLS version required",
-          "title": "Tls Version Min"
-        },
-        "uptime_sla_percent": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Uptime SLA percentage (e.g., 99.9)",
-          "title": "Uptime Sla Percent"
-        }
-      },
-      "title": "ServiceConstraints",
       "type": "object"
     },
     "StepPriceData": {
@@ -1779,17 +1293,6 @@
       ],
       "title": "TimePriceData",
       "type": "object"
-    },
-    "TimeWindowEnum": {
-      "enum": [
-        "second",
-        "minute",
-        "hour",
-        "day",
-        "month"
-      ],
-      "title": "TimeWindowEnum",
-      "type": "string"
     },
     "TokenPriceData": {
       "additionalProperties": false,

@@ -72,7 +72,6 @@ from .service import (
     RateLimit,
     ServiceConstraints,
     ServiceStatus,
-    UpstreamAccessConfigData,
 )
 from .service_group_data import (
     SERVICE_GROUP_SCHEMA_VERSION,
@@ -108,7 +107,6 @@ __all__ = [
     # Shared / access models
     "DocumentData",
     "AccessInterfaceData",
-    "UpstreamAccessConfigData",
     "RateLimit",
     "ServiceConstraints",
     "ServiceStatus",
