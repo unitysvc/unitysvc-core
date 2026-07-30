@@ -6,7 +6,6 @@ from pydantic import ConfigDict, Field, HttpUrl, field_validator
 from .documents import DocumentData
 from .offering_data import ServiceOfferingData
 from .pricing import Pricing
-from .service import UpstreamAccessConfigData
 from .validators import validate_channel_name, validate_service_identifier
 
 
@@ -44,9 +43,15 @@ class OfferingV1(ServiceOfferingData):
     # Convenience field for logo (converted to documents during import)
     logo: str | HttpUrl | None = None
 
-    # Override with typed models for file validation
-    upstream_access_config: dict[str, UpstreamAccessConfigData] = Field(  # type: ignore[assignment]
-        description="Upstream access channels, keyed by channel name",
+    # Required in file validation (base allows None for API flexibility). Each
+    # value is an OPAQUE per-channel JSON object: the gateway reads
+    # upstream_access_config as raw JSONB, and channels are genuinely
+    # heterogeneous (http has base_url; smtp has host/port; s3 has bucket/region;
+    # a raw channel wraps arbitrary fields). A typed model here enforced nothing
+    # (extra="allow") while misfitting non-HTTP channels — so it is intentionally
+    # left open and validated by the gateway/backend at use. See unitysvc/unitysvc#1717.
+    upstream_access_config: dict[str, dict[str, Any]] = Field(  # type: ignore[assignment]
+        description="Upstream access channels, keyed by channel name (opaque per-channel objects)",
     )
 
     documents: dict[str, DocumentData] | None = Field(  # type: ignore[assignment]
@@ -72,7 +77,7 @@ class OfferingV1(ServiceOfferingData):
 
     @field_validator("upstream_access_config")
     @classmethod
-    def validate_channel_names(cls, v: dict[str, UpstreamAccessConfigData]) -> dict[str, UpstreamAccessConfigData]:
+    def validate_channel_names(cls, v: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
         """Validate every channel name (key of ``upstream_access_config``).
 
         Channel names are selected via the ``<name>@<channel>`` identifier
