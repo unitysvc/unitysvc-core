@@ -1867,10 +1867,39 @@ class TestChannelPriceData:
                 }
             )
 
-    def test_nominal_price_from_default_channel(self) -> None:
-        """The summary price auto-computes from the default channel when unset."""
+    def test_nominal_price_is_highest_member(self) -> None:
+        """The summary price auto-computes as the HIGHEST member price when unset."""
         pricing = validate_pricing(self._managed_byok())
-        assert pricing.price == "6.00"  # managed (default) summary price
+        assert pricing.price == "6.00"  # max(managed 6.00, byok 0)
+
+    def test_nominal_price_ignores_free_default(self) -> None:
+        """A free default channel must not make the summary read as "Free" — the
+        highest (paid) member is the representative nominal."""
+        pricing = validate_pricing(
+            {
+                "type": "channel",
+                "default": "byok",  # free channel is the default
+                "channels": {
+                    "byok": {"type": "constant", "price": "0"},
+                    "byok-plus": {"type": "constant", "price": "0.001"},
+                },
+            }
+        )
+        assert pricing.price == "0.001"  # NOT "0" from the default channel
+
+    def test_nominal_price_all_free(self) -> None:
+        """All-free channels yield a "0" nominal (correctly free)."""
+        pricing = validate_pricing(
+            {
+                "type": "channel",
+                "default": "a",
+                "channels": {
+                    "a": {"type": "constant", "price": "0"},
+                    "b": {"type": "constant", "price": "0"},
+                },
+            }
+        )
+        assert pricing.price == "0"
 
     def test_explicit_nominal_price_preserved(self) -> None:
         """A seller-provided summary price is not overwritten."""
@@ -1878,6 +1907,55 @@ class TestChannelPriceData:
         data["price"] = "1.50"
         pricing = validate_pricing(data)
         assert pricing.price == "1.50"
+
+    def test_description_range_when_prices_differ(self) -> None:
+        """An unspecified description auto-derives a range across member prices."""
+        pricing = validate_pricing(
+            {
+                "type": "channel",
+                "default": "byok",
+                "channels": {
+                    "byok": {"type": "constant", "price": "0"},
+                    "byok-plus": {"type": "constant", "price": "0.001"},
+                },
+            }
+        )
+        assert pricing.description == "Free - $0.001"
+
+    def test_description_range_both_paid(self) -> None:
+        """Two paid tiers render as a "$min - $max" range."""
+        pricing = validate_pricing(
+            {
+                "type": "channel",
+                "default": "basic",
+                "channels": {
+                    "basic": {"type": "constant", "price": "0.001"},
+                    "premium": {"type": "constant", "price": "0.01"},
+                },
+            }
+        )
+        assert pricing.description == "$0.001 - $0.01"
+
+    def test_no_description_range_when_prices_equal(self) -> None:
+        """Uniform member prices need no range — description stays unset."""
+        pricing = validate_pricing(
+            {
+                "type": "channel",
+                "default": "a",
+                "channels": {
+                    "a": {"type": "constant", "price": "0"},
+                    "b": {"type": "constant", "price": "0"},
+                },
+            }
+        )
+        assert pricing.description is None
+
+    def test_explicit_description_preserved(self) -> None:
+        """A seller-provided description is not overwritten by the range."""
+        data = self._managed_byok()
+        data["description"] = "Free to $6 per call"
+        pricing = validate_pricing(data)
+        assert pricing.description == "Free to $6 per call"
 
     def test_channel_threads_through_composite(self) -> None:
         """`channel` propagates into nested children (e.g. a channel price inside `add`)."""
