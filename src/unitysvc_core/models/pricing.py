@@ -1378,11 +1378,41 @@ class ChannelPriceData(BasePriceData):
 
     @model_validator(mode="after")
     def _validate_default_and_price(self) -> ChannelPriceData:
-        """Require ``default`` to exist and auto-compute the nominal price from it."""
+        """Require ``default`` to exist and, when the seller set no summary
+        ``price``, auto-compute the nominal as the HIGHEST member price.
+
+        The nominal is a marketplace-comparison summary. Deriving it from the
+        ``default`` channel is misleading whenever the default is a *free*
+        channel — a common pattern is a free ``byok``/``apprise`` default plus a
+        paid ``…-plus`` channel, where the default's price is ``0`` and the
+        summary would read as "Free", hiding the paid channels. The highest
+        member price is the honest representative, consistent with how tiered /
+        graduated derive their nominal from their headline tier.
+        """
         if self.default not in self.channels:
             raise ValueError(f"default channel {self.default!r} is not defined in channels ({sorted(self.channels)})")
-        if self.price is None:
-            self.price = _extract_nominal_price(self.channels[self.default])
+        priced: list[tuple[Decimal, str]] = []
+        for child in self.channels.values():
+            nominal = _extract_nominal_price(child)
+            if nominal is None:
+                continue
+            try:
+                priced.append((Decimal(nominal), nominal))
+            except (InvalidOperation, TypeError):
+                continue
+        if priced:
+            lo_num, lo_str = min(priced, key=lambda p: p[0])
+            hi_num, hi_str = max(priced, key=lambda p: p[0])
+            # Nominal summary = the HIGHEST member price (honest representative).
+            if self.price is None:
+                self.price = hi_str
+            # When the seller wrote no description and the channels span a price
+            # range, describe that range ("Free - $0.001") so the marketplace
+            # doesn't collapse a mixed free/paid offering to a single figure.
+            if self.description is None and lo_num != hi_num:
+                lo = "Free" if lo_num == 0 else f"${lo_str}"
+                hi = "Free" if hi_num == 0 else f"${hi_str}"
+                self.description = f"{lo} - {hi}"
         return self
 
     def calculate_cost(
