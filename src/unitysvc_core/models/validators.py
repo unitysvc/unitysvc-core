@@ -252,6 +252,71 @@ def validate_channel_name(name: str, entity_type: str = "channel") -> str:
     return name
 
 
+# Marketplace description convention. The frontend renders the offering
+# ``description`` in two modes: a collapsed "list" view that shows only the
+# first paragraph, and an expanded view that shows every paragraph. So the
+# description must be split into ``\n\n``-separated paragraphs, with a short
+# first paragraph that stands alone as the list-view teaser and longer body
+# copy after it. Paragraphs are separated by a blank line (``\n\n``).
+DESCRIPTION_FIRST_PARAGRAPH_MAX_LEN = 200
+
+
+def validate_description(description: str, entity_type: str = "service") -> str:
+    """Validate the two-mode paragraph convention for a marketplace description.
+
+    The frontend shows only the first paragraph in its collapsed list view and
+    all paragraphs when expanded, so a conforming description must be:
+
+    - **At least two paragraphs**, separated by a blank line (``\\n\\n``).
+    - A **first paragraph under ``DESCRIPTION_FIRST_PARAGRAPH_MAX_LEN``
+      characters** — it is the standalone teaser shown in the list view.
+    - **Later paragraphs longer, in total, than the first** — the expanded
+      view must add substantive detail beyond the teaser.
+
+    Args:
+        description: The description text to validate.
+        entity_type: Label used in error messages (default ``"service"``).
+
+    Returns:
+        The description unchanged if valid.
+
+    Raises:
+        ValueError: If the description doesn't follow the convention.
+    """
+    paragraphs = [p.strip() for p in description.split("\n\n")]
+    paragraphs = [p for p in paragraphs if p]
+
+    if len(paragraphs) < 2:
+        raise ValueError(
+            f"The {entity_type} description must have at least two paragraphs "
+            f"separated by a blank line ('\\n\\n'): a short first paragraph shown "
+            f"in the collapsed list view, then one or more longer paragraphs shown "
+            f"when expanded. Found {len(paragraphs)} paragraph(s)."
+        )
+
+    first = paragraphs[0]
+    rest_len = sum(len(p) for p in paragraphs[1:])
+
+    if len(first) >= DESCRIPTION_FIRST_PARAGRAPH_MAX_LEN:
+        raise ValueError(
+            f"The first paragraph of the {entity_type} description is the "
+            f"collapsed list-view teaser and must be under "
+            f"{DESCRIPTION_FIRST_PARAGRAPH_MAX_LEN} characters; it is "
+            f"{len(first)}. Move detail into later paragraphs (separated by "
+            f"'\\n\\n')."
+        )
+
+    if rest_len <= len(first):
+        raise ValueError(
+            f"The {entity_type} description's later paragraphs ({rest_len} "
+            f"characters total) must be longer than the first paragraph "
+            f"({len(first)} characters): the first paragraph is a brief teaser, "
+            f"and the expanded view should add substantive detail."
+        )
+
+    return description
+
+
 SUPPORTED_SERVICE_OPTIONS: dict[str, type | tuple[type, ...]] = {
     "enrollment": dict,  # Per-enrollment config: {limit, limit_per_customer, limit_per_user}
     "routing_vars": dict,  # Seller-managed operational variables for template resolution at request time

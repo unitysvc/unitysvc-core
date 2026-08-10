@@ -1,7 +1,7 @@
 time_created = "2024-02-29T05:52:38.739683Z"
 name = "service1"
 service_type = "llm"
-description = "(chronos-13b-v2 + Nous-Hermes-Llama2-13b) 75/25 merge. This offers the imaginative writing style of chronos while still retaining coherency and being capable. Outputs are long and utilize exceptional prose."
+description = "A 75/25 merge of chronos-13b-v2 and Nous-Hermes-Llama2-13b, tuned for imaginative long-form writing.\n\nThis model offers the imaginative writing style of chronos while still retaining coherency and remaining broadly capable. Outputs are long and utilize exceptional prose, making it well suited to creative and narrative tasks."
 status = "ready"
 currency = "USD"
 

@@ -5,7 +5,9 @@ from __future__ import annotations
 import pytest
 
 from unitysvc_core.models.validators import (
+    DESCRIPTION_FIRST_PARAGRAPH_MAX_LEN,
     validate_channel_name,
+    validate_description,
     validate_listing_gateway_base_urls,
     validate_listing_jinja_var_references,
     validate_service_identifier,
@@ -367,3 +369,59 @@ class TestValidateChannelName:
     def test_uses_entity_type_in_error_message(self) -> None:
         with pytest.raises(ValueError, match="custom-label"):
             validate_channel_name("", "custom-label")
+
+
+class TestValidateDescription:
+    """Coverage for the two-mode marketplace description convention.
+
+    The frontend shows the first paragraph in a collapsed list view and all
+    paragraphs when expanded, so a description must be at least two
+    ``\\n\\n``-separated paragraphs, with a short first-paragraph teaser and
+    longer body copy after it.
+    """
+
+    def test_accepts_conforming_description(self) -> None:
+        first = "A brief teaser under two hundred characters."
+        body = "A much longer body paragraph that adds substantive detail well beyond the teaser above."
+        desc = f"{first}\n\n{body}"
+        assert validate_description(desc) == desc
+
+    def test_accepts_three_paragraphs(self) -> None:
+        desc = "Short teaser paragraph.\n\nSecond paragraph with detail.\n\nThird paragraph with even more."
+        assert validate_description(desc) == desc
+
+    def test_accepts_first_paragraph_just_under_limit(self) -> None:
+        first = "x" * (DESCRIPTION_FIRST_PARAGRAPH_MAX_LEN - 1)
+        body = "y" * DESCRIPTION_FIRST_PARAGRAPH_MAX_LEN
+        desc = f"{first}\n\n{body}"
+        assert validate_description(desc) == desc
+
+    @pytest.mark.parametrize(
+        "desc",
+        [
+            "Only one paragraph, no blank-line separator at all.",
+            "Two lines\nbut single newline, so still one paragraph.",
+            "Trailing separator collapses to one paragraph.\n\n",
+        ],
+    )
+    def test_rejects_fewer_than_two_paragraphs(self, desc: str) -> None:
+        with pytest.raises(ValueError, match="at least two paragraphs"):
+            validate_description(desc)
+
+    def test_rejects_long_first_paragraph(self) -> None:
+        first = "x" * DESCRIPTION_FIRST_PARAGRAPH_MAX_LEN  # exactly the limit is too long
+        body = "y" * (DESCRIPTION_FIRST_PARAGRAPH_MAX_LEN + 50)
+        desc = f"{first}\n\n{body}"
+        with pytest.raises(ValueError, match="must be under"):
+            validate_description(desc)
+
+    def test_rejects_rest_not_longer_than_first(self) -> None:
+        first = "This first paragraph is fairly long but under the limit."
+        body = "Too short."
+        desc = f"{first}\n\n{body}"
+        with pytest.raises(ValueError, match="must be longer than the first"):
+            validate_description(desc)
+
+    def test_uses_entity_type_in_error_message(self) -> None:
+        with pytest.raises(ValueError, match="offering"):
+            validate_description("only one paragraph", "offering")
