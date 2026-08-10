@@ -1,5 +1,5 @@
 {
-  "description": "State-of-the-art image generation model with exceptional quality and prompt adherence. Capable of producing photorealistic images, artwork, and creative visuals.",
+  "description": "State-of-the-art image generation model with exceptional quality and prompt adherence.\n\nCapable of producing photorealistic images, detailed artwork, and creative visuals from natural-language prompts, with strong adherence to fine-grained compositional detail.",
   "details": {
     "contextLength": 512,
     "defaultPrecision": "FP16",

@@ -6,7 +6,7 @@ from pydantic import ConfigDict, Field, HttpUrl, field_validator
 from .documents import DocumentData
 from .offering_data import ServiceOfferingData
 from .pricing import Pricing
-from .validators import validate_channel_name, validate_service_identifier
+from .validators import validate_channel_name, validate_description, validate_service_identifier
 
 
 class OfferingV1(ServiceOfferingData):
@@ -74,6 +74,18 @@ class OfferingV1(ServiceOfferingData):
         ``validate_service_identifier`` for full rules.
         """
         return validate_service_identifier(v, "service")
+
+    @field_validator("description")
+    @classmethod
+    def validate_description_format(cls, v: str) -> str:
+        """Enforce the two-mode marketplace description convention.
+
+        The frontend renders the description in a collapsed list view (first
+        paragraph only) and an expanded view (all paragraphs), so it must have a
+        short teaser paragraph followed by longer body copy. See
+        ``validate_description``.
+        """
+        return validate_description(v, "service")
 
     @field_validator("upstream_access_config")
     @classmethod
