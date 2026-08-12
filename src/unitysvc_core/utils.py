@@ -195,42 +195,66 @@ def expand_presets(
 ) -> Any:
     """Recursively replace preset sentinel nodes with their expanded values.
 
-    A **preset sentinel** is a dict containing exactly one ``$<fn_name>``
-    key where ``<fn_name>`` matches an entry in ``preset_fns``. The
-    value under that key is passed as the single positional argument
-    to the function; the return value replaces the whole sentinel
-    node.
+    A **preset sentinel** is a dict containing a ``$<fn_name>`` key where
+    ``<fn_name>`` matches an entry in ``preset_fns``. The value under that key
+    is passed as the single positional argument to the function.
 
+    - When ``$<fn>`` is the dict's **only** key, the function's return value
+      replaces the whole node (the common case).
+    - When ``$<fn>`` appears **alongside other ("sibling") keys**, the sibling
+      keys are treated as per-field overrides merged onto the expanded record::
+
+          {"$doc_preset": "llm_code_example_openai", "meta": {"sleep_after_test": 5}}
+
+      is equivalent to nesting the override in the sentinel value::
+
+          {"$doc_preset": {"name": "llm_code_example_openai", "meta": {"sleep_after_test": 5}}}
+
+      Siblings win over the expanded record's fields; ``meta`` is shallow-merged
+      (so a preset's own ``meta`` — e.g. ``requirements`` — is preserved
+      alongside sibling ``meta``). Sibling values are themselves expanded first,
+      so a sibling may contain nested presets. This only applies when the preset
+      expands to a dict (``$doc_preset``); a preset returning a scalar
+      (``$file_preset``) with siblings raises, since there is nothing to merge.
+    - At most one ``$<registered-fn>`` key may appear per dict.
     - Non-sentinel dicts and lists are walked recursively.
     - Scalars pass through unchanged.
     - ``$``-prefixed keys that do not match a registered function are
       treated as ordinary data (so Mongo-style operators etc. do not
       collide with the walker).
-    - A dict carrying a ``$<fn>`` key *alongside* other keys is a
-      footgun — raise :class:`ValueError` instead of silently
-      ignoring the preset call.
 
     The input is never mutated; a new structure is returned.
     """
     if isinstance(data, dict):
-        if len(data) == 1:
-            (only_key,) = data.keys()
-            if isinstance(only_key, str) and only_key.startswith("$"):
-                fn_name = only_key[1:]
-                fn = preset_fns.get(fn_name)
-                if fn is not None:
-                    return fn(expand_presets(data[only_key], preset_fns))
-
-        for key in data:
-            if isinstance(key, str) and key.startswith("$"):
-                fn_name = key[1:]
-                if fn_name in preset_fns:
-                    raise ValueError(
-                        f"Preset sentinel key {key!r} must appear alone in its "
-                        f"dict — found alongside {sorted(k for k in data if k != key)!r}. "
-                        "If you meant per-field overrides, nest them inside the "
-                        f"sentinel value: {{{key!r}: {{'name': '<preset>', <override>: ...}}}}."
-                    )
+        sentinel_keys = [
+            key for key in data if isinstance(key, str) and key.startswith("$") and key[1:] in preset_fns
+        ]
+        if len(sentinel_keys) > 1:
+            raise ValueError(
+                f"A dict may carry at most one preset sentinel key; found {sorted(sentinel_keys)!r}."
+            )
+        if sentinel_keys:
+            key = sentinel_keys[0]
+            fn = preset_fns[key[1:]]
+            expanded = fn(expand_presets(data[key], preset_fns))
+            siblings = {k: expand_presets(v, preset_fns) for k, v in data.items() if k != key}
+            if not siblings:
+                return expanded
+            # Sibling keys are per-field overrides merged onto the expanded
+            # record. Requires a dict result (e.g. $doc_preset); a scalar result
+            # (e.g. $file_preset) has nothing to merge into.
+            if not isinstance(expanded, dict):
+                raise ValueError(
+                    f"Preset {key!r} expands to a {type(expanded).__name__}, which cannot take "
+                    f"sibling overrides {sorted(siblings)!r}. Use {key!r} as the dict's only key."
+                )
+            merged = dict(expanded)
+            for k, value in siblings.items():
+                if k == "meta" and isinstance(value, dict) and isinstance(merged.get("meta"), dict):
+                    merged["meta"] = {**merged["meta"], **value}
+                else:
+                    merged[k] = value
+            return merged
 
         return {key: expand_presets(value, preset_fns) for key, value in data.items()}
 

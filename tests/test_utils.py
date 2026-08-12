@@ -230,9 +230,49 @@ def test_expand_presets_does_not_mutate_input() -> None:
     assert json.dumps(original, sort_keys=True) == before
 
 
-def test_expand_presets_rejects_mixed_sentinel_keys() -> None:
-    node = {"$doc_preset": "s3_connectivity", "category": "extra"}
-    with pytest.raises(ValueError, match="must appear alone in its dict"):
+def test_expand_presets_sibling_keys_merge_onto_record() -> None:
+    # Sibling keys alongside $doc_preset are per-field overrides merged onto
+    # the expanded record (siblings win).
+    node = {"$doc_preset": "s3_code_example", "description": "ours", "is_public": False}
+    record = expand_presets(node)
+    assert record["description"] == "ours"
+    assert record["is_public"] is False
+    assert record["category"] == "code_example"
+
+
+def test_expand_presets_sibling_meta_is_shallow_merged() -> None:
+    # meta merges (preset's own meta preserved) rather than being replaced.
+    node = {"$doc_preset": "s3_connectivity", "meta": {"sleep_after_test": 5}}
+    record = expand_presets(node)
+    assert record["meta"]["sleep_after_test"] == 5
+    # The preset's own meta keys survive the merge.
+    assert record["meta"]["requirements"] == ["boto3"]
+
+
+def test_expand_presets_sibling_form_equivalent_to_nested() -> None:
+    sibling = expand_presets({"$doc_preset": "s3_connectivity", "meta": {"sleep_after_test": 5}})
+    nested = expand_presets({"$doc_preset": {"name": "s3_connectivity", "meta": {"sleep_after_test": 5}}})
+    assert sibling == nested
+
+
+def test_expand_presets_sibling_values_are_expanded() -> None:
+    # A sibling value may itself contain a nested preset; it is expanded too.
+    node = {"$doc_preset": "s3_connectivity", "extra": {"$file_preset": "s3_connectivity_v1"}}
+    record = expand_presets(node)
+    assert isinstance(record["extra"], str)
+    assert "boto3" in record["extra"]
+
+
+def test_expand_presets_rejects_multiple_sentinel_keys() -> None:
+    node = {"$doc_preset": "s3_connectivity", "$file_preset": "s3_connectivity_v1"}
+    with pytest.raises(ValueError, match="at most one preset sentinel"):
+        expand_presets(node)
+
+
+def test_expand_presets_file_preset_with_siblings_raises() -> None:
+    # $file_preset expands to a string; there is nothing to merge siblings into.
+    node = {"$file_preset": "s3_connectivity_v1", "meta": {"sleep_after_test": 5}}
+    with pytest.raises(ValueError, match="cannot take sibling overrides"):
         expand_presets(node)
 
 
