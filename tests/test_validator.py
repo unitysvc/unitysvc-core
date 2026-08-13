@@ -1540,3 +1540,49 @@ class TestSvcpassDisposition:
     def test_override_disposition_skips_forward_gate(self, validator):
         data = self._offering("${ secrets.KEY }", base_url="https://evil.example.com")
         assert validator.validate_forward_disposition(data) == []
+
+    # ---- __sigv4__ (#1786) ----
+
+    def _sigv4_offering(self, **overrides):
+        iface = {
+            "access_method": "http",
+            "base_url": "https://bedrock-runtime.us-east-1.amazonaws.com/model/m1",
+            "api_key": "__sigv4__",
+            "access_key": "${ customer_secrets.AWS_ACCESS_KEY_ID }",
+            "secret_key": "${ customer_secrets.AWS_SECRET_ACCESS_KEY }",
+            "region": "us-east-1",
+            "sigv4_service": "bedrock",
+        }
+        iface.update(overrides)
+        iface = {k: v for k, v in iface.items() if v is not None}
+        return {"upstream_access_config": {"converse": iface}}
+
+    def test_sigv4_sentinel_accepted_as_disposition(self, validator):
+        data = self._sigv4_offering()
+        assert validator.validate_api_key_secrets(data) == []
+        assert validator.validate_sigv4_disposition(data) == []
+
+    def test_sigv4_region_and_session_token_optional(self, validator):
+        data = self._sigv4_offering(region=None)
+        assert validator.validate_sigv4_disposition(data) == []
+
+    def test_sigv4_missing_service_rejected(self, validator):
+        errors = validator.validate_sigv4_disposition(self._sigv4_offering(sigv4_service=None))
+        assert errors and "'sigv4_service'" in errors[0]
+
+    def test_sigv4_missing_or_empty_credentials_rejected(self, validator):
+        errors = validator.validate_sigv4_disposition(self._sigv4_offering(access_key=None))
+        assert errors and "'access_key'" in errors[0]
+        errors = validator.validate_sigv4_disposition(self._sigv4_offering(secret_key="  "))
+        assert errors and "'secret_key'" in errors[0]
+
+    def test_sigv4_gate_skips_other_dispositions(self, validator):
+        data = self._offering("${ secrets.KEY }")
+        assert validator.validate_sigv4_disposition(data) == []
+        data = self._offering("__strip__")
+        assert validator.validate_sigv4_disposition(data) == []
+
+    def test_sigv4_sentinel_outside_upstream_is_reserved(self, validator):
+        data = {"service_options": {"ops_testing_parameters": {"api_key": "__sigv4__"}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert errors and "secrets reference format" in errors[0]
