@@ -12,11 +12,20 @@ from jsonschema.validators import Draft7Validator
 
 from .utils import SCHEMA_TO_STEM, load_data_file, schema_for_path
 
-# svcpass api_key dispositions (#1198). On an upstream_access_config interface
-# these literal values are not credentials: "" / "__strip__" strip the
-# svcpass-bearing header, "__forward__" forwards svcpass verbatim. Any other
-# value is an override credential (a secrets reference).
-DISPOSITION_VALUES = ("", "__strip__", "__forward__")
+# svcpass api_key dispositions (#1198, #1786). On an upstream_access_config
+# interface these literal values are not credentials: "" / "__strip__" strip
+# the svcpass-bearing header, "__forward__" forwards svcpass verbatim, and
+# "__sigv4__" strips the client credential and re-signs the finalized request
+# with AWS SigV4 from the channel's access_key / secret_key /
+# session_token (optional) / region (optional, default us-east-1) /
+# sigv4_service fields. Any other value is an override credential (a secrets
+# reference).
+DISPOSITION_VALUES = ("", "__strip__", "__forward__", "__sigv4__")
+
+# Channel fields the "__sigv4__" disposition requires (see
+# validate_sigv4_disposition): without them the gateway cannot sign and
+# fails the request at dispatch time — catch it at authoring time instead.
+SIGV4_REQUIRED_FIELDS = ("access_key", "secret_key", "sigv4_service")
 
 # Platform hosts svcpass may be forwarded to when api_key == "__forward__".
 # svcpass is a platform credential, so forwarding to anything else is a hard
@@ -346,6 +355,38 @@ class DataValidator:
                     f"'{host}' is not a trusted platform host (allowed suffixes: {allowed}). "
                     f"svcpass must never be forwarded to an external host."
                 )
+        return errors
+
+    def validate_sigv4_disposition(self, data: dict[str, Any]) -> list[str]:
+        """Require the SigV4 signing fields on a ``api_key == "__sigv4__"``
+        channel (#1786).
+
+        The gateway re-signs the finalized upstream request with AWS SigV4
+        built from the channel's ``access_key`` / ``secret_key`` (usually
+        secret references) and ``sigv4_service`` (the AWS service name in the
+        credential scope, e.g. ``"bedrock"``); ``region`` defaults to
+        us-east-1 and ``session_token`` is optional. A channel missing any
+        required field fails every request at dispatch time with a 500 —
+        catch it in the authoring/CI pass instead.
+        """
+        errors: list[str] = []
+        upstream = data.get("upstream_access_config")
+        if not isinstance(upstream, dict):
+            return errors
+        for iface_name, iface in upstream.items():
+            if not isinstance(iface, dict) or iface.get("api_key") != "__sigv4__":
+                continue
+            path = f"upstream_access_config.{iface_name}"
+            for field in SIGV4_REQUIRED_FIELDS:
+                value = iface.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    errors.append(
+                        f"Invalid '__sigv4__' disposition at '{path}.api_key': missing or "
+                        f"empty '{field}'. SigV4 signing requires "
+                        f"{', '.join(SIGV4_REQUIRED_FIELDS)} on the channel "
+                        f"(region is optional and defaults to us-east-1; "
+                        f"session_token is optional)."
+                    )
         return errors
 
     # Matches any ${ secrets... } or ${ customer_secrets... } expression —
@@ -866,6 +907,9 @@ class DataValidator:
 
         # Validate the __forward__ svcpass disposition only targets trusted hosts
         errors.extend(self.validate_forward_disposition(data))
+
+        # Validate the __sigv4__ disposition carries its signing fields
+        errors.extend(self.validate_sigv4_disposition(data))
 
         # Validate every ${ secrets.X } / ${ customer_secrets.X } in an
         # offering's upstream_access_config resolves to a plain identifier.
