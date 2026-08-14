@@ -10,7 +10,6 @@ from unitysvc_core.models.validators import (
     validate_description,
     validate_listing_gateway_base_urls,
     validate_listing_jinja_var_references,
-    validate_mcp_namespace,
     validate_mcp_offering,
     validate_service_identifier,
 )
@@ -439,47 +438,6 @@ class TestMcpEnumMembers:
         assert ServiceTypeEnum.mcp == "mcp"
 
 
-class TestValidateMcpNamespace:
-    """The ``routing_key.server`` namespace on an MCP user access interface.
-
-    The 24-char cap is load-bearing: the gateway exposes tools as
-    ``<namespace>__<tool>`` and MCP clients enforce a 64-char limit on tool
-    names, so the cap guarantees >=38 characters for the upstream name.
-    """
-
-    def test_valid_namespaces_return_no_errors(self) -> None:
-        assert validate_mcp_namespace("github", "routing_key.server") == []
-        assert validate_mcp_namespace("acme_tools", "routing_key.server") == []
-        assert validate_mcp_namespace("s3", "routing_key.server") == []
-        assert validate_mcp_namespace("0day", "routing_key.server") == []
-
-    def test_rejects_uppercase(self) -> None:
-        assert validate_mcp_namespace("GitHub", "routing_key.server") != []
-
-    def test_rejects_dots_and_hyphens(self) -> None:
-        assert validate_mcp_namespace("acme.tools", "routing_key.server") != []
-        assert validate_mcp_namespace("acme-tools", "routing_key.server") != []
-
-    def test_rejects_leading_underscore(self) -> None:
-        assert validate_mcp_namespace("_github", "routing_key.server") != []
-
-    def test_rejects_empty(self) -> None:
-        assert validate_mcp_namespace("", "routing_key.server") != []
-
-    def test_accepts_exactly_24_chars(self) -> None:
-        assert validate_mcp_namespace("a" * 24, "routing_key.server") == []
-
-    def test_rejects_over_24_chars_and_says_why(self) -> None:
-        errors = validate_mcp_namespace("a" * 25, "routing_key.server")
-        assert errors
-        assert "24" in errors[0]
-
-    def test_error_message_names_the_field(self) -> None:
-        errors = validate_mcp_namespace("Bad", "user_access_interfaces.x.routing_key.server")
-        assert errors
-        assert "user_access_interfaces.x.routing_key.server" in errors[0]
-
-
 def _mcp_offering(channel: str = "github", **overrides: object) -> dict:
     data: dict = {
         "service_type": "mcp",
@@ -525,14 +483,7 @@ class TestValidateMcpOffering:
         assert errors
         assert "access_method 'mcp'" in errors[0]
 
-    def test_channel_key_must_satisfy_namespace_grammar(self) -> None:
-        """Channel names normally allow '.', '-' and '/' — illegal in tool names."""
-        assert validate_mcp_offering(_mcp_offering("git.hub")) != []
-        assert validate_mcp_offering(_mcp_offering("git-hub")) != []
-        assert validate_mcp_offering(_mcp_offering("GitHub")) != []
 
-    def test_channel_key_over_24_chars_is_rejected(self) -> None:
-        assert validate_mcp_offering(_mcp_offering("a" * 25)) != []
 
     def test_underscored_channel_key_is_fine(self) -> None:
         assert validate_mcp_offering(_mcp_offering("acme_tools")) == []

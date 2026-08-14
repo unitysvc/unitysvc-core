@@ -252,46 +252,6 @@ def validate_channel_name(name: str, entity_type: str = "channel") -> str:
     return name
 
 
-# An MCP service's namespace is the ``routing_key.server`` value on its user
-# access interface. It plays the same role ``routing_key.username`` plays for
-# SMTP: the sole selector against a shared gateway ``base_url``. It also
-# prefixes every tool the MCP gateway exposes, as ``<namespace>__<tool>``.
-#
-# The 24-character cap is load-bearing, not cosmetic. MCP clients constrain
-# tool names to ``^[a-zA-Z0-9_-]{1,64}$``, so capping the namespace at 24
-# leaves at least 38 characters for the upstream tool name before the gateway
-# has to truncate-and-hash. (This is also why dots are excluded — the
-# ``seller.service.tool`` shape originally floated in unitysvc/unitysvc#1799
-# is not expressible in a client-legal tool name.)
-MCP_NAMESPACE_MAX_LEN = 24
-_MCP_NAMESPACE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]*$")
-
-
-def validate_mcp_namespace(namespace: str, field: str) -> list[str]:
-    """Validate an MCP service namespace.
-
-    Returns a list of error strings; empty when valid. Follows the
-    error-accumulating convention of the other listing-level validators
-    rather than raising, so a single validation pass can report every
-    problem in a spec at once.
-    """
-    if not namespace:
-        return [f"{field}: MCP namespace must not be empty"]
-    if len(namespace) > MCP_NAMESPACE_MAX_LEN:
-        return [
-            f"{field}: MCP namespace {namespace!r} is {len(namespace)} characters; "
-            f"the maximum is {MCP_NAMESPACE_MAX_LEN} so the gateway's exposed tool "
-            "name '<namespace>__<tool>' fits the 64-character MCP tool-name limit"
-        ]
-    if not _MCP_NAMESPACE_PATTERN.match(namespace):
-        return [
-            f"{field}: MCP namespace {namespace!r} must be lowercase ASCII "
-            "alphanumeric plus '_', starting with a letter or digit "
-            "(e.g. 'github', 'acme_tools')"
-        ]
-    return []
-
-
 # Marketplace description convention. The frontend renders the offering
 # ``description`` in two modes: a collapsed "list" view that shows only the
 # first paragraph, and an expanded view that shows every paragraph. So the
@@ -775,10 +735,12 @@ def validate_mcp_offering(data: dict[str, Any] | None) -> list[str]:
     enrolled in; the gateway resolves by ``service_id``, exactly as an
     interfaceless group member does (unitysvc/unitysvc#1715 Phase 3).
 
-    The **channel key is the namespace** — it prefixes every tool the gateway
-    exposes, as ``<channel>__<tool>`` — so it must satisfy the MCP namespace
-    grammar, which is stricter than the general channel-name grammar (no
-    ``.``, ``-`` or ``/``; those are illegal in MCP tool names).
+    The **channel key is the namespace** — the gateway exposes each tool as
+    ``<channel>__<tool>``. Channel keys are already validated by
+    ``validate_channel_name``; no extra grammar is enforced here. Note that
+    grammar permits ``.`` and ``/``, which are not legal in MCP tool names, so
+    the gateway is responsible for producing a client-legal tool name from the
+    channel key.
 
     The channel carries the *connection* (``base_url`` of the real upstream
     MCP server, ``transport``, auth headers). The pinned **tool manifest**
@@ -805,9 +767,6 @@ def validate_mcp_offering(data: dict[str, Any] | None) -> list[str]:
     channels = data.get("upstream_access_config")
     if not channels or not isinstance(channels, dict):
         return [*errors, "upstream_access_config: an MCP service must declare at least one channel"]
-
-    for channel_name in channels:
-        errors.extend(validate_mcp_namespace(channel_name, f"upstream_access_config.{channel_name}"))
 
     if not any(
         isinstance(cfg, dict) and cfg.get("access_method") == "mcp" for cfg in channels.values()
