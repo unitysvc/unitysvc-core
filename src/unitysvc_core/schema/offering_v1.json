@@ -803,6 +803,7 @@
         "jpeg",
         "png",
         "svg",
+        "webp",
         "url"
       ],
       "title": "MimeTypeEnum",

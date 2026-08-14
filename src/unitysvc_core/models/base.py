@@ -115,6 +115,7 @@ class MimeTypeEnum(StrEnum):
     jpeg = "jpeg"
     png = "png"
     svg = "svg"
+    webp = "webp"
     url = "url"
 
 
