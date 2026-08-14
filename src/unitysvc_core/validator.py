@@ -929,6 +929,13 @@ class DataValidator:
         connectivity_errors = self.validate_connectivity_test_exists(data, schema_name)
         errors.extend(connectivity_errors)
 
+        # MCP services are offering-only (unitysvc/unitysvc#1715): the channel
+        # key is the tool namespace, and there must be no user access interface.
+        if schema_name == "offering_v1":
+            from .models.validators import validate_mcp_offering
+
+            errors.extend(validate_mcp_offering(data))
+
         # Validate S3, SMTP, and API-gateway interfaces (listing_v1 only)
         if schema_name == "listing_v1":
             from .models.validators import (

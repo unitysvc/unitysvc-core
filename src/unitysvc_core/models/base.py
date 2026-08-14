@@ -20,6 +20,7 @@ class AccessMethodEnum(StrEnum):
     websocket = "websocket"
     grpc = "grpc"
     smtp = "smtp"
+    mcp = "mcp"  # Model Context Protocol (streamable HTTP / SSE)
 
 
 class CurrencyEnum(StrEnum):
@@ -285,6 +286,12 @@ class ServiceTypeEnum(StrEnum):
     # (e.g. resp:// direct-response endpoints). Used as routing-primitive test
     # fixtures and null/sink targets for /l/, /f/, and /t/.
     gateway = "gateway"
+
+    # === Agent tooling ===
+    # An MCP server's toolset, reached through the UnitySVC MCP gateway. One
+    # upstream server = one service; individual tools are catalog metadata,
+    # not separate services.
+    mcp = "mcp"
 
     # === Infrastructure services ===
     database = "database"  # Managed DB/cache access (SSH tunnel)

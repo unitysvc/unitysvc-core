@@ -10,6 +10,7 @@ from unitysvc_core.models.validators import (
     validate_description,
     validate_listing_gateway_base_urls,
     validate_listing_jinja_var_references,
+    validate_mcp_offering,
     validate_service_identifier,
 )
 
@@ -425,3 +426,64 @@ class TestValidateDescription:
     def test_uses_entity_type_in_error_message(self) -> None:
         with pytest.raises(ValueError, match="offering"):
             validate_description("only one paragraph", "offering")
+
+
+class TestMcpEnumMembers:
+    """MCP is a first-class access method and service type (unitysvc/unitysvc#1803)."""
+
+    def test_mcp_enum_members_exist(self) -> None:
+        from unitysvc_core.models.base import AccessMethodEnum, ServiceTypeEnum
+
+        assert AccessMethodEnum.mcp == "mcp"
+        assert ServiceTypeEnum.mcp == "mcp"
+
+
+def _mcp_offering(channel: str = "github", **overrides: object) -> dict:
+    data: dict = {
+        "service_type": "mcp",
+        "upstream_access_config": {
+            channel: {
+                "access_method": "mcp",
+                "transport": "streamable_http",
+                "base_url": "https://api.githubcopilot.com/mcp/",
+            }
+        },
+    }
+    data.update(overrides)
+    return data
+
+
+class TestValidateMcpOffering:
+    """MCP services are offering-only; the channel key is the tool namespace."""
+
+    def test_valid_mcp_offering_passes(self) -> None:
+        assert validate_mcp_offering(_mcp_offering()) == []
+
+    def test_non_mcp_offering_is_ignored(self) -> None:
+        assert validate_mcp_offering({"service_type": "llm"}) == []
+        assert validate_mcp_offering(None) == []
+
+    def test_rejects_user_access_interfaces(self) -> None:
+        """Customers reach MCP services through the gateway, never directly."""
+        offering = _mcp_offering(user_access_interfaces={"x": {"access_method": "mcp"}})
+        errors = validate_mcp_offering(offering)
+        assert errors
+        assert "user_access_interfaces" in errors[0]
+
+    def test_requires_at_least_one_channel(self) -> None:
+        assert validate_mcp_offering({"service_type": "mcp"}) != []
+        assert validate_mcp_offering({"service_type": "mcp", "upstream_access_config": {}}) != []
+
+    def test_requires_an_mcp_access_method_channel(self) -> None:
+        offering = {
+            "service_type": "mcp",
+            "upstream_access_config": {"github": {"access_method": "http"}},
+        }
+        errors = validate_mcp_offering(offering)
+        assert errors
+        assert "access_method 'mcp'" in errors[0]
+
+
+
+    def test_underscored_channel_key_is_fine(self) -> None:
+        assert validate_mcp_offering(_mcp_offering("acme_tools")) == []

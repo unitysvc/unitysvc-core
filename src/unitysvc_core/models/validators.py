@@ -726,6 +726,59 @@ def validate_listing_smtp_base_urls(user_access_interfaces: dict[str, Any] | Non
     return errors
 
 
+def validate_mcp_offering(data: dict[str, Any] | None) -> list[str]:
+    """Validate an MCP offering.
+
+    An MCP service is **offering-only**: it publishes upstream channels and no
+    ``user_access_interfaces``, because customers never address it directly.
+    They connect once to the MCP gateway and reach every service they are
+    enrolled in; the gateway resolves by ``service_id``, exactly as an
+    interfaceless group member does (unitysvc/unitysvc#1715 Phase 3).
+
+    The **channel key is the namespace** — the gateway exposes each tool as
+    ``<channel>__<tool>``. Channel keys are already validated by
+    ``validate_channel_name``; no extra grammar is enforced here. Note that
+    grammar permits ``.`` and ``/``, which are not legal in MCP tool names, so
+    the gateway is responsible for producing a client-legal tool name from the
+    channel key.
+
+    The channel carries the *connection* (``base_url`` of the real upstream
+    MCP server, ``transport``, auth headers). The pinned **tool manifest**
+    lives in ``details.tools`` instead — it is catalog-facing, carries no
+    secrets, and is served to clients via ``tools/list``, so it is kept out
+    of the secret-bearing channel config.
+
+    Returns a list of error messages (empty if all valid).
+    """
+    if not data or not isinstance(data, dict):
+        return []
+    if data.get("service_type") != "mcp":
+        return []
+
+    errors: list[str] = []
+
+    if data.get("user_access_interfaces"):
+        errors.append(
+            "user_access_interfaces: an MCP service must not declare user access "
+            "interfaces — customers reach MCP services through the gateway, never "
+            "directly. Publish upstream channels only."
+        )
+
+    channels = data.get("upstream_access_config")
+    if not channels or not isinstance(channels, dict):
+        return [*errors, "upstream_access_config: an MCP service must declare at least one channel"]
+
+    if not any(
+        isinstance(cfg, dict) and cfg.get("access_method") == "mcp" for cfg in channels.values()
+    ):
+        errors.append(
+            "upstream_access_config: an MCP service must have at least one channel "
+            "with access_method 'mcp'"
+        )
+
+    return errors
+
+
 # Slug pattern enforced on access interface names (the dictionary keys
 # of ``user_access_interfaces``). Names become the SDK handle for
 # routing — e.g. ``service.dispatch(interface="default")`` — so they
