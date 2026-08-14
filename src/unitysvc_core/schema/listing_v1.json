@@ -73,7 +73,8 @@
         "http",
         "websocket",
         "grpc",
-        "smtp"
+        "smtp",
+        "mcp"
       ],
       "title": "AccessMethodEnum",
       "type": "string"

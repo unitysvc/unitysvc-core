@@ -425,3 +425,13 @@ class TestValidateDescription:
     def test_uses_entity_type_in_error_message(self) -> None:
         with pytest.raises(ValueError, match="offering"):
             validate_description("only one paragraph", "offering")
+
+
+class TestMcpEnumMembers:
+    """MCP is a first-class access method and service type (unitysvc/unitysvc#1803)."""
+
+    def test_mcp_enum_members_exist(self) -> None:
+        from unitysvc_core.models.base import AccessMethodEnum, ServiceTypeEnum
+
+        assert AccessMethodEnum.mcp == "mcp"
+        assert ServiceTypeEnum.mcp == "mcp"
