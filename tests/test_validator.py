@@ -580,6 +580,36 @@ class TestServiceOptionsValidation:
         errors = validator.validate_service_options_keys(data, "listing_v1")
         assert errors == []
 
+    @pytest.mark.parametrize("visibility", ["public", "unlisted", "private"])
+    def test_default_visibility_accepted(self, schema_dir, example_data_dir, visibility):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"default_visibility": visibility},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert errors == []
+
+    def test_default_visibility_rejects_unknown_value(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"default_visibility": "hidden"},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "service_options.default_visibility must be one of" in errors[0]
+
+    def test_default_visibility_rejects_wrong_type(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"default_visibility": True},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "service_options.default_visibility must be str" in errors[0]
+
     def test_unrecognized_key_produces_error(self, schema_dir, example_data_dir):
         validator = DataValidator(example_data_dir, schema_dir)
         data = {
