@@ -766,6 +766,82 @@ def validate_listing_smtp_base_urls(user_access_interfaces: dict[str, Any] | Non
     return errors
 
 
+_MCP_GATEWAY_BASE_URL = "${MCP_GATEWAY_BASE_URL}"
+
+
+def validate_listing_mcp_base_urls(user_access_interfaces: dict[str, Any] | None) -> list[str]:
+    """Validate MCP gateway interfaces in listing_v1 user_access_interfaces.
+
+    An interface is treated as MCP if *either* signal is present — it declares
+    ``access_method: mcp``, or its ``base_url`` references the MCP gateway.
+    Checking both catches the two ways a spec can be half-converted: declaring
+    MCP while pointing somewhere else, and pointing at the MCP gateway without
+    declaring MCP. (The SMTP validator keys on base_url alone, so it silently
+    skips the first case; MCP should not inherit that gap.)
+
+    For each such interface:
+
+    - ``base_url`` must be exactly ``${MCP_GATEWAY_BASE_URL}`` — no path suffix.
+      MCP routing selects a service by ``routing_key.server``, not URL path.
+    - ``access_method`` must be ``mcp``.
+    - ``routing_key`` must be a dict with a non-empty ``server`` entry that
+      satisfies the MCP namespace grammar.
+
+    Returns a list of error messages (empty if all valid).
+    """
+    if not user_access_interfaces or not isinstance(user_access_interfaces, dict):
+        return []
+
+    errors: list[str] = []
+    for iface_name, iface in user_access_interfaces.items():
+        if not isinstance(iface, dict):
+            continue
+
+        access_method = iface.get("access_method")
+        base_url = iface.get("base_url", "")
+        if not isinstance(base_url, str):
+            base_url = ""
+
+        looks_like_mcp = access_method == "mcp" or _MCP_GATEWAY_BASE_URL in base_url
+        if not looks_like_mcp:
+            continue
+
+        field = f"user_access_interfaces.{iface_name}"
+
+        if access_method != "mcp":
+            errors.append(
+                f"{field}.access_method: an interface using "
+                f"'${{MCP_GATEWAY_BASE_URL}}' must declare access_method 'mcp' "
+                f"(got {access_method!r})"
+            )
+
+        if base_url != _MCP_GATEWAY_BASE_URL:
+            errors.append(
+                f"{field}.base_url: MCP gateway base_url must be exactly "
+                f"'${{MCP_GATEWAY_BASE_URL}}' with no path suffix — MCP routing "
+                f"uses routing_key.server, not URL path (got {base_url!r})"
+            )
+
+        routing_key = iface.get("routing_key")
+        if not isinstance(routing_key, dict):
+            errors.append(
+                f"{field}.routing_key: MCP gateway interface requires a "
+                f"'routing_key' dict with a 'server' entry — it is the namespace "
+                f"that selects this service and prefixes its tools"
+            )
+        else:
+            server = routing_key.get("server")
+            if not server or not isinstance(server, str):
+                errors.append(
+                    f"{field}.routing_key.server: MCP gateway interface requires "
+                    f"a non-empty 'server' in routing_key"
+                )
+            else:
+                errors.extend(validate_mcp_namespace(server, f"{field}.routing_key.server"))
+
+    return errors
+
+
 # Slug pattern enforced on access interface names (the dictionary keys
 # of ``user_access_interfaces``). Names become the SDK handle for
 # routing — e.g. ``service.dispatch(interface="default")`` — so they

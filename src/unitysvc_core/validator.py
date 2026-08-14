@@ -929,12 +929,13 @@ class DataValidator:
         connectivity_errors = self.validate_connectivity_test_exists(data, schema_name)
         errors.extend(connectivity_errors)
 
-        # Validate S3, SMTP, and API-gateway interfaces (listing_v1 only)
+        # Validate S3, SMTP, MCP, and API-gateway interfaces (listing_v1 only)
         if schema_name == "listing_v1":
             from .models.validators import (
                 validate_access_interface_names,
                 validate_listing_gateway_base_urls,
                 validate_listing_jinja_var_references,
+                validate_listing_mcp_base_urls,
                 validate_listing_s3_base_urls,
                 validate_listing_smtp_base_urls,
             )
@@ -944,6 +945,7 @@ class DataValidator:
             errors.extend(validate_listing_gateway_base_urls(uai))
             errors.extend(validate_listing_s3_base_urls(uai))
             errors.extend(validate_listing_smtp_base_urls(uai))
+            errors.extend(validate_listing_mcp_base_urls(uai))
             errors.extend(validate_listing_jinja_var_references(data))
             errors.extend(self.validate_listing_name_namespace(data, file_path))
 
