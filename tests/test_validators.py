@@ -10,8 +10,8 @@ from unitysvc_core.models.validators import (
     validate_description,
     validate_listing_gateway_base_urls,
     validate_listing_jinja_var_references,
-    validate_listing_mcp_base_urls,
     validate_mcp_namespace,
+    validate_mcp_offering,
     validate_service_identifier,
 )
 
@@ -480,77 +480,59 @@ class TestValidateMcpNamespace:
         assert "user_access_interfaces.x.routing_key.server" in errors[0]
 
 
-def _mcp_uai(server: str = "github") -> dict:
-    return {
-        "mcp_gateway": {
-            "access_method": "mcp",
-            "base_url": "${MCP_GATEWAY_BASE_URL}",
-            "routing_key": {"server": server},
-        }
-    }
-
-
-class TestValidateListingMcpBaseUrls:
-    """MCP interfaces must point at the shared gateway and carry a namespace."""
-
-    def test_valid_mcp_listing_passes(self) -> None:
-        assert validate_listing_mcp_base_urls(_mcp_uai()) == []
-
-    def test_requires_gateway_base_url(self) -> None:
-        uai = _mcp_uai()
-        uai["mcp_gateway"]["base_url"] = "https://example.com/mcp"
-        errors = validate_listing_mcp_base_urls(uai)
-        assert errors
-        assert "MCP_GATEWAY_BASE_URL" in errors[0]
-
-    def test_requires_routing_key_server(self) -> None:
-        uai = _mcp_uai()
-        del uai["mcp_gateway"]["routing_key"]
-        errors = validate_listing_mcp_base_urls(uai)
-        assert errors
-        assert "routing_key" in errors[0]
-        assert "server" in errors[0]
-
-    def test_requires_non_empty_routing_key_server(self) -> None:
-        uai = _mcp_uai()
-        uai["mcp_gateway"]["routing_key"] = {"server": ""}
-        assert validate_listing_mcp_base_urls(uai) != []
-
-    def test_propagates_namespace_grammar_errors(self) -> None:
-        errors = validate_listing_mcp_base_urls(_mcp_uai("Bad.Name"))
-        assert errors
-        assert "Bad.Name" in errors[0]
-
-    def test_non_mcp_interfaces_are_ignored(self) -> None:
-        assert validate_listing_mcp_base_urls({"api": {"access_method": "http"}}) == []
-
-    def test_flags_mcp_gateway_url_without_mcp_access_method(self) -> None:
-        """The half-converted case the SMTP validator would silently skip."""
-        uai = {
-            "x": {
-                "access_method": "http",
-                "base_url": "${MCP_GATEWAY_BASE_URL}",
-                "routing_key": {"server": "github"},
+def _mcp_offering(channel: str = "github", **overrides: object) -> dict:
+    data: dict = {
+        "service_type": "mcp",
+        "upstream_access_config": {
+            channel: {
+                "access_method": "mcp",
+                "transport": "streamable_http",
+                "base_url": "https://api.githubcopilot.com/mcp/",
             }
-        }
-        errors = validate_listing_mcp_base_urls(uai)
+        },
+    }
+    data.update(overrides)
+    return data
+
+
+class TestValidateMcpOffering:
+    """MCP services are offering-only; the channel key is the tool namespace."""
+
+    def test_valid_mcp_offering_passes(self) -> None:
+        assert validate_mcp_offering(_mcp_offering()) == []
+
+    def test_non_mcp_offering_is_ignored(self) -> None:
+        assert validate_mcp_offering({"service_type": "llm"}) == []
+        assert validate_mcp_offering(None) == []
+
+    def test_rejects_user_access_interfaces(self) -> None:
+        """Customers reach MCP services through the gateway, never directly."""
+        offering = _mcp_offering(user_access_interfaces={"x": {"access_method": "mcp"}})
+        errors = validate_mcp_offering(offering)
         assert errors
-        assert "access_method" in errors[0]
+        assert "user_access_interfaces" in errors[0]
 
-    def test_rejects_path_suffix_on_gateway_base_url(self) -> None:
-        uai = _mcp_uai()
-        uai["mcp_gateway"]["base_url"] = "${MCP_GATEWAY_BASE_URL}/github"
-        errors = validate_listing_mcp_base_urls(uai)
-        assert errors
-        assert "no path suffix" in errors[0]
+    def test_requires_at_least_one_channel(self) -> None:
+        assert validate_mcp_offering({"service_type": "mcp"}) != []
+        assert validate_mcp_offering({"service_type": "mcp", "upstream_access_config": {}}) != []
 
-    def test_none_and_empty_are_ignored(self) -> None:
-        assert validate_listing_mcp_base_urls(None) == []
-        assert validate_listing_mcp_base_urls({}) == []
-
-    def test_reports_every_bad_interface_not_just_the_first(self) -> None:
-        uai = {
-            "a": {"access_method": "mcp", "base_url": "https://x", "routing_key": {"server": "ok"}},
-            "b": {"access_method": "mcp", "base_url": "${MCP_GATEWAY_BASE_URL}"},
+    def test_requires_an_mcp_access_method_channel(self) -> None:
+        offering = {
+            "service_type": "mcp",
+            "upstream_access_config": {"github": {"access_method": "http"}},
         }
-        assert len(validate_listing_mcp_base_urls(uai)) == 2
+        errors = validate_mcp_offering(offering)
+        assert errors
+        assert "access_method 'mcp'" in errors[0]
+
+    def test_channel_key_must_satisfy_namespace_grammar(self) -> None:
+        """Channel names normally allow '.', '-' and '/' — illegal in tool names."""
+        assert validate_mcp_offering(_mcp_offering("git.hub")) != []
+        assert validate_mcp_offering(_mcp_offering("git-hub")) != []
+        assert validate_mcp_offering(_mcp_offering("GitHub")) != []
+
+    def test_channel_key_over_24_chars_is_rejected(self) -> None:
+        assert validate_mcp_offering(_mcp_offering("a" * 25)) != []
+
+    def test_underscored_channel_key_is_fine(self) -> None:
+        assert validate_mcp_offering(_mcp_offering("acme_tools")) == []
