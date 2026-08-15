@@ -317,7 +317,14 @@ def validate_description(description: str, entity_type: str = "service") -> str:
     return description
 
 
+# Values accepted by ``service_options.default_visibility`` — the visibility the
+# upload applies to the service. Mirrors the backend's ServiceVisibilityEnum;
+# ``private`` is settable only from service data (the seller CLI's
+# ``services set-visibility`` refuses it).
+SUPPORTED_DEFAULT_VISIBILITIES: tuple[str, ...] = ("public", "unlisted", "private")
+
 SUPPORTED_SERVICE_OPTIONS: dict[str, type | tuple[type, ...]] = {
+    "default_visibility": str,  # Visibility applied by upload: public | unlisted | private
     "enrollment": dict,  # Per-enrollment config: {limit, limit_per_customer, limit_per_user}
     "routing_vars": dict,  # Seller-managed operational variables for template resolution at request time
     "ops_testing_parameters": dict,
@@ -392,6 +399,14 @@ def validate_service_options(service_options: dict[str, Any] | None) -> list[str
             else:
                 type_name = expected_type.__name__
             errors.append(f"service_options.{key} must be {type_name}, got {type(value).__name__}")
+            continue
+
+        # Visibility is an allowlist, not just a string.
+        if key == "default_visibility" and value not in SUPPORTED_DEFAULT_VISIBILITIES:
+            errors.append(
+                f"service_options.default_visibility must be one of: "
+                f"{', '.join(SUPPORTED_DEFAULT_VISIBILITIES)}, got {value!r}"
+            )
             continue
 
         # Validate the nested enrollment config (limit*).
