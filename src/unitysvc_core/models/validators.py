@@ -252,6 +252,46 @@ def validate_channel_name(name: str, entity_type: str = "channel") -> str:
     return name
 
 
+# An MCP service's namespace is the ``routing_key.namespace`` value on its user
+# access interface. It plays the same role ``routing_key.username`` plays for
+# SMTP: the sole selector against a shared gateway ``base_url``. It also
+# prefixes every tool the MCP gateway exposes, as ``<namespace>__<tool>``.
+#
+# The 24-character cap is load-bearing, not cosmetic. MCP clients constrain
+# tool names to ``^[a-zA-Z0-9_-]{1,64}$``, so capping the namespace at 24
+# leaves at least 38 characters for the upstream tool name before the gateway
+# has to truncate-and-hash. (This is also why dots are excluded — the
+# ``seller.service.tool`` shape originally floated in unitysvc/unitysvc#1799
+# is not expressible in a client-legal tool name.)
+MCP_NAMESPACE_MAX_LEN = 24
+_MCP_NAMESPACE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]*$")
+
+
+def validate_mcp_namespace(namespace: str, field: str) -> list[str]:
+    """Validate an MCP service namespace.
+
+    Returns a list of error strings; empty when valid. Follows the
+    error-accumulating convention of the other listing-level validators
+    rather than raising, so a single validation pass can report every
+    problem in a spec at once.
+    """
+    if not namespace:
+        return [f"{field}: MCP namespace must not be empty"]
+    if len(namespace) > MCP_NAMESPACE_MAX_LEN:
+        return [
+            f"{field}: MCP namespace {namespace!r} is {len(namespace)} characters; "
+            f"the maximum is {MCP_NAMESPACE_MAX_LEN} so the gateway's exposed tool "
+            "name '<namespace>__<tool>' fits the 64-character MCP tool-name limit"
+        ]
+    if not _MCP_NAMESPACE_PATTERN.match(namespace):
+        return [
+            f"{field}: MCP namespace {namespace!r} must be lowercase ASCII "
+            "alphanumeric plus '_', starting with a letter or digit "
+            "(e.g. 'github', 'acme_tools')"
+        ]
+    return []
+
+
 # Marketplace description convention. The frontend renders the offering
 # ``description`` in two modes: a collapsed "list" view that shows only the
 # first paragraph, and an expanded view that shows every paragraph. So the
@@ -741,27 +781,22 @@ def validate_listing_smtp_base_urls(user_access_interfaces: dict[str, Any] | Non
     return errors
 
 
+_MCP_GATEWAY_BASE_URL = "${MCP_GATEWAY_BASE_URL}"
+
+
 def validate_mcp_offering(data: dict[str, Any] | None) -> list[str]:
-    """Validate an MCP offering.
+    """Validate the channel side of an MCP offering.
 
-    An MCP service is **offering-only**: it publishes upstream channels and no
-    ``user_access_interfaces``, because customers never address it directly.
-    They connect once to the MCP gateway and reach every service they are
-    enrolled in; the gateway resolves by ``service_id``, exactly as an
-    interfaceless group member does (unitysvc/unitysvc#1715 Phase 3).
+    An MCP service reaches its upstream through a channel with
+    ``access_method: mcp`` — that channel carries the *connection* (the real
+    MCP server's ``base_url``, ``transport``, auth headers), while the pinned
+    tool manifest lives in ``details.tools``: catalog-facing, secret-free, and
+    servable to clients as ``tools/list`` even when the upstream is down.
 
-    The **channel key is the namespace** — the gateway exposes each tool as
-    ``<channel>__<tool>``. Channel keys are already validated by
-    ``validate_channel_name``; no extra grammar is enforced here. Note that
-    grammar permits ``.`` and ``/``, which are not legal in MCP tool names, so
-    the gateway is responsible for producing a client-legal tool name from the
-    channel key.
-
-    The channel carries the *connection* (``base_url`` of the real upstream
-    MCP server, ``transport``, auth headers). The pinned **tool manifest**
-    lives in ``details.tools`` instead — it is catalog-facing, carries no
-    secrets, and is served to clients via ``tools/list``, so it is kept out
-    of the secret-bearing channel config.
+    The customer-facing side is a single user access interface pointing at the
+    shared MCP gateway; :func:`validate_listing_mcp_base_urls` validates that,
+    including the ``routing_key.namespace`` that selects this service and
+    prefixes its tools (unitysvc/unitysvc#1803).
 
     Returns a list of error messages (empty if all valid).
     """
@@ -770,26 +805,92 @@ def validate_mcp_offering(data: dict[str, Any] | None) -> list[str]:
     if data.get("service_type") != "mcp":
         return []
 
-    errors: list[str] = []
-
-    if data.get("user_access_interfaces"):
-        errors.append(
-            "user_access_interfaces: an MCP service must not declare user access "
-            "interfaces — customers reach MCP services through the gateway, never "
-            "directly. Publish upstream channels only."
-        )
-
     channels = data.get("upstream_access_config")
     if not channels or not isinstance(channels, dict):
-        return [*errors, "upstream_access_config: an MCP service must declare at least one channel"]
+        return ["upstream_access_config: an MCP service must declare at least one channel"]
 
     if not any(
         isinstance(cfg, dict) and cfg.get("access_method") == "mcp" for cfg in channels.values()
     ):
-        errors.append(
+        return [
             "upstream_access_config: an MCP service must have at least one channel "
             "with access_method 'mcp'"
-        )
+        ]
+
+    return []
+
+
+def validate_listing_mcp_base_urls(user_access_interfaces: dict[str, Any] | None) -> list[str]:
+    """Validate MCP gateway interfaces in listing_v1 user_access_interfaces.
+
+    An interface is treated as MCP if *either* signal is present — it declares
+    ``access_method: mcp``, or its ``base_url`` references the MCP gateway.
+    Checking both catches the two ways a spec can be half-converted: declaring
+    MCP while pointing somewhere else, and pointing at the MCP gateway without
+    declaring MCP. (The SMTP validator keys on base_url alone, so it silently
+    skips the first case; MCP should not inherit that gap.)
+
+    For each such interface:
+
+    - ``base_url`` must be exactly ``${MCP_GATEWAY_BASE_URL}`` — no path suffix.
+      MCP routing selects a service by ``routing_key.namespace``, not URL path.
+    - ``access_method`` must be ``mcp``.
+    - ``routing_key`` must be a dict with a non-empty ``namespace`` entry that
+      satisfies the MCP namespace grammar.
+
+    Returns a list of error messages (empty if all valid).
+    """
+    if not user_access_interfaces or not isinstance(user_access_interfaces, dict):
+        return []
+
+    errors: list[str] = []
+    for iface_name, iface in user_access_interfaces.items():
+        if not isinstance(iface, dict):
+            continue
+
+        access_method = iface.get("access_method")
+        base_url = iface.get("base_url", "")
+        if not isinstance(base_url, str):
+            base_url = ""
+
+        looks_like_mcp = access_method == "mcp" or _MCP_GATEWAY_BASE_URL in base_url
+        if not looks_like_mcp:
+            continue
+
+        field = f"user_access_interfaces.{iface_name}"
+
+        if access_method != "mcp":
+            errors.append(
+                f"{field}.access_method: an interface using "
+                f"'${{MCP_GATEWAY_BASE_URL}}' must declare access_method 'mcp' "
+                f"(got {access_method!r})"
+            )
+
+        if base_url != _MCP_GATEWAY_BASE_URL:
+            errors.append(
+                f"{field}.base_url: MCP gateway base_url must be exactly "
+                f"'${{MCP_GATEWAY_BASE_URL}}' with no path suffix — MCP routing "
+                f"uses routing_key.namespace, not URL path (got {base_url!r})"
+            )
+
+        routing_key = iface.get("routing_key")
+        if not isinstance(routing_key, dict):
+            errors.append(
+                f"{field}.routing_key: MCP gateway interface requires a "
+                f"'routing_key' dict with a 'namespace' entry — it is the namespace "
+                f"that selects this service and prefixes its tools"
+            )
+        else:
+            namespace = routing_key.get("namespace")
+            if not namespace or not isinstance(namespace, str):
+                errors.append(
+                    f"{field}.routing_key.namespace: MCP gateway interface requires "
+                    f"a non-empty 'namespace' in routing_key"
+                )
+            else:
+                errors.extend(
+                    validate_mcp_namespace(namespace, f"{field}.routing_key.namespace")
+                )
 
     return errors
 
