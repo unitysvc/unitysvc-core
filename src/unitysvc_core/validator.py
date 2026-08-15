@@ -921,6 +921,14 @@ class DataValidator:
         llm_metadata_errors = self.validate_llm_offering_metadata(data, schema_name)
         errors.extend(llm_metadata_errors)
 
+        # Validate MCP offerings declare an mcp upstream channel (offering_v1
+        # only); the customer-facing gateway interface is checked below with
+        # the other listing_v1 interface rules.
+        if schema_name == "offering_v1":
+            from .models.validators import validate_mcp_offering
+
+            errors.extend(validate_mcp_offering(data))
+
         # Validate service_options keys and value types (listing_v1 only)
         service_options_errors = self.validate_service_options_keys(data, schema_name)
         errors.extend(service_options_errors)
@@ -929,19 +937,13 @@ class DataValidator:
         connectivity_errors = self.validate_connectivity_test_exists(data, schema_name)
         errors.extend(connectivity_errors)
 
-        # MCP services are offering-only (unitysvc/unitysvc#1715): the channel
-        # key is the tool namespace, and there must be no user access interface.
-        if schema_name == "offering_v1":
-            from .models.validators import validate_mcp_offering
-
-            errors.extend(validate_mcp_offering(data))
-
-        # Validate S3, SMTP, and API-gateway interfaces (listing_v1 only)
+        # Validate S3, SMTP, MCP, and API-gateway interfaces (listing_v1 only)
         if schema_name == "listing_v1":
             from .models.validators import (
                 validate_access_interface_names,
                 validate_listing_gateway_base_urls,
                 validate_listing_jinja_var_references,
+                validate_listing_mcp_base_urls,
                 validate_listing_s3_base_urls,
                 validate_listing_smtp_base_urls,
             )
@@ -951,6 +953,7 @@ class DataValidator:
             errors.extend(validate_listing_gateway_base_urls(uai))
             errors.extend(validate_listing_s3_base_urls(uai))
             errors.extend(validate_listing_smtp_base_urls(uai))
+            errors.extend(validate_listing_mcp_base_urls(uai))
             errors.extend(validate_listing_jinja_var_references(data))
             errors.extend(self.validate_listing_name_namespace(data, file_path))
 
