@@ -631,6 +631,27 @@ class TestServiceOptionsValidation:
         assert len(errors) == 1
         assert "service_options.enrollment.limit must be int, got str" in errors[0]
 
+    def test_enrollment_required_bool_is_accepted(self, schema_dir, example_data_dir):
+        """The declared enrollment gate (unitysvc#1842): services whose gate is
+        enforced outside the routing layer (e.g. MCP, unitysvc#1803) declare it
+        beside the enrollment limits."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"enrollment": {"required": True, "limit_per_customer": 5}},
+        }
+        assert validator.validate_service_options_keys(data, "listing_v1") == []
+
+    def test_enrollment_required_must_be_bool(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {
+            "schema": "listing_v1",
+            "service_options": {"enrollment": {"required": "yes"}},
+        }
+        errors = validator.validate_service_options_keys(data, "listing_v1")
+        assert len(errors) == 1
+        assert "service_options.enrollment.required must be bool, got str" in errors[0]
+
     def test_wrong_type_ops_testing_parameters(self, schema_dir, example_data_dir):
         validator = DataValidator(example_data_dir, schema_dir)
         data = {

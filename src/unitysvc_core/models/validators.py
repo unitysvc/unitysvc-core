@@ -372,7 +372,7 @@ SUPPORTED_DEFAULT_VISIBILITIES: tuple[str, ...] = ("public", "unlisted", "privat
 
 SUPPORTED_SERVICE_OPTIONS: dict[str, type | tuple[type, ...]] = {
     "default_visibility": str,  # Visibility applied by upload: public | unlisted | private
-    "enrollment": dict,  # Per-enrollment config: {limit, limit_per_customer, limit_per_user}
+    "enrollment": dict,  # Per-enrollment config: {limit, limit_per_customer, limit_per_user, required}
     "routing_vars": dict,  # Seller-managed operational variables for template resolution at request time
     "ops_testing_parameters": dict,
     "prompt_recurrence": bool,  # Prompt recurrence options during enrollment
@@ -386,6 +386,12 @@ SUPPORTED_ENROLLMENT_OPTIONS: dict[str, type | tuple[type, ...]] = {
     "limit": int,  # global active-enrollment cap per service
     "limit_per_customer": int,
     "limit_per_user": int,
+    # Declares that using the service requires an enrollment even when no
+    # structural trigger (required params, enrollment templates, an enrollable
+    # channel) exists — for services whose gate is enforced outside the routing
+    # layer, e.g. MCP, where the gateway bounds tools/list by active
+    # enrollments (unitysvc#1803, unitysvc#1842). Only literal ``true`` gates.
+    "required": bool,
 }
 
 
