@@ -1,4 +1,5 @@
 {
+  "currency": "USD",
   "description": "State-of-the-art image generation model with exceptional quality and prompt adherence.\n\nCapable of producing photorealistic images, detailed artwork, and creative visuals from natural-language prompts, with strong adherence to fine-grained compositional detail.",
   "details": {
     "contextLength": 512,
@@ -21,16 +22,6 @@
     "supportsImageInput": false,
     "supportsTools": false
   },
-  "name": "service2",
-  "service_type": "image_generation",
-  "time_created": "2024-03-15T10:30:00.000Z",
-  "upstream_access_config": {
-    "fireworks-image-api": {
-      "access_method": "http",
-      "base_url": "https://api.fireworks.ai/inference/v1/image/generation",
-      "api_key": "${ secrets.FIREWORKS_API_KEY }"
-    }
-  },
   "documents": {
     "Python Code Example": {
       "category": "code_example",
@@ -41,11 +32,21 @@
       "mime_type": "python"
     }
   },
-  "currency": "USD",
+  "name": "service2",
   "payout_price": {
-    "type": "image",
+    "description": "Pricing Per Image",
     "price": "0.04",
-    "description": "Pricing Per Image"
+    "type": "image"
   },
-  "status": "ready"
+  "service_type": "image_generation",
+  "status": "ready",
+  "summary": "State-of-the-art image generation model with exceptional quality and prompt adherence.",
+  "time_created": "2024-03-15T10:30:00.000Z",
+  "upstream_access_config": {
+    "fireworks-image-api": {
+      "access_method": "http",
+      "api_key": "${ secrets.FIREWORKS_API_KEY }",
+      "base_url": "https://api.fireworks.ai/inference/v1/image/generation"
+    }
+  }
 }

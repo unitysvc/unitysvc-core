@@ -63,14 +63,20 @@ class ServiceOfferingData(BaseModel):
         description="Specific features this service provides (e.g., 'text_to_speech', 'embedding')",
     )
 
-    description: str | None = Field(
-        default=None,
-        description="Service description",
+    summary: str = Field(
+        max_length=200,
+        description=(
+            "One-line marketplace summary (max 200 characters) — shown on "
+            "collapsed catalog rows and cards. Required everywhere, "
+            "deliberately: the teaser is part of the offering, not an "
+            "optional garnish. Renames the vestigial ``tagline`` field "
+            "(unitysvc/unitysvc#1838)."
+        ),
     )
 
-    tagline: str | None = Field(
+    description: str | None = Field(
         default=None,
-        description="Short elevator pitch or description for the service",
+        description="Service description (long-form; the summary carries the teaser)",
     )
 
     # Status

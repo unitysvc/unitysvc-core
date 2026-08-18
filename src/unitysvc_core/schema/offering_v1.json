@@ -1352,7 +1352,7 @@
       "description": "Currency for payout_price"
     },
     "description": {
-      "description": "Service description",
+      "description": "Service description (long-form; the summary carries the teaser)",
       "title": "Description",
       "type": "string"
     },
@@ -1523,18 +1523,11 @@
       "default": "draft",
       "description": "Offering status: draft (skip publish), ready (for review), or deprecated (retired)"
     },
-    "tagline": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Short elevator pitch or description for the service",
-      "title": "Tagline"
+    "summary": {
+      "description": "One-line marketplace summary (max 200 characters) — shown on collapsed catalog rows and cards. Required everywhere, deliberately: the teaser is part of the offering, not an optional garnish. Renames the vestigial ``tagline`` field (unitysvc/unitysvc#1838).",
+      "maxLength": 200,
+      "title": "Summary",
+      "type": "string"
     },
     "tags": {
       "anyOf": [
@@ -1569,6 +1562,7 @@
   },
   "required": [
     "name",
+    "summary",
     "description",
     "upstream_access_config",
     "time_created"
