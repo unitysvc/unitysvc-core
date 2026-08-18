@@ -302,7 +302,14 @@ DESCRIPTION_FIRST_PARAGRAPH_MAX_LEN = 200
 
 
 def validate_description(description: str, entity_type: str = "service") -> str:
-    """Validate the two-mode paragraph convention for a marketplace description.
+    """DEPRECATED — the two-mode paragraph convention is retired.
+
+    The collapsed-view teaser is an explicit ``summary`` field on the offering
+    (unitysvc/unitysvc#1838); descriptions are free-form long-form text. This
+    validator is no longer wired to any model and remains only so external
+    imports don't break; it will be removed in a future release.
+
+    Validate the two-mode paragraph convention for a marketplace description.
 
     The frontend shows only the first paragraph in its collapsed list view and
     all paragraphs when expanded, so a conforming description must be:
