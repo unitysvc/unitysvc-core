@@ -65,7 +65,7 @@ from .promotion_data import (
     strip_schema_field,
     validate_promotion,
 )
-from .provider_data import ProviderData
+from .provider_data import ProviderAccountRateLimit, ProviderData
 from .provider_v1 import ProviderV1
 from .service import (
     AccessInterfaceData,
@@ -99,6 +99,7 @@ __all__ = [
     "PromotionV1",
     "ServiceGroupV1",
     # Data models (for API/backend use)
+    "ProviderAccountRateLimit",
     "ProviderData",
     "ServiceOfferingData",
     "ServiceListingData",
