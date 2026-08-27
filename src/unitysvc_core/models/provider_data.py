@@ -36,6 +36,16 @@ class ProviderAccountRateLimit(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    name: str = Field(
+        min_length=1,
+        max_length=100,
+        description=(
+            "Seller-scoped rate-limit bucket name. Channels reference this "
+            "name via rate_limit_refs / ops_rate_limit_refs; all matching refs "
+            "for the same seller consume the same live gateway bucket."
+        ),
+    )
+
     limit: int = Field(gt=0, description="Maximum allowed — in flight for `concurrent`, per window otherwise")
 
     unit: RateLimitUnitEnum = Field(description="What is being limited (requests, tokens, concurrent, …)")
