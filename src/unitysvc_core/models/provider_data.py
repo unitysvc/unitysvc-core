@@ -11,9 +11,63 @@ and `time_created` for data file validation.
 
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, model_validator
 
-from .base import ProviderStatusEnum
+from .base import ProviderStatusEnum, RateLimitUnitEnum, TimeWindowEnum
+
+
+class ProviderAccountRateLimit(BaseModel):
+    """One ceiling the provider grants the SELLER'S ACCOUNT.
+
+    This is the only rate limit a seller can state truthfully. Providers scope
+    their limits to the account that owns the upstream key — OpenAI, Groq and
+    Anthropic at the org level, Mistral per workspace, Parasail per account —
+    so the number belongs to the provider record, once, not to each of the
+    seller's services.
+
+    Declaring it per service is not merely coarse, it inverts: a 60 RPM account
+    ceiling written onto 18 services authorises 1080 RPM against an account
+    that grants 60. See unitysvc/unitysvc#1937.
+
+    What a seller CANNOT state is any individual customer's allowance — that
+    depends on how many customers are active at request time. The gateway
+    derives that from this ceiling; nobody authors it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = Field(gt=0, description="Maximum allowed — in flight for `concurrent`, per window otherwise")
+
+    unit: RateLimitUnitEnum = Field(description="What is being limited (requests, tokens, concurrent, …)")
+
+    window: TimeWindowEnum | None = Field(
+        default=None,
+        description="Time window. Omitted for `concurrent`, which is a gauge rather than a counter.",
+    )
+
+    description: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Where the number came from, e.g. the provider's published limit for this tier",
+    )
+
+    @model_validator(mode="after")
+    def _window_matches_unit(self) -> "ProviderAccountRateLimit":
+        """`concurrent` is a gauge; everything else is a windowed counter.
+
+        The distinction is load-bearing downstream, not pedantry: a concurrency
+        slot returns when the request finishes, so capacity lent to one caller
+        comes back within seconds. A windowed counter does not refill until the
+        window rolls, so the same lending starves later callers for the rest of
+        it. Requiring the field to match the unit stops a limit being authored
+        that the enforcement layer cannot honour as written.
+        """
+        if self.unit is RateLimitUnitEnum.concurrent:
+            if self.window is not None:
+                raise ValueError("`concurrent` is an in-flight gauge and takes no window; omit it")
+        elif self.window is None:
+            raise ValueError(f"`{self.unit.value}` is counted over a window; set `window`")
+        return self
 
 
 class ProviderData(BaseModel):
@@ -76,4 +130,16 @@ class ProviderData(BaseModel):
     documents: dict[str, dict[str, Any]] | None = Field(
         default=None,
         description="Documents associated with the provider, keyed by title",
+    )
+
+    # What the upstream grants this seller's account (unitysvc/unitysvc#1937).
+    # Omitted means "not declared", which the gateway reads as no enforcement —
+    # the same behaviour as today, but chosen rather than accidental.
+    rate_limits: list[ProviderAccountRateLimit] | None = Field(
+        default=None,
+        description=(
+            "Ceilings the provider grants the seller's account, shared by every service "
+            "and customer routed through that credential. Not per service, and not per "
+            "customer — the gateway derives a customer's share from these."
+        ),
     )

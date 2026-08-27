@@ -155,6 +155,54 @@
       "title": "MimeTypeEnum",
       "type": "string"
     },
+    "ProviderAccountRateLimit": {
+      "additionalProperties": false,
+      "description": "One ceiling the provider grants the SELLER'S ACCOUNT.\n\nThis is the only rate limit a seller can state truthfully. Providers scope\ntheir limits to the account that owns the upstream key — OpenAI, Groq and\nAnthropic at the org level, Mistral per workspace, Parasail per account —\nso the number belongs to the provider record, once, not to each of the\nseller's services.\n\nDeclaring it per service is not merely coarse, it inverts: a 60 RPM account\nceiling written onto 18 services authorises 1080 RPM against an account\nthat grants 60. See unitysvc/unitysvc#1937.\n\nWhat a seller CANNOT state is any individual customer's allowance — that\ndepends on how many customers are active at request time. The gateway\nderives that from this ceiling; nobody authors it.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 255,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Where the number came from, e.g. the provider's published limit for this tier",
+          "title": "Description"
+        },
+        "limit": {
+          "description": "Maximum allowed — in flight for `concurrent`, per window otherwise",
+          "exclusiveMinimum": 0,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "unit": {
+          "$ref": "#/$defs/RateLimitUnitEnum",
+          "description": "What is being limited (requests, tokens, concurrent, …)"
+        },
+        "window": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeWindowEnum"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Time window. Omitted for `concurrent`, which is a gauge rather than a counter."
+        }
+      },
+      "required": [
+        "limit",
+        "unit"
+      ],
+      "title": "ProviderAccountRateLimit",
+      "type": "object"
+    },
     "ProviderStatusEnum": {
       "description": "Status values that sellers can set for providers.\n\nSeller-accessible statuses:\n- draft: Work in progress, skipped during publish\n- ready: Complete and ready for admin review\n- deprecated: Provider is retired/end of life",
       "enum": [
@@ -163,6 +211,18 @@
         "deprecated"
       ],
       "title": "ProviderStatusEnum",
+      "type": "string"
+    },
+    "RateLimitUnitEnum": {
+      "enum": [
+        "requests",
+        "tokens",
+        "input_tokens",
+        "output_tokens",
+        "bytes",
+        "concurrent"
+      ],
+      "title": "RateLimitUnitEnum",
       "type": "string"
     },
     "ServicesPopulator": {
@@ -221,6 +281,17 @@
       },
       "title": "ServicesPopulator",
       "type": "object"
+    },
+    "TimeWindowEnum": {
+      "enum": [
+        "second",
+        "minute",
+        "hour",
+        "day",
+        "month"
+      ],
+      "title": "TimeWindowEnum",
+      "type": "string"
     }
   },
   "additionalProperties": false,
@@ -307,6 +378,22 @@
       "minLength": 2,
       "title": "Name",
       "type": "string"
+    },
+    "rate_limits": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/ProviderAccountRateLimit"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Ceilings the provider grants the seller's account, shared by every service and customer routed through that credential. Not per service, and not per customer — the gateway derives a customer's share from these.",
+      "title": "Rate Limits"
     },
     "secondary_contact_email": {
       "anyOf": [

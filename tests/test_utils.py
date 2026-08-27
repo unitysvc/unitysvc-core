@@ -359,7 +359,13 @@ def test_find_files_by_schema_returns_expanded_data(tmp_path: Path) -> None:
 
 
 def test_default_preset_fns_exports_doc_and_file() -> None:
-    assert set(DEFAULT_PRESET_FNS) == {"doc_preset", "file_preset"}
+    # Superset, not equality. The mapping is sourced from `unitysvc-data`
+    # (`_UNITYSVC_DATA_PRESET_FNS`), which grows on its own release cycle —
+    # asserting the exact set makes this test fail whenever that package adds
+    # a preset, which is what happened when `logo_preset` landed. What this
+    # test is named for, and what callers actually depend on, is that these two
+    # are exported.
+    assert {"doc_preset", "file_preset"} <= set(DEFAULT_PRESET_FNS)
 
 
 # =============================================================================
