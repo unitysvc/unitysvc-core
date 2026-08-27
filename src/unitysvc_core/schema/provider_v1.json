@@ -179,6 +179,13 @@
           "title": "Limit",
           "type": "integer"
         },
+        "name": {
+          "description": "Seller-scoped rate-limit bucket name. Channels reference this name via rate_limit_refs / ops_rate_limit_refs; all matching refs for the same seller consume the same live gateway bucket.",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
         "unit": {
           "$ref": "#/$defs/RateLimitUnitEnum",
           "description": "What is being limited (requests, tokens, concurrent, …)"
@@ -197,6 +204,7 @@
         }
       },
       "required": [
+        "name",
         "limit",
         "unit"
       ],

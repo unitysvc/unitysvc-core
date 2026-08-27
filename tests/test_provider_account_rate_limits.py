@@ -21,39 +21,46 @@ BASE = {
 
 
 def test_concurrency_needs_no_window() -> None:
-    limit = ProviderAccountRateLimit(limit=10, unit="concurrent")
+    limit = ProviderAccountRateLimit(name="fireworks_concurrency", limit=10, unit="concurrent")
+    assert limit.name == "fireworks_concurrency"
     assert limit.window is None
+
+
+def test_name_is_required() -> None:
+    with pytest.raises(ValidationError):
+        ProviderAccountRateLimit(limit=10, unit="concurrent")
 
 
 def test_concurrency_rejects_a_window() -> None:
     # A gauge has no window. Accepting one would let a seller author a limit
     # the enforcement layer cannot honour as written.
     with pytest.raises(ValidationError, match="takes no window"):
-        ProviderAccountRateLimit(limit=10, unit="concurrent", window="minute")
+        ProviderAccountRateLimit(name="fireworks_concurrency", limit=10, unit="concurrent", window="minute")
 
 
 @pytest.mark.parametrize("unit", ["requests", "tokens", "input_tokens", "output_tokens", "bytes"])
 def test_counted_units_require_a_window(unit: str) -> None:
     with pytest.raises(ValidationError, match="counted over a window"):
-        ProviderAccountRateLimit(limit=100, unit=unit)
-    assert ProviderAccountRateLimit(limit=100, unit=unit, window="minute").window is not None
+        ProviderAccountRateLimit(name=f"fireworks_{unit}", limit=100, unit=unit)
+    assert ProviderAccountRateLimit(name=f"fireworks_{unit}", limit=100, unit=unit, window="minute").window is not None
 
 
 def test_limit_must_be_positive() -> None:
     with pytest.raises(ValidationError):
-        ProviderAccountRateLimit(limit=0, unit="concurrent")
+        ProviderAccountRateLimit(name="fireworks_concurrency", limit=0, unit="concurrent")
 
 
 def test_unknown_field_is_rejected() -> None:
     # extra="forbid": a typo'd key must not silently become a limit nobody enforces,
     # which is the failure mode of the per-channel `rate_limits` this replaces.
     with pytest.raises(ValidationError):
-        ProviderAccountRateLimit(limit=10, unit="concurrent", scope="account")
+        ProviderAccountRateLimit(name="fireworks_concurrency", limit=10, unit="concurrent", scope="account")
 
 
 def test_provider_accepts_the_block() -> None:
-    provider = ProviderV1(**BASE, rate_limits=[{"limit": 10, "unit": "concurrent"}])
+    provider = ProviderV1(**BASE, rate_limits=[{"name": "fireworks_concurrency", "limit": 10, "unit": "concurrent"}])
     assert provider.rate_limits is not None
+    assert provider.rate_limits[0].name == "fireworks_concurrency"
     assert provider.rate_limits[0].limit == 10
 
 
@@ -67,9 +74,14 @@ def test_several_dimensions_coexist() -> None:
     provider = ProviderV1(
         **BASE,
         rate_limits=[
-            {"limit": 10, "unit": "concurrent", "description": "engine capacity"},
-            {"limit": 600, "unit": "requests", "window": "minute"},
-            {"limit": 60000, "unit": "input_tokens", "window": "minute"},
+            {
+                "name": "fireworks_concurrency",
+                "limit": 10,
+                "unit": "concurrent",
+                "description": "engine capacity",
+            },
+            {"name": "fireworks_perminute", "limit": 600, "unit": "requests", "window": "minute"},
+            {"name": "fireworks_input_tokens", "limit": 60000, "unit": "input_tokens", "window": "minute"},
         ],
     )
     assert [rl.unit.value for rl in provider.rate_limits] == [
