@@ -21,7 +21,6 @@ dependencies = [
   "email-validator",
   "jsonschema",
   "jinja2",
-  "json5",
   "tomli-w",
   # Presets exposed under $<fn> sentinels that load_data_file expands
   # transparently after parse + override-merge. The actual set of

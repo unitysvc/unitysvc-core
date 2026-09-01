@@ -59,7 +59,7 @@ pip install unitysvc-core
 ```
 
 Dependencies: `pydantic`, `email-validator`, `jsonschema`, `jinja2`,
-`json5`, `tomli-w`. No `typer`, no `rich`, no `httpx`.
+`tomli-w`. No `typer`, no `rich`, no `httpx`.
 
 ## Usage
 
