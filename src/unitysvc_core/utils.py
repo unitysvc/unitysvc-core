@@ -19,7 +19,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import json5
 import tomli_w
 
 # Presets discovered dynamically from unitysvc-data's registry. Any
@@ -297,7 +296,7 @@ def load_data_file(
     preset_fns: Mapping[str, Callable[[Any], Any]] | None = DEFAULT_PRESET_FNS,
 ) -> tuple[dict[str, Any], str]:
     """
-    Load a data file (JSON/JSON5 or TOML) and return (data, format).
+    Load a data file (JSON or TOML) and return (data, format).
 
     :func:`expand_presets` walks the result and replaces every
     ``$doc_preset`` / ``$file_preset`` sentinel with the matching preset
@@ -320,7 +319,7 @@ def load_data_file(
     """
     if file_path.suffix == ".json":
         with open(file_path, encoding="utf-8") as f:
-            data = json5.load(f)
+            data = json.load(f)
         file_format = "json"
     elif file_path.suffix == ".toml":
         with open(file_path, "rb") as f:
