@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedError
 from jsonschema.validators import Draft7Validator
 
-from .utils import SCHEMA_TO_STEM, load_data_file, schema_for_path
+from .utils import SCHEMA_TO_STEM, is_hidden_path, load_data_file, schema_for_path
 
 # svcpass api_key dispositions (#1198, #1786). On an upstream_access_config
 # interface these literal values are not credentials: "" / "__strip__" strip
@@ -1059,8 +1059,10 @@ class DataValidator:
 
         # Find all data and MD files recursively, skipping hidden directories
         for file_path in self.data_dir.rglob("*"):
-            # Skip hidden directories (those starting with .)
-            if any(part.startswith(".") for part in file_path.parts):
+            # Skip hidden directories (those starting with .) — relative to the
+            # data dir, so a catalog that itself lives under one (~/.cache/repo)
+            # still validates instead of silently reporting zero files.
+            if is_hidden_path(file_path, self.data_dir):
                 continue
 
             # Skip schema directory, docs directory, and pyproject.toml (not data files)
