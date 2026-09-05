@@ -357,9 +357,40 @@ def write_data_file(file_path: Path, data: dict[str, Any], format: str) -> None:
         raise ValueError(f"Unsupported format: {format}")
 
 
+def is_hidden_path(path: Path, root: Path | str) -> bool:
+    """True when *path* lies inside a dot-directory (or is a dot-file) under *root*.
+
+    Hidden directories are tooling territory, never catalog data — and the
+    expensive case is a **second copy of the catalog parked inside it**: a git
+    worktree at ``.claude/worktrees/<branch>/``, a ``.venv`` holding vendored
+    fixtures. Such a tree carries duplicate spec files whose listings have the
+    *same* ``listing.name``, so a walk that descends into one discovers every
+    service twice and a consumer that uploads what it finds races the stale
+    copy onto the real service's backend id.
+
+    The check is on the path **relative to the walk root**, so a catalog that
+    legitimately lives under a hidden directory (``~/.cache/repo/specs/…``) is
+    still discovered in full. Paths outside *root* are kept: the caller named
+    them explicitly rather than finding them by walking.
+    """
+    path = Path(path)
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        try:
+            rel = path.resolve().relative_to(Path(root).resolve())
+        except ValueError:
+            return False
+    return any(part.startswith(".") for part in rel.parts)
+
+
 def find_data_files(data_dir: Path, extensions: tuple[str, ...] | None = None) -> list[Path]:
     """
     Find all data files in a directory with specified extensions.
+
+    Hidden trees are skipped — see :func:`is_hidden_path`.  This is the walker
+    under :func:`find_files_by_pattern` and :func:`find_files_by_schema`, so
+    every schema-based discovery inherits the skip.
 
     Args:
         data_dir: Directory to search
@@ -373,7 +404,7 @@ def find_data_files(data_dir: Path, extensions: tuple[str, ...] | None = None) -
 
     data_files: list[Path] = []
     for ext in extensions:
-        data_files.extend(data_dir.rglob(f"*.{ext}"))
+        data_files.extend(p for p in data_dir.rglob(f"*.{ext}") if not is_hidden_path(p, data_dir))
 
     return data_files
 
