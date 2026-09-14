@@ -11,11 +11,12 @@
       "type": "string"
     },
     "GroupTypeEnum": {
-      "description": "Type of service group.\n\n- ``regular``: Enrollable, services-bearing group (the common case).\n- ``category``: Non-enrollable parent that organizes child groups.\n- ``misc``: System-generated catch-all for uncategorized services.",
+      "description": "Type of service group. Derived from members, not authored.\n\n- ``category``: Parent group for browsing/organization only.\n- ``collection``: Services-bearing group that is not routable.\n- ``open``: Routable group where keyless requests can fan safely.\n- ``keyed``: Routable group where callers must provide a routing key.",
       "enum": [
-        "regular",
         "category",
-        "misc"
+        "collection",
+        "open",
+        "keyed"
       ],
       "title": "GroupTypeEnum",
       "type": "string"
@@ -69,8 +70,8 @@
     },
     "group_type": {
       "$ref": "#/$defs/GroupTypeEnum",
-      "default": "regular",
-      "description": "Type of group: regular (enrollable), category (non-enrollable parent), or misc (system-generated catch-all)."
+      "default": "category",
+      "description": "Backend-derived group type: category (browse-only parent), collection (not routable), open (routable keyless fanout), or keyed (routable by key)."
     },
     "membership_rules": {
       "anyOf": [

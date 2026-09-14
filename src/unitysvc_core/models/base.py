@@ -136,16 +136,21 @@ class GroupOwnerTypeEnum(StrEnum):
 
 
 class GroupTypeEnum(StrEnum):
-    """Type of service group.
+    """Type of service group. Derived from members, not authored.
 
-    - ``regular``: Enrollable, services-bearing group (the common case).
-    - ``category``: Non-enrollable parent that organizes child groups.
-    - ``misc``: System-generated catch-all for uncategorized services.
+    - ``category``: Parent group for browsing/organization only.
+    - ``collection``: Services-bearing group that is not routable.
+    - ``open``: Routable group where keyless requests can fan safely.
+    - ``keyed``: Routable group where callers must provide a routing key.
     """
 
-    regular = "regular"
     category = "category"
-    misc = "misc"
+    collection = "collection"
+    open = "open"
+    keyed = "keyed"
+
+
+ROUTABLE_GROUP_TYPES = frozenset({GroupTypeEnum.open, GroupTypeEnum.keyed})
 
 
 class SellerTypeEnum(StrEnum):
