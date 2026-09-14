@@ -46,8 +46,25 @@ class TestServiceGroupDataAdminFields:
         g = ServiceGroupData(name="ok", display_name="X")
         assert g.owner_type is GroupOwnerTypeEnum.platform
         assert g.owner_id is None
-        assert g.group_type is GroupTypeEnum.regular
+        assert g.group_type is GroupTypeEnum.category
         assert g.access_interface_data_template is None
+
+    @pytest.mark.parametrize(
+        "group_type",
+        [
+            GroupTypeEnum.category,
+            GroupTypeEnum.collection,
+            GroupTypeEnum.open,
+            GroupTypeEnum.keyed,
+        ],
+    )
+    def test_backend_group_types_set(self, group_type: GroupTypeEnum):
+        g = ServiceGroupData(
+            name="ok",
+            display_name="X",
+            group_type=group_type,
+        )
+        assert g.group_type is group_type
 
     def test_admin_fields_set(self):
         g = ServiceGroupData(
@@ -55,12 +72,17 @@ class TestServiceGroupDataAdminFields:
             display_name="X",
             owner_type=GroupOwnerTypeEnum.seller,
             owner_id="00000000-0000-0000-0000-000000000001",
-            group_type=GroupTypeEnum.category,
+            group_type=GroupTypeEnum.open,
             access_interface_data_template='{"base_url": "https://x"}',
         )
         assert g.owner_type is GroupOwnerTypeEnum.seller
-        assert g.group_type is GroupTypeEnum.category
+        assert g.group_type is GroupTypeEnum.open
         assert g.access_interface_data_template == '{"base_url": "https://x"}'
+
+    @pytest.mark.parametrize("legacy_type", ["regular", "misc"])
+    def test_legacy_group_types_rejected(self, legacy_type: str):
+        with pytest.raises(ValidationError):
+            ServiceGroupData(name="ok", display_name="X", group_type=legacy_type)
 
 
 class TestServiceGroupV1FileModel:
@@ -78,10 +100,11 @@ class TestServiceGroupV1FileModel:
             name="my-group",
             display_name="X",
             owner_type="platform",
-            group_type="regular",
+            group_type="keyed",
             status="active",
         )
         assert g.status is ServiceGroupStatusEnum.active
+        assert g.group_type is GroupTypeEnum.keyed
 
 
 class TestValidateServiceGroupDict:

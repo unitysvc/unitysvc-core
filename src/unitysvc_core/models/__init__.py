@@ -1,4 +1,5 @@
 from .base import (
+    ROUTABLE_GROUP_TYPES,
     AccessMethodEnum,
     AuthMethodEnum,
     ContentFilterEnum,
@@ -131,6 +132,7 @@ __all__ = [
     "QuotaResetCycleEnum",
     "RateLimitUnitEnum",
     "RequestTransformEnum",
+    "ROUTABLE_GROUP_TYPES",
     "SellerTypeEnum",
     "ServiceGroupStatusEnum",
     "ServiceTypeEnum",

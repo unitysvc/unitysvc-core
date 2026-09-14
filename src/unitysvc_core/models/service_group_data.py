@@ -84,10 +84,11 @@ class ServiceGroupData(BaseModel):
     )
 
     group_type: GroupTypeEnum = Field(
-        default=GroupTypeEnum.regular,
+        default=GroupTypeEnum.category,
         description=(
-            "Type of group: regular (enrollable), category (non-enrollable "
-            "parent), or misc (system-generated catch-all)."
+            "Backend-derived group type: category (browse-only parent), "
+            "collection (not routable), open (routable keyless fanout), "
+            "or keyed (routable by key)."
         ),
     )
 
