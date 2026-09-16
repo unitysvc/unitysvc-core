@@ -583,8 +583,27 @@ class TestValidateMcpOffering:
     def test_valid_mcp_offering_passes(self) -> None:
         assert validate_mcp_offering(self._offering()) == []
 
-    def test_non_mcp_offering_is_ignored(self) -> None:
+    def test_non_mcp_offering_without_mcp_declarations_is_ignored(self) -> None:
         assert validate_mcp_offering({"service_type": "llm"}) == []
+
+    def test_non_mcp_offering_cannot_declare_mcp_delegation(self) -> None:
+        errors = validate_mcp_offering({"service_type": "proxy", "capabilities": ["mcp-delegation"]})
+        assert errors
+        assert "mcp-delegation" in errors[0]
+        assert "service_type 'mcp'" in errors[0]
+
+    def test_non_mcp_offering_cannot_declare_an_mcp_channel(self) -> None:
+        errors = validate_mcp_offering(
+            {
+                "service_type": "proxy",
+                "upstream_access_config": {
+                    "upstream": {"access_method": "mcp", "base_url": "https://mcp.example.test"}
+                },
+            }
+        )
+        assert errors
+        assert "MCP upstream channel" in errors[0]
+        assert "service_type 'mcp'" in errors[0]
 
     def test_requires_a_channel(self) -> None:
         errors = validate_mcp_offering(self._offering(upstream_access_config={}))
@@ -593,9 +612,7 @@ class TestValidateMcpOffering:
 
     def test_requires_an_mcp_access_method_channel(self) -> None:
         errors = validate_mcp_offering(
-            self._offering(
-                upstream_access_config={"x": {"access_method": "http", "base_url": "https://x"}}
-            )
+            self._offering(upstream_access_config={"x": {"access_method": "http", "base_url": "https://x"}})
         )
         assert errors
         assert "access_method 'mcp'" in errors[0]
