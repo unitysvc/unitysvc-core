@@ -815,20 +815,39 @@ def validate_mcp_offering(data: dict[str, Any] | None) -> list[str]:
     """
     if not data or not isinstance(data, dict):
         return []
-    if data.get("service_type") != "mcp":
+
+    service_type = data.get("service_type")
+    capabilities = data.get("capabilities")
+    channels = data.get("upstream_access_config")
+    mcp_channels = (
+        sorted(
+            name
+            for name, config in (channels or {}).items()
+            if isinstance(config, dict) and config.get("access_method") == "mcp"
+        )
+        if isinstance(channels, dict)
+        else []
+    )
+
+    if service_type != "mcp":
+        declarations: list[str] = []
+        if isinstance(capabilities, list) and "mcp-delegation" in capabilities:
+            declarations.append("capability 'mcp-delegation'")
+        if mcp_channels:
+            declarations.append("MCP upstream channel(s) " + ", ".join(repr(name) for name in mcp_channels))
+        if declarations:
+            return [
+                f"service_type {service_type!r} may not declare "
+                + "; ".join(declarations)
+                + "; use service_type 'mcp' instead"
+            ]
         return []
 
-    channels = data.get("upstream_access_config")
     if not channels or not isinstance(channels, dict):
         return ["upstream_access_config: an MCP service must declare at least one channel"]
 
-    if not any(
-        isinstance(cfg, dict) and cfg.get("access_method") == "mcp" for cfg in channels.values()
-    ):
-        return [
-            "upstream_access_config: an MCP service must have at least one channel "
-            "with access_method 'mcp'"
-        ]
+    if not mcp_channels:
+        return ["upstream_access_config: an MCP service must have at least one channel with access_method 'mcp'"]
 
     return []
 
@@ -901,9 +920,7 @@ def validate_listing_mcp_base_urls(user_access_interfaces: dict[str, Any] | None
                     f"a non-empty 'namespace' in routing_key"
                 )
             else:
-                errors.extend(
-                    validate_mcp_namespace(namespace, f"{field}.routing_key.namespace")
-                )
+                errors.extend(validate_mcp_namespace(namespace, f"{field}.routing_key.namespace"))
 
     return errors
 
