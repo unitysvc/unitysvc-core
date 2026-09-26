@@ -7,10 +7,18 @@ can state an individual customer's share, which depends on who is active at
 request time.
 """
 
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
 from unitysvc_core.models import ProviderAccountRateLimit, ProviderV1
+from unitysvc_core.models.base import (
+    RateLimitUnitEnum,
+    RateLimitUnitLiteral,
+    TimeWindowEnum,
+    TimeWindowLiteral,
+)
 
 BASE = {
     "name": "fireworks",
@@ -84,8 +92,60 @@ def test_several_dimensions_coexist() -> None:
             {"name": "fireworks_input_tokens", "limit": 60000, "unit": "input_tokens", "window": "minute"},
         ],
     )
-    assert [rl.unit.value for rl in provider.rate_limits] == [
+    assert [rl.unit for rl in provider.rate_limits] == [
         "concurrent",
         "requests",
         "input_tokens",
     ]
+
+
+def test_literal_mirrors_match_their_enums() -> None:
+    """The mirrors in base.py must not drift from the enums they stand in for.
+
+    ``unit``/``window`` are typed as Literals rather than the shared enums (see
+    RateLimitUnitLiteral in base.py for why). The enums stay the semantic source
+    of truth and are still used elsewhere, so a value added to one and not the
+    other would silently narrow or widen what a provider may author.
+    """
+    assert set(get_args(RateLimitUnitLiteral)) == {member.value for member in RateLimitUnitEnum}
+    assert set(get_args(TimeWindowLiteral)) == {member.value for member in TimeWindowEnum}
+
+
+def test_the_nested_model_pulls_in_no_named_subschema() -> None:
+    """The condition that broke Python SDK codegen — kept from coming back.
+
+    An enum (or any named sub-schema) one level down makes pydantic treat the
+    *outer* model's validation and serialization schemas as distinct. FastAPI
+    then splits every model that carries this one into an ``X-Input``/
+    ``X-Output`` pair whose halves share a title, and Python SDK codegen drops
+    one of them plus everything referencing it — silently. ``ProviderData`` is
+    such a carrier: it is a request body on ``POST /seller/services`` and a
+    response field on ``GET /seller/services/{id}``.
+    """
+    assert ProviderAccountRateLimit.model_json_schema().get("$defs", {}) == {}
+
+
+def test_the_value_set_is_still_closed() -> None:
+    with pytest.raises(ValidationError):
+        ProviderAccountRateLimit(name="fireworks_typo", limit=10, unit="concurent")
+    with pytest.raises(ValidationError):
+        ProviderAccountRateLimit(name="fireworks_rpm", limit=10, unit="requests", window="fortnight")
+
+
+def test_enum_members_are_still_accepted_as_values() -> None:
+    """Callers that pass ``RateLimitUnitEnum.concurrent`` keep working.
+
+    Both enums are StrEnums, so a member validates against the Literal and
+    lands as the plain string. Reading the field back gives a ``str``, not a
+    member — ``.unit.value`` no longer works, ``.unit`` does.
+    """
+    limit = ProviderAccountRateLimit(
+        name="fireworks_rpm",
+        limit=600,
+        unit=RateLimitUnitEnum.requests,
+        window=TimeWindowEnum.minute,
+    )
+
+    assert limit.unit == "requests"
+    assert limit.window == "minute"
+    assert limit.model_dump(mode="json")["unit"] == "requests"

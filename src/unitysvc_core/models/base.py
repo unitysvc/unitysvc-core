@@ -13,6 +13,7 @@ functions live in their own modules:
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 
 class AccessMethodEnum(StrEnum):
@@ -243,6 +244,37 @@ class RateLimitUnitEnum(StrEnum):
     concurrent = "concurrent"
 
 
+# Literal mirrors of the two enums above, for use by a model that is nested
+# inside another model which FastAPI serves in BOTH directions.
+#
+# An enum one level down makes pydantic treat the outer model's validation and
+# serialization schemas as distinct, so FastAPI emits an ``X-Input``/``X-Output``
+# pair — both halves carrying the same ``title``. Python SDK codegen names a
+# top-level component from its title, so the halves collide on one class name:
+# the generator drops the second and silently removes every schema that
+# ``$ref``s it. That is how ``ServiceDetailResponse`` vanished from
+# unitysvc-sellers 0.3.7+, leaving ``client.services.get()`` returning raw
+# dicts (unitysvc/unitysvc-sellers#205).
+#
+# An enum *directly* on a served model is fine, and the rendered JSON schema is
+# identical either way — the split is an artifact of how the two modes are
+# deduplicated, not a real difference. A Literal sidesteps it while keeping the
+# values closed.
+#
+# ``tests/test_provider_account_rate_limits.py`` asserts each mirror matches its
+# enum exactly, so adding a value to one and not the other fails CI. Prefer the
+# enum everywhere else: it is the semantic source of truth and reads better in
+# Python.
+RateLimitUnitLiteral = Literal[
+    "requests",
+    "tokens",
+    "input_tokens",
+    "output_tokens",
+    "bytes",
+    "concurrent",
+]
+
+
 class RequestTransformEnum(StrEnum):
     # https://docs.api7.ai/hub/proxy-rewrite
     proxy_rewrite = "proxy_rewrite"
@@ -323,6 +355,10 @@ class TimeWindowEnum(StrEnum):
     hour = "hour"
     day = "day"
     month = "month"
+
+
+# See RateLimitUnitLiteral above for why this mirror exists.
+TimeWindowLiteral = Literal["second", "minute", "hour", "day", "month"]
 
 
 class OfferingStatusEnum(StrEnum):

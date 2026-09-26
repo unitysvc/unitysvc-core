@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, model_validator
 
-from .base import ProviderStatusEnum, RateLimitUnitEnum, TimeWindowEnum
+from .base import ProviderStatusEnum, RateLimitUnitEnum, RateLimitUnitLiteral, TimeWindowLiteral
 
 
 class ProviderAccountRateLimit(BaseModel):
@@ -48,9 +48,14 @@ class ProviderAccountRateLimit(BaseModel):
 
     limit: int = Field(gt=0, description="Maximum allowed — in flight for `concurrent`, per window otherwise")
 
-    unit: RateLimitUnitEnum = Field(description="What is being limited (requests, tokens, concurrent, …)")
+    # Literal rather than RateLimitUnitEnum / TimeWindowEnum: an enum inside a
+    # model that is itself nested in one FastAPI serves both ways splits the
+    # outer model into X-Input/X-Output, whose halves collide in Python SDK
+    # codegen and take their referrers down silently. See RateLimitUnitLiteral
+    # in base.py for the full mechanism. Same closed value set either way.
+    unit: RateLimitUnitLiteral = Field(description="What is being limited (requests, tokens, concurrent, …)")
 
-    window: TimeWindowEnum | None = Field(
+    window: TimeWindowLiteral | None = Field(
         default=None,
         description="Time window. Omitted for `concurrent`, which is a gauge rather than a counter.",
     )
@@ -72,11 +77,11 @@ class ProviderAccountRateLimit(BaseModel):
         it. Requiring the field to match the unit stops a limit being authored
         that the enforcement layer cannot honour as written.
         """
-        if self.unit is RateLimitUnitEnum.concurrent:
+        if self.unit == RateLimitUnitEnum.concurrent:
             if self.window is not None:
                 raise ValueError("`concurrent` is an in-flight gauge and takes no window; omit it")
         elif self.window is None:
-            raise ValueError(f"`{self.unit.value}` is counted over a window; set `window`")
+            raise ValueError(f"`{self.unit}` is counted over a window; set `window`")
         return self
 
 
