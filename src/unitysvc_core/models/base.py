@@ -1,6 +1,7 @@
 """Enum types and basic definitions shared across the data models.
 
-This module contains only enums and simple constants. Data classes with
+This module contains only enums, closed-value type aliases, and simple
+constants. Data classes with
 behavior (pricing, documents, service constraints, etc.) and validation
 functions live in their own modules:
 
@@ -235,37 +236,28 @@ class QuotaResetCycleEnum(StrEnum):
     yearly = "yearly"
 
 
-class RateLimitUnitEnum(StrEnum):
-    requests = "requests"
-    tokens = "tokens"
-    input_tokens = "input_tokens"
-    output_tokens = "output_tokens"
-    bytes = "bytes"
-    concurrent = "concurrent"
-
-
-# Literal mirrors of the two enums above, for use by a model that is nested
-# inside another model which FastAPI serves in BOTH directions.
+# Rate-limit unit and time window: Literals, not StrEnums.
 #
-# An enum one level down makes pydantic treat the outer model's validation and
+# Both are used by ``ProviderAccountRateLimit``, which is nested inside
+# ``ProviderData`` — a model the unitysvc backend serves in BOTH directions (a
+# request-body field on ``POST /seller/services``, a response field on
+# ``GET /seller/services/{id}``).
+#
+# An enum one level down makes pydantic treat the *outer* model's validation and
 # serialization schemas as distinct, so FastAPI emits an ``X-Input``/``X-Output``
 # pair — both halves carrying the same ``title``. Python SDK codegen names a
 # top-level component from its title, so the halves collide on one class name:
 # the generator drops the second and silently removes every schema that
 # ``$ref``s it. That is how ``ServiceDetailResponse`` vanished from
-# unitysvc-sellers 0.3.7+, leaving ``client.services.get()`` returning raw
-# dicts (unitysvc/unitysvc-sellers#205).
+# unitysvc-sellers 0.3.7+, leaving ``client.services.get()`` returning raw dicts
+# (unitysvc/unitysvc-sellers#205).
 #
 # An enum *directly* on a served model is fine, and the rendered JSON schema is
 # identical either way — the split is an artifact of how the two modes are
-# deduplicated, not a real difference. A Literal sidesteps it while keeping the
-# values closed.
-#
-# ``tests/test_provider_account_rate_limits.py`` asserts each mirror matches its
-# enum exactly, so adding a value to one and not the other fails CI. Prefer the
-# enum everywhere else: it is the semantic source of truth and reads better in
-# Python.
-RateLimitUnitLiteral = Literal[
+# deduplicated, not a real difference. A Literal sidesteps it and keeps the
+# values just as closed: same ``enum`` in the JSON schema, same rejection of an
+# unlisted value, and a string-literal union in every generated client.
+RateLimitUnit = Literal[
     "requests",
     "tokens",
     "input_tokens",
@@ -273,6 +265,8 @@ RateLimitUnitLiteral = Literal[
     "bytes",
     "concurrent",
 ]
+
+TimeWindow = Literal["second", "minute", "hour", "day", "month"]
 
 
 class RequestTransformEnum(StrEnum):
@@ -347,18 +341,6 @@ class ServiceVisibilityEnum(StrEnum):
     unlisted = "unlisted"
     public = "public"
     private = "private"
-
-
-class TimeWindowEnum(StrEnum):
-    second = "second"
-    minute = "minute"
-    hour = "hour"
-    day = "day"
-    month = "month"
-
-
-# See RateLimitUnitLiteral above for why this mirror exists.
-TimeWindowLiteral = Literal["second", "minute", "hour", "day", "month"]
 
 
 class OfferingStatusEnum(StrEnum):

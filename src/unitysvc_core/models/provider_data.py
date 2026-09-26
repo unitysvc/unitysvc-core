@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, model_validator
 
-from .base import ProviderStatusEnum, RateLimitUnitEnum, RateLimitUnitLiteral, TimeWindowLiteral
+from .base import ProviderStatusEnum, RateLimitUnit, TimeWindow
 
 
 class ProviderAccountRateLimit(BaseModel):
@@ -48,14 +48,12 @@ class ProviderAccountRateLimit(BaseModel):
 
     limit: int = Field(gt=0, description="Maximum allowed — in flight for `concurrent`, per window otherwise")
 
-    # Literal rather than RateLimitUnitEnum / TimeWindowEnum: an enum inside a
-    # model that is itself nested in one FastAPI serves both ways splits the
-    # outer model into X-Input/X-Output, whose halves collide in Python SDK
-    # codegen and take their referrers down silently. See RateLimitUnitLiteral
-    # in base.py for the full mechanism. Same closed value set either way.
-    unit: RateLimitUnitLiteral = Field(description="What is being limited (requests, tokens, concurrent, …)")
+    # RateLimitUnit / TimeWindow are Literals rather than enums, because an enum
+    # nested this deep splits every model that carries one. See base.py for the
+    # mechanism — it is not a style preference.
+    unit: RateLimitUnit = Field(description="What is being limited (requests, tokens, concurrent, …)")
 
-    window: TimeWindowLiteral | None = Field(
+    window: TimeWindow | None = Field(
         default=None,
         description="Time window. Omitted for `concurrent`, which is a gauge rather than a counter.",
     )
@@ -77,7 +75,7 @@ class ProviderAccountRateLimit(BaseModel):
         it. Requiring the field to match the unit stops a limit being authored
         that the enforcement layer cannot honour as written.
         """
-        if self.unit == RateLimitUnitEnum.concurrent:
+        if self.unit == "concurrent":
             if self.window is not None:
                 raise ValueError("`concurrent` is an in-flight gauge and takes no window; omit it")
         elif self.window is None:

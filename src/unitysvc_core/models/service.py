@@ -14,8 +14,8 @@ from .base import (
     ContentFilterEnum,
     OveragePolicyEnum,
     QuotaResetCycleEnum,
-    RateLimitUnitEnum,
-    TimeWindowEnum,
+    RateLimitUnit,
+    TimeWindow,
 )
 
 
@@ -26,8 +26,8 @@ class RateLimit(BaseModel):
 
     # Core rate limit definition
     limit: int = Field(description="Maximum allowed in the time window")
-    unit: RateLimitUnitEnum = Field(description="What is being limited")
-    window: TimeWindowEnum = Field(description="Time window for the limit")
+    unit: RateLimitUnit = Field(description="What is being limited")
+    window: TimeWindow = Field(description="Time window for the limit")
 
     # Optional additional info
     description: str | None = Field(default=None, max_length=255, description="Human-readable description")
@@ -52,7 +52,7 @@ class ServiceConstraints(BaseModel):
     # Usage Quotas & Billing
     monthly_quota: int | None = Field(default=None, description="Monthly usage quota (requests, tokens, etc.)")
     daily_quota: int | None = Field(default=None, description="Daily usage quota (requests, tokens, etc.)")
-    quota_unit: RateLimitUnitEnum | None = Field(default=None, description="Unit for quota limits")
+    quota_unit: RateLimitUnit | None = Field(default=None, description="Unit for quota limits")
     quota_reset_cycle: QuotaResetCycleEnum | None = Field(default=None, description="How often quotas reset")
     overage_policy: OveragePolicyEnum | None = Field(default=None, description="What happens when quota is exceeded")
 

@@ -17,13 +17,13 @@ from .base import (
     PricingTypeEnum,
     ProviderStatusEnum,
     QuotaResetCycleEnum,
-    RateLimitUnitEnum,
+    RateLimitUnit,
     RequestTransformEnum,
     SellerTypeEnum,
     ServiceGroupStatusEnum,
     ServiceTypeEnum,
     ServiceVisibilityEnum,
-    TimeWindowEnum,
+    TimeWindow,
     UpstreamStatusEnum,  # Backwards compatibility alias for OfferingStatusEnum
 )
 from .documents import DocumentData
@@ -130,14 +130,14 @@ __all__ = [
     "PricingTypeEnum",
     "ProviderStatusEnum",
     "QuotaResetCycleEnum",
-    "RateLimitUnitEnum",
+    "RateLimitUnit",
     "RequestTransformEnum",
     "ROUTABLE_GROUP_TYPES",
     "SellerTypeEnum",
     "ServiceGroupStatusEnum",
     "ServiceTypeEnum",
     "ServiceVisibilityEnum",
-    "TimeWindowEnum",
+    "TimeWindow",
     "UpstreamStatusEnum",  # Backwards compatibility alias for OfferingStatusEnum
     # Pricing — primitives
     "PriceStr",
