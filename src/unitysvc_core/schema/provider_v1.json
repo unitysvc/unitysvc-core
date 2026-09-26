@@ -187,20 +187,37 @@
           "type": "string"
         },
         "unit": {
-          "$ref": "#/$defs/RateLimitUnitEnum",
-          "description": "What is being limited (requests, tokens, concurrent, …)"
+          "description": "What is being limited (requests, tokens, concurrent, …)",
+          "enum": [
+            "requests",
+            "tokens",
+            "input_tokens",
+            "output_tokens",
+            "bytes",
+            "concurrent"
+          ],
+          "title": "Unit",
+          "type": "string"
         },
         "window": {
           "anyOf": [
             {
-              "$ref": "#/$defs/TimeWindowEnum"
+              "enum": [
+                "second",
+                "minute",
+                "hour",
+                "day",
+                "month"
+              ],
+              "type": "string"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Time window. Omitted for `concurrent`, which is a gauge rather than a counter."
+          "description": "Time window. Omitted for `concurrent`, which is a gauge rather than a counter.",
+          "title": "Window"
         }
       },
       "required": [
@@ -219,18 +236,6 @@
         "deprecated"
       ],
       "title": "ProviderStatusEnum",
-      "type": "string"
-    },
-    "RateLimitUnitEnum": {
-      "enum": [
-        "requests",
-        "tokens",
-        "input_tokens",
-        "output_tokens",
-        "bytes",
-        "concurrent"
-      ],
-      "title": "RateLimitUnitEnum",
       "type": "string"
     },
     "ServicesPopulator": {
@@ -289,17 +294,6 @@
       },
       "title": "ServicesPopulator",
       "type": "object"
-    },
-    "TimeWindowEnum": {
-      "enum": [
-        "second",
-        "minute",
-        "hour",
-        "day",
-        "month"
-      ],
-      "title": "TimeWindowEnum",
-      "type": "string"
     }
   },
   "additionalProperties": false,

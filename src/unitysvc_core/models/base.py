@@ -1,6 +1,7 @@
 """Enum types and basic definitions shared across the data models.
 
-This module contains only enums and simple constants. Data classes with
+This module contains only enums, closed-value type aliases, and simple
+constants. Data classes with
 behavior (pricing, documents, service constraints, etc.) and validation
 functions live in their own modules:
 
@@ -13,6 +14,7 @@ functions live in their own modules:
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 
 class AccessMethodEnum(StrEnum):
@@ -234,13 +236,37 @@ class QuotaResetCycleEnum(StrEnum):
     yearly = "yearly"
 
 
-class RateLimitUnitEnum(StrEnum):
-    requests = "requests"
-    tokens = "tokens"
-    input_tokens = "input_tokens"
-    output_tokens = "output_tokens"
-    bytes = "bytes"
-    concurrent = "concurrent"
+# Rate-limit unit and time window: Literals, not StrEnums.
+#
+# Both are used by ``ProviderAccountRateLimit``, which is nested inside
+# ``ProviderData`` — a model the unitysvc backend serves in BOTH directions (a
+# request-body field on ``POST /seller/services``, a response field on
+# ``GET /seller/services/{id}``).
+#
+# An enum one level down makes pydantic treat the *outer* model's validation and
+# serialization schemas as distinct, so FastAPI emits an ``X-Input``/``X-Output``
+# pair — both halves carrying the same ``title``. Python SDK codegen names a
+# top-level component from its title, so the halves collide on one class name:
+# the generator drops the second and silently removes every schema that
+# ``$ref``s it. That is how ``ServiceDetailResponse`` vanished from
+# unitysvc-sellers 0.3.7+, leaving ``client.services.get()`` returning raw dicts
+# (unitysvc/unitysvc-sellers#205).
+#
+# An enum *directly* on a served model is fine, and the rendered JSON schema is
+# identical either way — the split is an artifact of how the two modes are
+# deduplicated, not a real difference. A Literal sidesteps it and keeps the
+# values just as closed: same ``enum`` in the JSON schema, same rejection of an
+# unlisted value, and a string-literal union in every generated client.
+RateLimitUnit = Literal[
+    "requests",
+    "tokens",
+    "input_tokens",
+    "output_tokens",
+    "bytes",
+    "concurrent",
+]
+
+TimeWindow = Literal["second", "minute", "hour", "day", "month"]
 
 
 class RequestTransformEnum(StrEnum):
@@ -315,14 +341,6 @@ class ServiceVisibilityEnum(StrEnum):
     unlisted = "unlisted"
     public = "public"
     private = "private"
-
-
-class TimeWindowEnum(StrEnum):
-    second = "second"
-    minute = "minute"
-    hour = "hour"
-    day = "day"
-    month = "month"
 
 
 class OfferingStatusEnum(StrEnum):
