@@ -110,6 +110,7 @@ class UsageData(BaseModel):
     - **tokens**: one_token, one_thousand_tokens, one_million_tokens
     - **data**: one_byte, one_kilobyte, one_megabyte, one_gigabyte
     - **count**: count, one_thousand, one_million
+    - **characters**: characters, one_character, one_thousand_characters, one_million_characters
 
     Only one field per group should be set per usage instance.
 
@@ -144,6 +145,15 @@ class UsageData(BaseModel):
     one_kilobyte: float | None = None
     one_megabyte: float | None = None
     one_gigabyte: float | None = None
+
+    # Character-based usage (text-to-speech and similar).
+    # ``characters`` is what providers actually report — DashScope's TTS answers
+    # ``usage: {"characters": N}`` — and is the group's base unit, the way
+    # ``seconds`` is for time.
+    characters: int | None = None
+    one_character: int | None = None
+    one_thousand_characters: float | None = None
+    one_million_characters: float | None = None
 
     # Count-based usage (images, steps, requests)
     # count + scaled variants form an equivalence group.
@@ -524,6 +534,57 @@ class CountPriceData(BasePriceData):
         units = _resolve_equivalent_metric(self.type, usage)
         if units is None:
             raise ValueError(f"Count pricing ({self.type}) requires a count field in usage data")
+
+        return Decimal(self.price) * units
+
+
+class CharacterPriceData(BasePriceData):
+    """
+    Price data for character-scaled pricing (text-to-speech and similar).
+
+    Supported types: ``one_character``, ``one_thousand_characters``,
+    ``one_million_characters``. The ``characters`` equivalence-group field is
+    the base unit, and it is the name providers actually report — DashScope's
+    TTS answers ``usage: {"characters": N}``.
+
+    Usage may be given in any unit of the group; conversion is automatic.
+
+    Separate from ``CountPriceData`` on purpose: characters and counts are
+    different dimensions, and collapsing them would let "per 1M characters" and
+    "per 1M images" resolve against each other's usage.
+    """
+
+    type: Literal["one_character", "one_thousand_characters", "one_million_characters"] = "one_million_characters"
+
+    price: PriceStr = Field(
+        description="Price per one unit of the specified type",
+    )
+
+    def calculate_cost(
+        self,
+        usage: UsageData,
+        customer_charge: Decimal | None = None,
+        request_count: int | None = None,
+        channel: str | None = None,
+    ) -> Decimal:
+        """Calculate cost for character-scaled pricing.
+
+        Args:
+            usage: Usage data with any character field
+            customer_charge: Not used (ignored)
+            request_count: Not used (ignored)
+
+        Returns:
+            Calculated cost based on character usage
+
+        Raises:
+            ValueError: if no character field is populated. Raising rather than
+                treating absence as zero is deliberate — a silent zero here is a
+                charge of nothing for work actually done.
+        """
+        units = _resolve_equivalent_metric(self.type, usage)
+        if units is None:
+            raise ValueError(f"Character pricing ({self.type}) requires a character field in usage data")
 
         return Decimal(self.price) * units
 
@@ -961,6 +1022,12 @@ EQUIVALENCE_GROUPS: dict[str, dict[str, Decimal]] = {
         "count": Decimal(1),
         "one_thousand": Decimal(1000),
         "one_million": Decimal(1_000_000),
+    },
+    "characters": {
+        "characters": Decimal(1),
+        "one_character": Decimal(1),
+        "one_thousand_characters": Decimal(1000),
+        "one_million_characters": Decimal(1_000_000),
     },
 }
 
@@ -1448,6 +1515,7 @@ Pricing = Annotated[
     | TimePriceData
     | DataPriceData
     | CountPriceData
+    | CharacterPriceData
     | ImagePriceData
     | StepPriceData
     | RevenueSharePriceData
@@ -1472,6 +1540,7 @@ def validate_pricing(
     | TimePriceData
     | DataPriceData
     | CountPriceData
+    | CharacterPriceData
     | ImagePriceData
     | StepPriceData
     | RevenueSharePriceData

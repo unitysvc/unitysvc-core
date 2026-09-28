@@ -246,6 +246,66 @@ class TestDataPriceData:
             pricing.calculate_cost(usage)
 
 
+class TestCharacterPriceData:
+    """Character-scaled pricing (text-to-speech and similar).
+
+    Providers that bill per character report it as ``usage: {"characters": N}``
+    — DashScope's TTS does, for example. Before this unit existed the value was
+    dropped at the ``UsageData`` boundary (``extra="ignore"``), so a service
+    could pass its ``min_expected_metrics`` floor, which reads the raw metrics
+    dict, and still be charged nothing.
+    """
+
+    def test_per_million_characters(self) -> None:
+        pricing = validate_pricing({"type": "one_million_characters", "price": "30.00"})
+        usage = UsageData(characters=1_000_000)
+
+        assert pricing.calculate_cost(usage) == Decimal("30.00")
+
+    def test_per_thousand_characters(self) -> None:
+        pricing = validate_pricing({"type": "one_thousand_characters", "price": "0.05"})
+        usage = UsageData(characters=2000)
+
+        assert pricing.calculate_cost(usage) == Decimal("0.10")
+
+    def test_per_character(self) -> None:
+        pricing = validate_pricing({"type": "one_character", "price": "0.001"})
+        usage = UsageData(characters=44)
+
+        assert pricing.calculate_cost(usage) == Decimal("0.044")
+
+    def test_cross_unit_conversion(self) -> None:
+        """A provider reporting raw characters prices against any scaled unit."""
+        pricing = validate_pricing({"type": "one_million_characters", "price": "30.00"})
+
+        # 44 characters at $30 per 1M
+        assert pricing.calculate_cost(UsageData(characters=44)) == Decimal("0.00132")
+
+    def test_scaled_usage_field_also_works(self) -> None:
+        pricing = validate_pricing({"type": "one_character", "price": "0.001"})
+
+        assert pricing.calculate_cost(UsageData(one_thousand_characters=2)) == Decimal("2")
+
+    def test_characters_survive_construction(self) -> None:
+        """The regression this unit exists for.
+
+        ``UsageData`` is ``extra="ignore"``, so before the field existed
+        ``UsageData(characters=44)`` silently produced an empty object and any
+        charge computed from it was zero.
+        """
+        usage = UsageData(**{"characters": 44, "input_tokens": 13})
+
+        assert usage.characters == 44
+        assert usage.input_tokens == 13
+
+    def test_missing_usage_is_an_error_not_a_zero(self) -> None:
+        """Never bill zero for absent usage — raise so the caller notices."""
+        pricing = validate_pricing({"type": "one_million_characters", "price": "30.00"})
+
+        with pytest.raises(ValueError, match="[Cc]haracter"):
+            pricing.calculate_cost(UsageData())
+
+
 class TestCountPriceData:
     """Tests for count-scaled pricing."""
 
