@@ -74,8 +74,7 @@ class ServiceOfferingData(BaseModel):
         ),
     )
 
-    description: str | None = Field(
-        default=None,
+    description: str = Field(
         description="Service description (long-form; the summary carries the teaser)",
     )
 

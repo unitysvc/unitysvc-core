@@ -29,14 +29,6 @@ class OfferingV1(ServiceOfferingData):
     # File-specific fields for validation
     time_created: datetime
 
-    # Override to make required in file validation (base has Optional for API
-    # flexibility). ``summary`` needs no override — it is required on the base
-    # itself: the teaser replaces the retired two-mode description convention
-    # (unitysvc/unitysvc#1838), and the description is free-form long-form text.
-    description: str = Field(  # type: ignore[assignment]
-        description="Service description (long-form; the summary carries the teaser)",
-    )
-
     # Static information (optional — not all service types have meaningful details)
     details: dict[str, Any] = Field(  # type: ignore[assignment]
         default_factory=dict,
