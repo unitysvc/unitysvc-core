@@ -110,6 +110,7 @@ class UsageData(BaseModel):
     - **tokens**: one_token, one_thousand_tokens, one_million_tokens
     - **data**: one_byte, one_kilobyte, one_megabyte, one_gigabyte
     - **count**: count, one_thousand, one_million
+    - **characters**: characters, one_character, one_thousand_characters, one_million_characters
 
     Only one field per group should be set per usage instance.
 
@@ -144,6 +145,24 @@ class UsageData(BaseModel):
     one_kilobyte: float | None = None
     one_megabyte: float | None = None
     one_gigabyte: float | None = None
+
+    # Names the GATEWAY actually ships (usage_event.lua), kept as aliases so they
+    # survive ``extra="ignore"``. ``images_generated`` and ``duration_seconds``
+    # join their equivalence groups below; the byte counters deliberately do
+    # NOT — see DataPriceData.based_on.
+    images_generated: int | None = None
+    duration_seconds: float | None = None
+    bytes_in: int | None = None
+    bytes_out: int | None = None
+
+    # Character-based usage (text-to-speech and similar).
+    # ``characters`` is what providers actually report — DashScope's TTS answers
+    # ``usage: {"characters": N}`` — and is the group's base unit, the way
+    # ``seconds`` is for time.
+    characters: int | None = None
+    one_character: int | None = None
+    one_thousand_characters: float | None = None
+    one_million_characters: float | None = None
 
     # Count-based usage (images, steps, requests)
     # count + scaled variants form an equivalence group.
@@ -400,10 +419,13 @@ class ImagePriceData(BasePriceData):
         Returns:
             Calculated cost based on image count
         """
-        if usage.count is None:
+        # Via the equivalence group, so the gateway's ``images_generated`` counts
+        # as well as an explicit ``count``.
+        units = _resolve_equivalent_metric("count", usage)
+        if units is None:
             raise ValueError("Image pricing requires 'count' in usage data")
 
-        return Decimal(self.price) * usage.count
+        return Decimal(self.price) * units
 
 
 class StepPriceData(BasePriceData):
@@ -452,9 +474,22 @@ class DataPriceData(BasePriceData):
 
     Usage can be provided in **any** data unit — cross-unit conversion is
     handled automatically via equivalence groups.
+
+    The gateway ships ``bytes_in`` and ``bytes_out`` on every request. Those are
+    two directions of one dimension, so they are deliberately NOT both in the
+    data equivalence group: a group lookup returns whichever field the dict
+    happens to yield first, which would make the billed direction depend on
+    iteration order. ``based_on`` names the direction instead, so it is a
+    property of the price rather than an accident of the payload.
     """
 
     type: Literal["one_byte", "one_kilobyte", "one_megabyte", "one_gigabyte"] = "one_megabyte"
+
+    based_on: Literal["bytes_out", "bytes_in", "bytes_total"] = Field(
+        default="bytes_out",
+        description="Which byte counter to price. Defaults to egress, the "
+        "conventional billable direction; 'bytes_total' sums both.",
+    )
 
     price: PriceStr = Field(
         description="Price per one unit of the specified type",
@@ -477,7 +512,24 @@ class DataPriceData(BasePriceData):
         Returns:
             Calculated cost based on data usage
         """
-        units = _resolve_equivalent_metric(self.type, usage)
+        # The named byte counter wins when present — it is what the gateway
+        # actually sends. Fall back to the canonical one_byte..one_gigabyte
+        # units so a caller supplying those directly is unaffected.
+        raw_bytes: Decimal | None = None
+        if self.based_on == "bytes_total":
+            if usage.bytes_in is not None or usage.bytes_out is not None:
+                raw_bytes = Decimal(usage.bytes_in or 0) + Decimal(usage.bytes_out or 0)
+        else:
+            value = getattr(usage, self.based_on, None)
+            if value is not None:
+                raw_bytes = Decimal(str(value))
+
+        units: Decimal | None
+        if raw_bytes is not None:
+            units = raw_bytes / EQUIVALENCE_GROUPS["data"][self.type]
+        else:
+            units = _resolve_equivalent_metric(self.type, usage)
+
         if units is None:
             raise ValueError(f"Data pricing ({self.type}) requires a data field in usage data")
 
@@ -524,6 +576,57 @@ class CountPriceData(BasePriceData):
         units = _resolve_equivalent_metric(self.type, usage)
         if units is None:
             raise ValueError(f"Count pricing ({self.type}) requires a count field in usage data")
+
+        return Decimal(self.price) * units
+
+
+class CharacterPriceData(BasePriceData):
+    """
+    Price data for character-scaled pricing (text-to-speech and similar).
+
+    Supported types: ``one_character``, ``one_thousand_characters``,
+    ``one_million_characters``. The ``characters`` equivalence-group field is
+    the base unit, and it is the name providers actually report — DashScope's
+    TTS answers ``usage: {"characters": N}``.
+
+    Usage may be given in any unit of the group; conversion is automatic.
+
+    Separate from ``CountPriceData`` on purpose: characters and counts are
+    different dimensions, and collapsing them would let "per 1M characters" and
+    "per 1M images" resolve against each other's usage.
+    """
+
+    type: Literal["one_character", "one_thousand_characters", "one_million_characters"] = "one_million_characters"
+
+    price: PriceStr = Field(
+        description="Price per one unit of the specified type",
+    )
+
+    def calculate_cost(
+        self,
+        usage: UsageData,
+        customer_charge: Decimal | None = None,
+        request_count: int | None = None,
+        channel: str | None = None,
+    ) -> Decimal:
+        """Calculate cost for character-scaled pricing.
+
+        Args:
+            usage: Usage data with any character field
+            customer_charge: Not used (ignored)
+            request_count: Not used (ignored)
+
+        Returns:
+            Calculated cost based on character usage
+
+        Raises:
+            ValueError: if no character field is populated. Raising rather than
+                treating absence as zero is deliberate — a silent zero here is a
+                charge of nothing for work actually done.
+        """
+        units = _resolve_equivalent_metric(self.type, usage)
+        if units is None:
+            raise ValueError(f"Character pricing ({self.type}) requires a character field in usage data")
 
         return Decimal(self.price) * units
 
@@ -940,6 +1043,7 @@ class FirstPriceData(BasePriceData):
 EQUIVALENCE_GROUPS: dict[str, dict[str, Decimal]] = {
     "time": {
         "seconds": Decimal(1),
+        "duration_seconds": Decimal(1),  # what usage_event.lua ships
         "one_second": Decimal(1),
         "one_minute": Decimal(60),
         "one_hour": Decimal(3600),
@@ -959,8 +1063,15 @@ EQUIVALENCE_GROUPS: dict[str, dict[str, Decimal]] = {
     },
     "count": {
         "count": Decimal(1),
+        "images_generated": Decimal(1),  # what usage_event.lua ships
         "one_thousand": Decimal(1000),
         "one_million": Decimal(1_000_000),
+    },
+    "characters": {
+        "characters": Decimal(1),
+        "one_character": Decimal(1),
+        "one_thousand_characters": Decimal(1000),
+        "one_million_characters": Decimal(1_000_000),
     },
 }
 
@@ -1448,6 +1559,7 @@ Pricing = Annotated[
     | TimePriceData
     | DataPriceData
     | CountPriceData
+    | CharacterPriceData
     | ImagePriceData
     | StepPriceData
     | RevenueSharePriceData
@@ -1472,6 +1584,7 @@ def validate_pricing(
     | TimePriceData
     | DataPriceData
     | CountPriceData
+    | CharacterPriceData
     | ImagePriceData
     | StepPriceData
     | RevenueSharePriceData

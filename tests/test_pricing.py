@@ -246,6 +246,157 @@ class TestDataPriceData:
             pricing.calculate_cost(usage)
 
 
+class TestCharacterPriceData:
+    """Character-scaled pricing (text-to-speech and similar).
+
+    Providers that bill per character report it as ``usage: {"characters": N}``
+    — DashScope's TTS does, for example. Before this unit existed the value was
+    dropped at the ``UsageData`` boundary (``extra="ignore"``), so a service
+    could pass its ``min_expected_metrics`` floor, which reads the raw metrics
+    dict, and still be charged nothing.
+    """
+
+    def test_per_million_characters(self) -> None:
+        pricing = validate_pricing({"type": "one_million_characters", "price": "30.00"})
+        usage = UsageData(characters=1_000_000)
+
+        assert pricing.calculate_cost(usage) == Decimal("30.00")
+
+    def test_per_thousand_characters(self) -> None:
+        pricing = validate_pricing({"type": "one_thousand_characters", "price": "0.05"})
+        usage = UsageData(characters=2000)
+
+        assert pricing.calculate_cost(usage) == Decimal("0.10")
+
+    def test_per_character(self) -> None:
+        pricing = validate_pricing({"type": "one_character", "price": "0.001"})
+        usage = UsageData(characters=44)
+
+        assert pricing.calculate_cost(usage) == Decimal("0.044")
+
+    def test_cross_unit_conversion(self) -> None:
+        """A provider reporting raw characters prices against any scaled unit."""
+        pricing = validate_pricing({"type": "one_million_characters", "price": "30.00"})
+
+        # 44 characters at $30 per 1M
+        assert pricing.calculate_cost(UsageData(characters=44)) == Decimal("0.00132")
+
+    def test_scaled_usage_field_also_works(self) -> None:
+        pricing = validate_pricing({"type": "one_character", "price": "0.001"})
+
+        assert pricing.calculate_cost(UsageData(one_thousand_characters=2)) == Decimal("2")
+
+    def test_characters_survive_construction(self) -> None:
+        """The regression this unit exists for.
+
+        ``UsageData`` is ``extra="ignore"``, so before the field existed
+        ``UsageData(characters=44)`` silently produced an empty object and any
+        charge computed from it was zero.
+        """
+        usage = UsageData(**{"characters": 44, "input_tokens": 13})
+
+        assert usage.characters == 44
+        assert usage.input_tokens == 13
+
+    def test_missing_usage_is_an_error_not_a_zero(self) -> None:
+        """Never bill zero for absent usage — raise so the caller notices."""
+        pricing = validate_pricing({"type": "one_million_characters", "price": "30.00"})
+
+        with pytest.raises(ValueError, match="[Cc]haracter"):
+            pricing.calculate_cost(UsageData())
+
+
+class TestGatewayEmittedMetricNames:
+    """The names the gateway actually ships must survive into UsageData.
+
+    ``UsageData`` is ``extra="ignore"``, and the gateway's metric names had
+    drifted from the pricing model's field names. Measured against what
+    ``usage_event.lua`` writes: ``images_generated``, ``duration_seconds``,
+    ``bytes_in`` and ``bytes_out`` were all dropped, so image-, time- and
+    data-priced services could not be billed at all.
+
+    Latent rather than live — only ``one_million_tokens``, ``constant`` and
+    ``revenue_share`` are in use across the seller repos today — but it blocks
+    exactly the modalities being onboarded.
+    """
+
+    def test_images_generated_prices_as_a_count(self) -> None:
+        """The gateway sends images_generated; ImagePriceData resolves count."""
+        pricing = validate_pricing({"type": "image", "price": "0.04"})
+        usage = UsageData(**{"images_generated": 4, "bytes_in": 100, "bytes_out": 2000})
+
+        assert pricing.calculate_cost(usage) == Decimal("0.16")
+
+    def test_duration_seconds_prices_as_time(self) -> None:
+        pricing = validate_pricing({"type": "one_second", "price": "0.01"})
+        usage = UsageData(**{"duration_seconds": 12.5})
+
+        assert pricing.calculate_cost(usage) == Decimal("0.125")
+
+    def test_duration_seconds_converts_across_the_time_group(self) -> None:
+        pricing = validate_pricing({"type": "one_minute", "price": "0.60"})
+        usage = UsageData(**{"duration_seconds": 120})
+
+        assert pricing.calculate_cost(usage) == Decimal("1.20")
+
+    def test_data_pricing_defaults_to_egress(self) -> None:
+        pricing = validate_pricing({"type": "one_megabyte", "price": "0.10"})
+        usage = UsageData(**{"bytes_in": 1_048_576, "bytes_out": 5_242_880})
+
+        # 5 MiB egress at $0.10/MiB — NOT the 1 MiB ingress.
+        assert pricing.calculate_cost(usage) == Decimal("0.50")
+
+    def test_data_pricing_direction_is_explicit_not_incidental(self) -> None:
+        """The reason bytes_in/bytes_out are not both in the equivalence group.
+
+        With both populated, a group lookup would return whichever the dict
+        happened to yield first. The direction must come from the price.
+        """
+        usage = UsageData(**{"bytes_in": 1_048_576, "bytes_out": 5_242_880})
+
+        egress = validate_pricing({"type": "one_megabyte", "price": "0.10", "based_on": "bytes_out"})
+        ingress = validate_pricing({"type": "one_megabyte", "price": "0.10", "based_on": "bytes_in"})
+        both = validate_pricing({"type": "one_megabyte", "price": "0.10", "based_on": "bytes_total"})
+
+        assert egress.calculate_cost(usage) == Decimal("0.50")
+        assert ingress.calculate_cost(usage) == Decimal("0.10")
+        assert both.calculate_cost(usage) == Decimal("0.60")
+
+    def test_explicit_data_units_still_work(self) -> None:
+        """Back-compat: a caller supplying the canonical unit is unaffected."""
+        pricing = validate_pricing({"type": "one_megabyte", "price": "0.10"})
+
+        assert pricing.calculate_cost(UsageData(one_megabyte=3)) == Decimal("0.30")
+
+    def test_a_full_gateway_payload_survives(self) -> None:
+        """Every name usage_event.lua can ship, in one object."""
+        usage = UsageData(
+            **{
+                "input_tokens": 13,
+                "output_tokens": 10,
+                "total_tokens": 23,
+                "images_generated": 2,
+                "duration_seconds": 1.5,
+                "characters": 44,
+                "bytes_in": 100,
+                "bytes_out": 2000,
+            }
+        )
+
+        kept = usage.model_dump(exclude_none=True)
+        for name in (
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "images_generated",
+            "duration_seconds",
+            "characters",
+            "bytes_in",
+            "bytes_out",
+        ):
+            assert name in kept, f"{name} was dropped by UsageData"
+
+
 class TestCountPriceData:
     """Tests for count-scaled pricing."""
 

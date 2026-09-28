@@ -217,6 +217,58 @@
       "title": "ChannelPriceData",
       "type": "object"
     },
+    "CharacterPriceData": {
+      "additionalProperties": false,
+      "description": "Price data for character-scaled pricing (text-to-speech and similar).\n\nSupported types: ``one_character``, ``one_thousand_characters``,\n``one_million_characters``. The ``characters`` equivalence-group field is\nthe base unit, and it is the name providers actually report — DashScope's\nTTS answers ``usage: {\"characters\": N}``.\n\nUsage may be given in any unit of the group; conversion is automatic.\n\nSeparate from ``CountPriceData`` on purpose: characters and counts are\ndifferent dimensions, and collapsing them would let \"per 1M characters\" and\n\"per 1M images\" resolve against each other's usage.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "price": {
+          "description": "Price per one unit of the specified type",
+          "title": "Price",
+          "type": "string"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "default": "one_million_characters",
+          "enum": [
+            "one_character",
+            "one_thousand_characters",
+            "one_million_characters"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "price"
+      ],
+      "title": "CharacterPriceData",
+      "type": "object"
+    },
     "ConstantPriceData": {
       "additionalProperties": false,
       "description": "Price data for a constant/fixed price.\n\nUsed for fixed fees, discounts, or adjustments that don't depend on usage.\nPrice can be positive (charge) or negative (discount/credit).",
@@ -341,8 +393,19 @@
     },
     "DataPriceData": {
       "additionalProperties": false,
-      "description": "Price data for data-volume pricing (bandwidth, storage, transfer).\n\nSupported types: ``one_byte``, ``one_kilobyte``, ``one_megabyte``,\n``one_gigabyte``.  Uses binary units (1 KB = 1024 bytes).\n\nUsage can be provided in **any** data unit — cross-unit conversion is\nhandled automatically via equivalence groups.",
+      "description": "Price data for data-volume pricing (bandwidth, storage, transfer).\n\nSupported types: ``one_byte``, ``one_kilobyte``, ``one_megabyte``,\n``one_gigabyte``.  Uses binary units (1 KB = 1024 bytes).\n\nUsage can be provided in **any** data unit — cross-unit conversion is\nhandled automatically via equivalence groups.\n\nThe gateway ships ``bytes_in`` and ``bytes_out`` on every request. Those are\ntwo directions of one dimension, so they are deliberately NOT both in the\ndata equivalence group: a group lookup returns whichever field the dict\nhappens to yield first, which would make the billed direction depend on\niteration order. ``based_on`` names the direction instead, so it is a\nproperty of the price rather than an accident of the payload.",
       "properties": {
+        "based_on": {
+          "default": "bytes_out",
+          "description": "Which byte counter to price. Defaults to egress, the conventional billable direction; 'bytes_total' sums both.",
+          "enum": [
+            "bytes_out",
+            "bytes_in",
+            "bytes_total"
+          ],
+          "title": "Based On",
+          "type": "string"
+        },
         "description": {
           "anyOf": [
             {
@@ -1447,17 +1510,20 @@
               "min": "#/$defs/MinPriceData",
               "multiply": "#/$defs/MultiplyPriceData",
               "one_byte": "#/$defs/DataPriceData",
+              "one_character": "#/$defs/CharacterPriceData",
               "one_day": "#/$defs/TimePriceData",
               "one_gigabyte": "#/$defs/DataPriceData",
               "one_hour": "#/$defs/TimePriceData",
               "one_kilobyte": "#/$defs/DataPriceData",
               "one_megabyte": "#/$defs/DataPriceData",
               "one_million": "#/$defs/CountPriceData",
+              "one_million_characters": "#/$defs/CharacterPriceData",
               "one_million_tokens": "#/$defs/TokenPriceData",
               "one_minute": "#/$defs/TimePriceData",
               "one_month": "#/$defs/TimePriceData",
               "one_second": "#/$defs/TimePriceData",
               "one_thousand": "#/$defs/CountPriceData",
+              "one_thousand_characters": "#/$defs/CharacterPriceData",
               "one_thousand_tokens": "#/$defs/TokenPriceData",
               "one_token": "#/$defs/TokenPriceData",
               "revenue_share": "#/$defs/RevenueSharePriceData",
@@ -1478,6 +1544,9 @@
             },
             {
               "$ref": "#/$defs/CountPriceData"
+            },
+            {
+              "$ref": "#/$defs/CharacterPriceData"
             },
             {
               "$ref": "#/$defs/ImagePriceData"
