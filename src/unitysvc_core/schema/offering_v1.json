@@ -314,8 +314,19 @@
     },
     "DataPriceData": {
       "additionalProperties": false,
-      "description": "Price data for data-volume pricing (bandwidth, storage, transfer).\n\nSupported types: ``one_byte``, ``one_kilobyte``, ``one_megabyte``,\n``one_gigabyte``.  Uses binary units (1 KB = 1024 bytes).\n\nUsage can be provided in **any** data unit — cross-unit conversion is\nhandled automatically via equivalence groups.",
+      "description": "Price data for data-volume pricing (bandwidth, storage, transfer).\n\nSupported types: ``one_byte``, ``one_kilobyte``, ``one_megabyte``,\n``one_gigabyte``.  Uses binary units (1 KB = 1024 bytes).\n\nUsage can be provided in **any** data unit — cross-unit conversion is\nhandled automatically via equivalence groups.\n\nThe gateway ships ``bytes_in`` and ``bytes_out`` on every request. Those are\ntwo directions of one dimension, so they are deliberately NOT both in the\ndata equivalence group: a group lookup returns whichever field the dict\nhappens to yield first, which would make the billed direction depend on\niteration order. ``based_on`` names the direction instead, so it is a\nproperty of the price rather than an accident of the payload.",
       "properties": {
+        "based_on": {
+          "default": "bytes_out",
+          "description": "Which byte counter to price. Defaults to egress, the conventional billable direction; 'bytes_total' sums both.",
+          "enum": [
+            "bytes_out",
+            "bytes_in",
+            "bytes_total"
+          ],
+          "title": "Based On",
+          "type": "string"
+        },
         "description": {
           "anyOf": [
             {
