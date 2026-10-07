@@ -112,6 +112,33 @@ class TestByokConstant:
         assert ep(priced) == rate("0.02", "request")
 
 
+class TestByokZeroRateTokens:
+    """Generators also write BYOK as a zero token rate, e.g. Mistral models."""
+
+    MISTRAL = (
+        "Free ~ BYOK | usage is billed by Mistral AI directly at $1.5 / $7.5 / $0.15 per 1M input/output/cached tokens"
+    )
+
+    def test_zero_split_rate_reads_description(self) -> None:
+        byok = {"type": "one_million_tokens", "input": "0", "output": "0", "cached_input": "0"}
+        figure = ep({**byok, "description": self.MISTRAL})
+        assert figure == rate("6.3", "one_million_tokens", "upstream")
+
+    def test_zero_unified_rate_reads_description(self) -> None:
+        figure = ep({"type": "one_thousand_tokens", "price": "0", "description": HF_UPSTREAM})
+        assert figure == rate("3.8", "one_million_tokens", "upstream")
+
+    def test_zero_rate_without_description_is_free(self) -> None:
+        assert ep({"type": "one_million_tokens", "input": "0", "output": "0"}) == rate("0", "one_million_tokens")
+
+    def test_zero_rate_with_unparseable_description_is_unknown(self) -> None:
+        assert ep({"type": "one_million_tokens", "price": "0", "description": "Bring your own key"}) is None
+
+    def test_nonzero_rate_ignores_description(self) -> None:
+        priced = {**TOKENS, "description": self.MISTRAL}
+        assert ep(priced) == rate("1.8", "one_million_tokens")
+
+
 class TestUpstreamPriceFromDescription:
     @pytest.mark.parametrize(
         ("text", "expected"),
