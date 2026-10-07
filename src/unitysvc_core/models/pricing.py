@@ -342,6 +342,23 @@ def upstream_price_from_description(text: str | None) -> Decimal | None:
     return _blend(by_label["in"], by_label["out"]) * scale
 
 
+def _zero_rate(figure: EffectivePrice, description: str | None) -> EffectivePrice | None:
+    """A zero-rate price's effective price: free, or what the customer pays upstream.
+
+    A ``0`` with a description is a bring-your-own-key price: the customer pays
+    the upstream provider, at the rate the description states. A description
+    that states no parseable rate, or $0/$0 (what generators write when they
+    lack the provider's price), is unknown. A ``0`` with no description is
+    genuinely free.
+    """
+    if figure.amount != 0 or not description:
+        return figure
+    upstream = upstream_price_from_description(description)
+    if upstream is None or upstream == 0:
+        return None
+    return EffectivePrice(amount=upstream, unit=UNIT_TOKENS, source="upstream")
+
+
 # ============================================================================
 # Pricing Models - Discriminated Union for type-safe pricing validation
 # ============================================================================
@@ -475,14 +492,19 @@ class TokenPriceData(BasePriceData):
         return {"one_million_tokens": 1_000_000, "one_thousand_tokens": 1_000, "one_token": 1}[self.type]
 
     def effective_price(self) -> EffectivePrice | None:
-        """``(input + 4*output) / 5`` when priced separately, else ``price``; per 1M tokens."""
+        """``(input + 4*output) / 5`` when priced separately, else ``price``; per 1M tokens.
+
+        A zero rate with a description is a bring-your-own-key price: see
+        ``_zero_rate``.
+        """
         if self.input is not None and self.output is not None:
             per_unit = _blend(Decimal(self.input), Decimal(self.output))
         elif self.price is not None:
             per_unit = Decimal(self.price)
         else:
             return None
-        return _per_normalized_unit(self.type, per_unit)
+        figure = _per_normalized_unit(self.type, per_unit)
+        return None if figure is None else _zero_rate(figure, self.description)
 
     def calculate_cost(
         self,
@@ -931,19 +953,10 @@ class ConstantPriceData(BasePriceData):
     def effective_price(self) -> EffectivePrice | None:
         """``price`` per request.
 
-        A ``0`` with a description is a bring-your-own-key price: the customer
-        pays the upstream provider, at the rate the description states. A
-        description that states no parseable rate, or $0/$0 (what generators
-        write when they lack the provider's price), is unknown. A ``0`` with no
-        description is genuinely free.
+        A ``0`` with a description is a bring-your-own-key price: see
+        ``_zero_rate``.
         """
-        amount = Decimal(self.price)
-        if amount != 0 or not self.description:
-            return _rate(amount, UNIT_REQUEST)
-        upstream = upstream_price_from_description(self.description)
-        if upstream is None or upstream == 0:
-            return None
-        return EffectivePrice(amount=upstream, unit=UNIT_TOKENS, source="upstream")
+        return _zero_rate(_rate(Decimal(self.price), UNIT_REQUEST), self.description)
 
     def calculate_cost(
         self,
