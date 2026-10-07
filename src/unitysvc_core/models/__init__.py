@@ -38,6 +38,7 @@ from .pricing import (
     ConstantPriceData,
     CountPriceData,
     DataPriceData,
+    EffectivePrice,
     ExprPriceData,
     FirstPriceData,
     GraduatedPriceData,
@@ -56,6 +57,7 @@ from .pricing import (
     TimePriceData,
     TokenPriceData,
     UsageData,
+    upstream_price_from_description,
     validate_pricing,
 )
 from .promotion_data import (
@@ -146,6 +148,8 @@ __all__ = [
     "Pricing",
     "validate_pricing",
     "BasePriceData",
+    "EffectivePrice",
+    "upstream_price_from_description",
     # Pricing — simple types
     "TokenPriceData",
     "TimePriceData",

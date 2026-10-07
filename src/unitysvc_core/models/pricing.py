@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import ast
 import operator
+import re
+from collections.abc import Callable, Iterable
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, Literal
 
@@ -172,6 +174,175 @@ class UsageData(BaseModel):
 
 
 # ============================================================================
+# Effective price — a per-unit comparison figure, never billed
+# ============================================================================
+
+#: Normalized units an effective price is expressed in. Each dimension has one,
+#: so figures of the same dimension always compare directly.
+UNIT_TOKENS = "one_million_tokens"
+UNIT_REQUEST = "request"
+UNIT_TIME = "one_hour"
+UNIT_DATA = "one_gigabyte"
+UNIT_CHARACTERS = "one_million_characters"
+UNIT_IMAGE = "image"
+UNIT_STEP = "step"
+
+#: Each measured equivalence group's normalized unit (counts compare per request).
+_GROUP_UNIT = {
+    "tokens": UNIT_TOKENS,
+    "time": UNIT_TIME,
+    "data": UNIT_DATA,
+    "characters": UNIT_CHARACTERS,
+}
+
+#: When figures in different units must be reduced to one (``max``, ``min``,
+#: ``tiered``, ``channel``), the first unit present in this order wins; any
+#: other unit follows alphabetically.
+_UNIT_PRIORITY = (UNIT_TOKENS, UNIT_REQUEST)
+
+#: Output tokens weigh 4x input: typical chat traffic, and the platform's
+#: long-standing blend convention.
+_OUTPUT_WEIGHT = Decimal(4)
+
+
+class EffectivePrice(BaseModel):
+    """What using a service realistically costs per unit, for comparison.
+
+    A best-effort estimate for sorting, filtering and routing — never billed.
+    ``price`` (when set) is what is charged; this is computed from the pricing
+    object by ``effective_price()`` and never written back into it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    amount: Decimal = Field(description="Cost per one ``unit``")
+    unit: str = Field(
+        description="Normalized unit: 'one_million_tokens', 'request', 'one_hour', 'one_gigabyte', "
+        "'one_million_characters', 'image' or 'step'",
+    )
+    source: Literal["rate", "upstream"] = Field(
+        default="rate",
+        description="'rate': from the price itself. 'upstream': a $0 price whose description states what the "
+        "customer pays the upstream provider (bring-your-own-key).",
+    )
+
+
+def _blend(tokens_in: Decimal, tokens_out: Decimal) -> Decimal:
+    return (tokens_in + _OUTPUT_WEIGHT * tokens_out) / (1 + _OUTPUT_WEIGHT)
+
+
+def _unit_rank(unit: str) -> tuple[int, str]:
+    return (_UNIT_PRIORITY.index(unit), "") if unit in _UNIT_PRIORITY else (len(_UNIT_PRIORITY), unit)
+
+
+def _child_effective_price(price_data: Any) -> EffectivePrice | None:
+    """The effective price of a nested pricing dict; None if it is unknown or invalid."""
+    if not isinstance(price_data, dict):
+        return None
+    try:
+        return validate_pricing(price_data).effective_price()
+    except Exception:
+        return None
+
+
+def _pick(
+    figures: Iterable[EffectivePrice | None],
+    choose: Callable[[Iterable[EffectivePrice]], EffectivePrice],
+) -> EffectivePrice | None:
+    """Reduce known figures to one, comparing only within the dominant unit."""
+    known = [f for f in figures if f is not None]
+    if not known:
+        return None
+    unit = min((f.unit for f in known), key=_unit_rank)
+    return choose(f for f in known if f.unit == unit)
+
+
+def _largest(figures: Iterable[EffectivePrice | None]) -> EffectivePrice | None:
+    return _pick(figures, lambda fs: max(fs, key=lambda f: f.amount))
+
+
+def _smallest(figures: Iterable[EffectivePrice | None]) -> EffectivePrice | None:
+    return _pick(figures, lambda fs: min(fs, key=lambda f: f.amount))
+
+
+def _rate(amount: Decimal, unit: str) -> EffectivePrice:
+    return EffectivePrice(amount=amount, unit=unit)
+
+
+def _per_normalized_unit(metric: str, unit_price: Decimal) -> EffectivePrice | None:
+    """Express a price per one ``metric`` in the metric dimension's normalized unit.
+
+    ``metric`` is a pricing type or a ``based_on`` name: an equivalence-group
+    unit, a token counter, ``request_count``, or a gateway byte counter. Any
+    other metric (``customer_charge``, an expression) has no unit: None.
+    """
+    if metric in ("input_tokens", "output_tokens", "cached_input_tokens", "total_tokens"):
+        metric = "one_token"
+    elif metric in ("bytes_in", "bytes_out", "bytes_total"):
+        metric = "one_byte"
+    if metric == "request_count":
+        return _rate(unit_price, UNIT_REQUEST)
+    if metric == "images_generated":
+        return _rate(unit_price, UNIT_IMAGE)
+    if metric not in _UNIT_TO_GROUP:
+        return None
+    group, factor = _UNIT_TO_GROUP[metric]
+    if group == "count":
+        # One count is one call, event or message: compared per request.
+        return _rate(unit_price / factor, UNIT_REQUEST)
+    target = _GROUP_UNIT[group]
+    return _rate(unit_price * EQUIVALENCE_GROUPS[group][target] / factor, target)
+
+
+_DOLLARS = r"\$\s*\d+(?:\.\d+)?"
+# "$1.4 / $4.4 per 1M input/output tokens", "$1.518/$4.554 / 1M input/output
+# tokens", "$4 / $20 / $0.2 per 1M input/output/cached tokens",
+# "$3.45/$0.345/$17.25 / 1M in/cached/out tokens", "$0.50 / 1M tokens".
+_UPSTREAM_TOKEN_PRICE = re.compile(
+    rf"(?P<amounts>{_DOLLARS}(?:\s*/\s*{_DOLLARS})*)\s*(?:/|per)\s*1\s*(?P<scale>[MK])\s+"
+    r"(?:(?P<labels>[a-z_]+(?:\s*/\s*[a-z_]+)*)\s+)?tokens\b",
+    re.IGNORECASE,
+)
+_UPSTREAM_LABELS = {
+    "input": "in",
+    "in": "in",
+    "output": "out",
+    "out": "out",
+    "cached": "cached",
+    "cache": "cached",
+    "cached_input": "cached",
+}
+
+
+def upstream_price_from_description(text: str | None) -> Decimal | None:
+    """The upstream price per 1M tokens a description states, blended; or None.
+
+    Bring-your-own-key prices are ``0`` (we bill nothing) and their generators
+    write what the provider charges into the description, e.g. "billed by
+    Hugging Face directly at $1.4 / $4.4 per 1M input/output tokens".
+
+    Fails closed: text not in a known shape (labels that don't match the
+    amounts, no input/output pair, no token unit) is None, never 0.
+    """
+    if not text:
+        return None
+    match = _UPSTREAM_TOKEN_PRICE.search(text)
+    if match is None:
+        return None
+    amounts = [Decimal(a) for a in re.findall(r"\d+(?:\.\d+)?", match["amounts"])]
+    scale = Decimal(1000) if match["scale"].upper() == "K" else Decimal(1)
+    if not match["labels"]:
+        return amounts[0] * scale if len(amounts) == 1 else None
+    labels = [_UPSTREAM_LABELS.get(label.strip().lower()) for label in match["labels"].split("/")]
+    if len(labels) != len(amounts) or None in labels:
+        return None
+    by_label = dict(zip(labels, amounts, strict=True))
+    if "in" not in by_label or "out" not in by_label:
+        return None
+    return _blend(by_label["in"], by_label["out"]) * scale
+
+
+# ============================================================================
 # Pricing Models - Discriminated Union for type-safe pricing validation
 # ============================================================================
 
@@ -206,6 +377,15 @@ class BasePriceData(BaseModel):
         default=None,
         description="URL to upstream provider's pricing page",
     )
+
+    def effective_price(self) -> EffectivePrice | None:
+        """What using this price realistically costs per unit, or None if unknown.
+
+        A comparison figure for sorting, filtering and routing; never billed.
+        Every pricing type defines it, so a composite price computes its figure
+        from its children. Unknown is never 0. Never raises.
+        """
+        return None
 
 
 class TokenPriceData(BasePriceData):
@@ -294,6 +474,16 @@ class TokenPriceData(BasePriceData):
         """Token divisor based on the pricing type."""
         return {"one_million_tokens": 1_000_000, "one_thousand_tokens": 1_000, "one_token": 1}[self.type]
 
+    def effective_price(self) -> EffectivePrice | None:
+        """``(input + 4*output) / 5`` when priced separately, else ``price``; per 1M tokens."""
+        if self.input is not None and self.output is not None:
+            per_unit = _blend(Decimal(self.input), Decimal(self.output))
+        elif self.price is not None:
+            per_unit = Decimal(self.price)
+        else:
+            return None
+        return _per_normalized_unit(self.type, per_unit)
+
     def calculate_cost(
         self,
         usage: UsageData,
@@ -361,6 +551,10 @@ class TimePriceData(BasePriceData):
         description="Price per one unit of the specified type",
     )
 
+    def effective_price(self) -> EffectivePrice | None:
+        """``price`` in the dimension's normalized unit."""
+        return _per_normalized_unit(self.type, Decimal(self.price))
+
     def calculate_cost(
         self,
         usage: UsageData,
@@ -402,6 +596,10 @@ class ImagePriceData(BasePriceData):
         description="Price per image",
     )
 
+    def effective_price(self) -> EffectivePrice | None:
+        """``price`` per image."""
+        return _rate(Decimal(self.price), UNIT_IMAGE)
+
     def calculate_cost(
         self,
         usage: UsageData,
@@ -441,6 +639,10 @@ class StepPriceData(BasePriceData):
     price: PriceStr = Field(
         description="Price per step/iteration",
     )
+
+    def effective_price(self) -> EffectivePrice | None:
+        """``price`` per step."""
+        return _rate(Decimal(self.price), UNIT_STEP)
 
     def calculate_cost(
         self,
@@ -494,6 +696,10 @@ class DataPriceData(BasePriceData):
     price: PriceStr = Field(
         description="Price per one unit of the specified type",
     )
+
+    def effective_price(self) -> EffectivePrice | None:
+        """``price`` in the dimension's normalized unit."""
+        return _per_normalized_unit(self.type, Decimal(self.price))
 
     def calculate_cost(
         self,
@@ -556,6 +762,10 @@ class CountPriceData(BasePriceData):
         description="Price per one unit of the specified type",
     )
 
+    def effective_price(self) -> EffectivePrice | None:
+        """``price`` in the dimension's normalized unit."""
+        return _per_normalized_unit(self.type, Decimal(self.price))
+
     def calculate_cost(
         self,
         usage: UsageData,
@@ -601,6 +811,10 @@ class CharacterPriceData(BasePriceData):
     price: PriceStr = Field(
         description="Price per one unit of the specified type",
     )
+
+    def effective_price(self) -> EffectivePrice | None:
+        """``price`` in the dimension's normalized unit."""
+        return _per_normalized_unit(self.type, Decimal(self.price))
 
     def calculate_cost(
         self,
@@ -670,6 +884,10 @@ class RevenueSharePriceData(BasePriceData):
         description="Percentage of customer charge that goes to the seller (0-100)",
     )
 
+    def effective_price(self) -> EffectivePrice | None:
+        """A share of the customer charge has no per-unit rate: unknown."""
+        return None
+
     def calculate_cost(
         self,
         usage: UsageData,
@@ -709,6 +927,23 @@ class ConstantPriceData(BasePriceData):
     price: AmountStr = Field(
         description="Fixed price (positive for charge, negative for discount)",
     )
+
+    def effective_price(self) -> EffectivePrice | None:
+        """``price`` per request.
+
+        A ``0`` with a description is a bring-your-own-key price: the customer
+        pays the upstream provider, at the rate the description states. A
+        description that states no parseable rate, or $0/$0 (what generators
+        write when they lack the provider's price), is unknown. A ``0`` with no
+        description is genuinely free.
+        """
+        amount = Decimal(self.price)
+        if amount != 0 or not self.description:
+            return _rate(amount, UNIT_REQUEST)
+        upstream = upstream_price_from_description(self.description)
+        if upstream is None or upstream == 0:
+            return None
+        return EffectivePrice(amount=upstream, unit=UNIT_TOKENS, source="upstream")
 
     def calculate_cost(
         self,
@@ -783,6 +1018,15 @@ class AddPriceData(BasePriceData):
             self.price = _extract_nominal_price(self.prices[0])
         return self
 
+    def effective_price(self) -> EffectivePrice | None:
+        """The sum of the children; unknown if any child is unknown or the units differ."""
+        figures = [_child_effective_price(p) for p in self.prices]
+        known = [f for f in figures if f is not None]
+        if len(known) != len(figures) or len({f.unit for f in known}) != 1:
+            return None
+        source: Literal["rate", "upstream"] = "upstream" if any(f.source == "upstream" for f in known) else "rate"
+        return EffectivePrice(amount=sum((f.amount for f in known), Decimal(0)), unit=known[0].unit, source=source)
+
     def calculate_cost(
         self,
         usage: UsageData,
@@ -843,6 +1087,13 @@ class MultiplyPriceData(BasePriceData):
                     self.price = base_price
         return self
 
+    def effective_price(self) -> EffectivePrice | None:
+        """The base's figure times ``factor``."""
+        base = _child_effective_price(self.base)
+        if base is None:
+            return None
+        return base.model_copy(update={"amount": base.amount * Decimal(self.factor)})
+
     def calculate_cost(
         self,
         usage: UsageData,
@@ -896,6 +1147,10 @@ class MaxPriceData(BasePriceData):
         if self.price is None and self.prices:
             self.price = _extract_nominal_price(self.prices[0])
         return self
+
+    def effective_price(self) -> EffectivePrice | None:
+        """The largest child, as billed."""
+        return _largest(_child_effective_price(p) for p in self.prices)
 
     def calculate_cost(
         self,
@@ -955,6 +1210,10 @@ class MinPriceData(BasePriceData):
             self.price = _extract_nominal_price(self.prices[0])
         return self
 
+    def effective_price(self) -> EffectivePrice | None:
+        """The smallest child, as billed."""
+        return _smallest(_child_effective_price(p) for p in self.prices)
+
     def calculate_cost(
         self,
         usage: UsageData,
@@ -1011,6 +1270,14 @@ class FirstPriceData(BasePriceData):
         if self.price is None and self.prices:
             self.price = _extract_nominal_price(self.prices[0])
         return self
+
+    def effective_price(self) -> EffectivePrice | None:
+        """The first child with a known figure, mirroring the billing order."""
+        for price_data in self.prices:
+            figure = _child_effective_price(price_data)
+            if figure is not None:
+                return figure
+        return None
 
     def calculate_cost(
         self,
@@ -1246,6 +1513,10 @@ class ExprPriceData(BasePriceData):
         description="Arithmetic expression using usage metrics (e.g., 'input_tokens / 1000000 * 2.5')",
     )
 
+    def effective_price(self) -> EffectivePrice | None:
+        """An arbitrary expression has no per-unit rate: unknown."""
+        return None
+
     def calculate_cost(
         self,
         usage: UsageData,
@@ -1319,6 +1590,10 @@ class TieredPriceData(BasePriceData):
             if isinstance(first_tier.price, dict):
                 self.price = _extract_nominal_price(first_tier.price)
         return self
+
+    def effective_price(self) -> EffectivePrice | None:
+        """The largest tier's figure: the worst case a customer can pay."""
+        return _largest(_child_effective_price(tier.price) for tier in self.tiers)
 
     def calculate_cost(
         self,
@@ -1402,6 +1677,13 @@ class GraduatedPriceData(BasePriceData):
         if self.price is None and self.tiers:
             self.price = self.tiers[0].unit_price
         return self
+
+    def effective_price(self) -> EffectivePrice | None:
+        """The largest ``unit_price`` (the worst case), per ``based_on``'s normalized unit.
+
+        Unknown when ``based_on`` has no unit (``customer_charge``, an expression).
+        """
+        return _per_normalized_unit(self.based_on, max(Decimal(tier.unit_price) for tier in self.tiers))
 
     def calculate_cost(
         self,
@@ -1525,6 +1807,10 @@ class ChannelPriceData(BasePriceData):
                 hi = "Free" if hi_num == 0 else f"${hi_str}"
                 self.description = f"{lo} - {hi}"
         return self
+
+    def effective_price(self) -> EffectivePrice | None:
+        """The largest figure among all channels: the worst case a customer can pay."""
+        return _largest(_child_effective_price(p) for p in self.channels.values())
 
     def calculate_cost(
         self,
