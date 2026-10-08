@@ -1637,3 +1637,42 @@ class TestSvcpassDisposition:
         data = {"service_options": {"ops_testing_parameters": {"api_key": "__sigv4__"}}}
         errors = validator.validate_api_key_secrets(data)
         assert errors and "secrets reference format" in errors[0]
+
+
+class TestPlatformServiceListingFile:
+    """``DataValidator`` applies the ``/p`` rule to listings under
+    ``platform-services/`` and the reserved-prefix rule everywhere else (#2569)."""
+
+    @staticmethod
+    def _write(path: Path, base_url: str) -> Path:
+        import json
+
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "name": "labs/demo",
+                    "user_access_interfaces": {"default": {"access_method": "http", "base_url": base_url}},
+                }
+            )
+        )
+        return path
+
+    @staticmethod
+    def _gateway_errors(validator: DataValidator, path: Path) -> list[str]:
+        _, errors = validator.validate_data_file(path, schema_name="listing_v1", check_name_consistency=False)
+        return [e for e in errors if "base_url" in e]
+
+    def test_platform_service_listing_may_use_p(self, schema_dir, tmp_path):
+        path = self._write(tmp_path / "platform-services/labs/demo/listing.json", "${API_GATEWAY_BASE_URL}/p/llm")
+        assert self._gateway_errors(DataValidator(tmp_path, schema_dir), path) == []
+
+    def test_platform_service_listing_must_use_p(self, schema_dir, tmp_path):
+        path = self._write(tmp_path / "platform-services/labs/demo/listing.json", "${API_GATEWAY_BASE_URL}/llm")
+        errors = self._gateway_errors(DataValidator(tmp_path, schema_dir), path)
+        assert len(errors) == 1 and "/p/<route>" in errors[0]
+
+    def test_ordinary_listing_may_not_use_p(self, schema_dir, tmp_path):
+        path = self._write(tmp_path / "specs/demo/listing.json", "${API_GATEWAY_BASE_URL}/p/llm")
+        errors = self._gateway_errors(DataValidator(tmp_path, schema_dir), path)
+        assert len(errors) == 1 and "reserved single-letter prefix" in errors[0]

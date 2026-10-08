@@ -940,6 +940,7 @@ class DataValidator:
         # Validate S3, SMTP, MCP, and API-gateway interfaces (listing_v1 only)
         if schema_name == "listing_v1":
             from .models.validators import (
+                PLATFORM_SERVICES_DIRNAME,
                 validate_access_interface_names,
                 validate_listing_gateway_base_urls,
                 validate_listing_jinja_var_references,
@@ -950,7 +951,15 @@ class DataValidator:
 
             uai = data.get("user_access_interfaces")
             errors.extend(validate_access_interface_names(uai))
-            errors.extend(validate_listing_gateway_base_urls(uai))
+            # A listing under platform-services/ is a platform service: its
+            # address is /p, which every other listing is refused.
+            try:
+                parts = file_path.resolve().relative_to(self.data_dir.resolve()).parts
+            except ValueError:
+                parts = file_path.parts
+            errors.extend(
+                validate_listing_gateway_base_urls(uai, platform_service=PLATFORM_SERVICES_DIRNAME in parts[:-1])
+            )
             errors.extend(validate_listing_s3_base_urls(uai))
             errors.extend(validate_listing_smtp_base_urls(uai))
             errors.extend(validate_listing_mcp_base_urls(uai))
