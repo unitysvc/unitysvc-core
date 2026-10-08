@@ -1917,7 +1917,5 @@ def validate_pricing(
     """
     from pydantic import TypeAdapter
 
-    adapter: TypeAdapter[TokenPriceData | TimePriceData | ImagePriceData | StepPriceData | RevenueSharePriceData] = (
-        TypeAdapter(Pricing)
-    )
+    adapter: TypeAdapter[Pricing] = TypeAdapter(Pricing)
     return adapter.validate_python(data)
