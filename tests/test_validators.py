@@ -13,6 +13,7 @@ from unitysvc_core.models.validators import (
     validate_listing_mcp_base_urls,
     validate_mcp_namespace,
     validate_mcp_offering,
+    validate_platform_listing_base_urls,
     validate_service_identifier,
 )
 
@@ -623,3 +624,54 @@ class TestValidateMcpOffering:
         offering = self._offering()
         offering["user_access_interfaces"] = _mcp_uai()
         assert validate_mcp_offering(offering) == []
+
+
+class TestPlatformListingBaseUrls:
+    """A platform service's listing declares exactly its ``/p`` address (#2569)."""
+
+    @staticmethod
+    def _p(*base_urls: str, routing_key=None) -> dict:
+        uai = {f"i{n}": {"access_method": "http", "base_url": url} for n, url in enumerate(base_urls)}
+        if routing_key is not None:
+            uai["i0"]["routing_key"] = routing_key
+        return uai
+
+    def test_accepts_one_route(self) -> None:
+        uai = self._p("${API_GATEWAY_BASE_URL}/p/llm", "${API_GATEWAY_BASE_URL}/p/llm", routing_key={"model": "x"})
+        assert validate_platform_listing_base_urls(uai) == []
+        assert validate_listing_gateway_base_urls(uai, platform_service=True) == []
+
+    def test_ordinary_listing_still_refuses_p(self) -> None:
+        errors = validate_listing_gateway_base_urls(self._p("${API_GATEWAY_BASE_URL}/p/llm"))
+        assert any("reserved single-letter prefix" in e for e in errors)
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "${API_GATEWAY_BASE_URL}/llm",
+            "${API_GATEWAY_BASE_URL}/p/llm/v1",
+            "${API_GATEWAY_BASE_URL}/p/LLM",
+            "${API_GATEWAY_BASE_URL}/p/{{ service_name }}",
+            "${API_GATEWAY_BASE_URL}/p/",
+            "https://example.com/p/llm",
+        ],
+    )
+    def test_rejects_anything_but_exactly_p_route(self, base_url: str) -> None:
+        errors = validate_platform_listing_base_urls(self._p(base_url))
+        assert len(errors) == 1
+        assert "user_access_interfaces.i0.base_url" in errors[0]
+
+    def test_rejects_mixed_routes(self) -> None:
+        errors = validate_platform_listing_base_urls(
+            self._p("${API_GATEWAY_BASE_URL}/p/llm", "${API_GATEWAY_BASE_URL}/p/embed")
+        )
+        assert errors == ["user_access_interfaces: all interfaces must share one /p route, got embed, llm"]
+
+    def test_rejects_non_object_routing_key(self) -> None:
+        errors = validate_platform_listing_base_urls(self._p("${API_GATEWAY_BASE_URL}/p/llm", routing_key="x"))
+        assert errors == ["user_access_interfaces.i0.routing_key: must be an object"]
+
+    @pytest.mark.parametrize("value", [None, {}, "not a dict", {"a": "not an object"}])
+    def test_requires_the_address(self, value) -> None:
+        errors = validate_platform_listing_base_urls(value)
+        assert len(errors) == 1 and "/p/<route>" in errors[0]

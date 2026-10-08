@@ -558,8 +558,15 @@ _API_GATEWAY_PREFIX = "${API_GATEWAY_BASE_URL}"
 _GATEWAY_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
 
-def validate_listing_gateway_base_urls(user_access_interfaces: dict[str, Any] | None) -> list[str]:
+def validate_listing_gateway_base_urls(
+    user_access_interfaces: dict[str, Any] | None,
+    *,
+    platform_service: bool = False,
+) -> list[str]:
     """Validate ``${API_GATEWAY_BASE_URL}/...`` base_urls.
+
+    A **platform service**'s listing (``platform_service=True``) follows its own
+    rule instead: see :func:`validate_platform_listing_base_urls`.
 
     The gateway base_url is intentionally left almost unconstrained: a provider
     may route many services through a single base_url and differentiate them by
@@ -582,6 +589,8 @@ def validate_listing_gateway_base_urls(user_access_interfaces: dict[str, Any] | 
 
     Returns a list of error messages (empty if all valid).
     """
+    if platform_service:
+        return validate_platform_listing_base_urls(user_access_interfaces)
     if not user_access_interfaces or not isinstance(user_access_interfaces, dict):
         return []
 
@@ -630,6 +639,68 @@ def validate_listing_gateway_base_urls(user_access_interfaces: dict[str, Any] | 
         # Multi-character first segment (provider path, rendered service name,
         # etc.) — unconstrained.
 
+    return errors
+
+
+# A platform service is published from ``platform-services/<provider>/<name>/``
+# (unitysvc#2569); its listing is the only one allowed a ``/p`` address.
+PLATFORM_SERVICES_DIRNAME = "platform-services"
+
+# Same grammar the platform enforces at publish time.
+_PLATFORM_BASE_URL_RE = re.compile(r"^\$\{API_GATEWAY_BASE_URL\}/p/(?P<route>[a-z0-9][a-z0-9_-]*)$")
+
+
+def validate_platform_listing_base_urls(user_access_interfaces: dict[str, Any] | None) -> list[str]:
+    """Validate a platform service listing's ``/p`` address.
+
+    A platform service is called at ``${API_GATEWAY_BASE_URL}/p/<route>``, which
+    ordinary listings may not use (single-letter prefixes are reserved). Its
+    listing must declare that address and nothing else:
+
+    - at least one interface;
+    - every ``base_url`` exactly ``${API_GATEWAY_BASE_URL}/p/<route>`` — lowercase
+      letters, digits, ``-`` and ``_``, starting with a letter or digit, no
+      further path;
+    - one ``<route>`` shared by all interfaces;
+    - the primary interface's ``routing_key``, if set, an object.
+
+    Mirrors the platform's publish-time check, so authors see these errors
+    before upload. Returns a list of error messages (empty if valid).
+    """
+    if (
+        not isinstance(user_access_interfaces, dict)
+        or not user_access_interfaces
+        or not all(isinstance(v, dict) for v in user_access_interfaces.values())
+    ):
+        return [
+            "user_access_interfaces: a platform service must declare its "
+            "'${API_GATEWAY_BASE_URL}/p/<route>' address (an object of interface objects keyed by name)"
+        ]
+
+    errors: list[str] = []
+    routes: set[str] = set()
+    for iface_name, iface in user_access_interfaces.items():
+        base_url = iface.get("base_url")
+        match = _PLATFORM_BASE_URL_RE.match(base_url) if isinstance(base_url, str) else None
+        if match is None:
+            errors.append(
+                f"user_access_interfaces.{iface_name}.base_url: a platform service's base_url must be "
+                f"exactly '${{API_GATEWAY_BASE_URL}}/p/<route>', got {base_url!r}"
+            )
+        else:
+            routes.add(match.group("route"))
+    if len(routes) > 1:
+        errors.append(
+            f"user_access_interfaces: all interfaces must share one /p route, got {', '.join(sorted(routes))}"
+        )
+
+    primary = sorted(
+        user_access_interfaces.items(),
+        key=lambda item: (not bool(item[1].get("is_primary")), int(item[1].get("sort_order") or 0), item[0]),
+    )[0]
+    routing_key = primary[1].get("routing_key")
+    if routing_key is not None and not isinstance(routing_key, dict):
+        errors.append(f"user_access_interfaces.{primary[0]}.routing_key: must be an object")
     return errors
 
 
