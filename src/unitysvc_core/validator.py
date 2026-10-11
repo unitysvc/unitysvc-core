@@ -12,6 +12,12 @@ from jsonschema.validators import Draft7Validator
 
 from .utils import SCHEMA_TO_STEM, is_hidden_path, load_data_file, schema_for_path
 
+# ``details.model``: a provider-neutral model name (``glm-5.2``, not
+# ``zai-org/GLM-5.2`` or Fireworks' ``glm-5p2``). Lowercase, no ``org/``
+# prefix. The backend re-checks the same pattern before it shows a name on a
+# platform tier (``app/crud/platform_served.py``).
+CANONICAL_MODEL_RE = re.compile(r"^[a-z0-9][a-z0-9._:-]*$")
+
 # svcpass api_key dispositions (#1198, #1786). On an upstream_access_config
 # interface these literal values are not credentials: "" / "__strip__" strip
 # the svcpass-bearing header, "__forward__" forwards svcpass verbatim, and
@@ -665,6 +671,37 @@ class DataValidator:
 
         return errors
 
+    def validate_offering_model_name(self, data: dict[str, Any], schema_name: str) -> list[str]:
+        """Validate the optional ``details.model`` of an offering.
+
+        ``details.model`` names the model an offering serves in a
+        provider-neutral way, independent of the provider's own spelling
+        in ``details.upstream_model``. A platform tier lists its members'
+        names as the models it is currently served by (unitysvc#2567).
+
+        Only the shape is checked (lowercase, no ``org/`` prefix); there
+        is no registry of allowed names. Absent is fine.
+
+        Args:
+            data: The offering data being validated.
+            schema_name: The schema name (only ``offering_v1`` is checked).
+
+        Returns:
+            List of validation error messages.
+        """
+        if schema_name != "offering_v1":
+            return []
+        details = data.get("details")
+        if not isinstance(details, dict) or "model" not in details:
+            return []
+        value = details["model"]
+        if isinstance(value, str) and CANONICAL_MODEL_RE.match(value):
+            return []
+        return [
+            f"details.model must be a provider-neutral model name: lowercase letters, "
+            f"digits and '.', '_', ':', '-', with no 'org/' prefix (e.g. 'glm-5.2'), got {value!r}."
+        ]
+
     def validate_connectivity_test_exists(self, data: dict[str, Any], schema_name: str) -> list[str]:
         """Validate that at least one connectivity_test document exists.
 
@@ -920,6 +957,9 @@ class DataValidator:
         # (mirrors the backend's ingest-time check).
         llm_metadata_errors = self.validate_llm_offering_metadata(data, schema_name)
         errors.extend(llm_metadata_errors)
+
+        # Validate the optional provider-neutral details.model (offering_v1 only)
+        errors.extend(self.validate_offering_model_name(data, schema_name))
 
         # Validate MCP offerings declare an mcp upstream channel (offering_v1
         # only); the customer-facing gateway interface is checked below with
