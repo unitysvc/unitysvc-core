@@ -1164,6 +1164,35 @@ class TestAccessInterfaceNameValidation:
         assert "'ok_two'" not in joined
 
 
+class TestOfferingModelNameValidation:
+    """Tests for ``validate_offering_model_name``: ``details.model`` is an
+    optional, provider-neutral model name, checked for shape only."""
+
+    @pytest.mark.parametrize("name", ["glm-5.2", "kimi-k2.6", "deepseek-v4-pro", "qwen3:8b", "gpt_oss_120b"])
+    def test_canonical_names_pass(self, schema_dir, example_data_dir, name):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {"service_type": "llm", "details": {"model": name}}
+        assert validator.validate_offering_model_name(data, "offering_v1") == []
+
+    def test_absent_passes(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        assert validator.validate_offering_model_name({"details": {}}, "offering_v1") == []
+        assert validator.validate_offering_model_name({}, "offering_v1") == []
+
+    @pytest.mark.parametrize("name", ["zai-org/glm-5.2", "GLM-5.2", "", "-glm", "glm 5.2", None, 5])
+    def test_provider_spellings_rejected(self, schema_dir, example_data_dir, name):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {"service_type": "llm", "details": {"model": name}}
+        errors = validator.validate_offering_model_name(data, "offering_v1")
+        assert len(errors) == 1
+        assert "details.model" in errors[0]
+
+    def test_other_schemas_ignored(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        data = {"details": {"model": "Not/Canonical"}}
+        assert validator.validate_offering_model_name(data, "listing_v1") == []
+
+
 class TestLLMOfferingMetadataValidation:
     """Tests for ``validate_llm_offering_metadata``.
 
