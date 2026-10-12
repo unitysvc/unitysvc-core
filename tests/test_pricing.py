@@ -2156,3 +2156,53 @@ class TestChannelPriceData:
         assert pricing.calculate_cost(usage, request_count=10, channel="managed") == Decimal("5")
         assert pricing.calculate_cost(usage, request_count=10_000, channel="managed") == Decimal("50")
         assert pricing.calculate_cost(usage, request_count=10_000, channel="byok") == Decimal("0")
+
+
+class TestValidatePricingAdapterIsBuiltOnce:
+    """``validate_pricing`` reuses one ``TypeAdapter`` (unitysvc/unitysvc#2591).
+
+    Building the adapter compiles the whole ``Pricing`` union's schema
+    (~0.4-0.5 ms); the usage consumer validates several prices per event, so
+    rebuilding it per call made billing CPU-bound.
+    """
+
+    def test_repeated_calls_build_the_adapter_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import unitysvc_core.models.pricing as pricing
+
+        built: list[object] = []
+        real = pricing.TypeAdapter
+
+        def counting(*args: object, **kwargs: object) -> object:
+            built.append(args)
+            return real(*args, **kwargs)
+
+        pricing._pricing_adapter.cache_clear()
+        monkeypatch.setattr(pricing, "TypeAdapter", counting)
+        try:
+            token = {"type": "one_million_tokens", "input": "0.5", "output": "1.5"}
+            composite = {
+                "type": "multiply",
+                "factor": "1.05",
+                "base": {"type": "one_million_tokens", "input": "0.5", "output": "1.5"},
+            }
+            for _ in range(50):
+                assert validate_pricing(token).input == "0.5"
+                validate_pricing(composite)
+        finally:
+            pricing._pricing_adapter.cache_clear()
+        assert len(built) == 1
+
+    def test_results_match_a_fresh_adapter(self) -> None:
+        from pydantic import TypeAdapter
+
+        from unitysvc_core.models.pricing import Pricing
+
+        for data in (
+            {"type": "one_million_tokens", "input": "0.5", "output": "1.5"},
+            {"type": "multiply", "factor": "2", "base": {"type": "constant", "price": "1"}},
+        ):
+            assert validate_pricing(data) == TypeAdapter(Pricing).validate_python(data)
+
+    def test_invalid_data_still_raises(self) -> None:
+        with pytest.raises(ValueError):
+            validate_pricing({"type": "no_such_price_type"})
