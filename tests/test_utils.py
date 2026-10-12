@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from unitysvc_core.models.base import MimeTypeEnum
 from unitysvc_core.utils import (
     DEFAULT_PRESET_FNS,
     DataFileLoadWarning,
@@ -62,6 +63,70 @@ def test_get_basename() -> None:
 def test_mime_type_to_extension() -> None:
     assert mime_type_to_extension("image/png") == "png"
     assert mime_type_to_extension("application/pdf") == "pdf"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("image/png", "png"),
+        ("image/jpeg", "jpg"),
+        ("image/svg+xml", "svg"),
+        ("image/webp", "webp"),
+        ("text/markdown", "md"),
+        ("text/plain", "txt"),
+        ("application/json", "json"),
+    ],
+)
+def test_a_media_type_resolves_to_its_extension(value: str, expected: str) -> None:
+    assert mime_type_to_extension(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("markdown", "md"),
+        ("python", "py"),
+        ("javascript", "js"),
+        ("bash", "sh"),
+        ("html", "html"),
+        ("json", "json"),
+        ("text", "txt"),
+        ("pdf", "pdf"),
+        ("jpeg", "jpg"),
+        ("png", "png"),
+        ("svg", "svg"),
+        ("webp", "webp"),
+        ("url", "url"),
+    ],
+)
+def test_a_document_kind_token_resolves_to_its_extension(
+    value: str, expected: str
+) -> None:
+    """``Document.mime_type`` is a ``MimeTypeEnum``, whose values are kinds
+    rather than media types. A kind that fell through to ``txt`` meant a PNG
+    stored under a ``.txt`` key and served as ``text/plain``."""
+    assert mime_type_to_extension(value) == expected
+
+
+def test_every_mime_type_enum_value_resolves() -> None:
+    """The regression this guards: an unknown kind became ``txt`` silently."""
+    unresolved = [
+        kind.value
+        for kind in MimeTypeEnum
+        if kind is not MimeTypeEnum.text and mime_type_to_extension(kind.value) == "txt"
+    ]
+
+    assert unresolved == []
+
+
+@pytest.mark.parametrize("value", ["", "   ", "not-a-thing", "application/x-unknown"])
+def test_an_unresolvable_value_falls_back_to_txt(value: str) -> None:
+    assert mime_type_to_extension(value) == "txt"
+
+
+def test_case_and_whitespace_are_not_the_callers_problem() -> None:
+    assert mime_type_to_extension("PNG") == "png"
+    assert mime_type_to_extension("  image/png  ") == "png"
 
 
 # =============================================================================
