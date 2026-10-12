@@ -11,6 +11,7 @@ and unitysvc backend, including:
 
 import hashlib
 import json
+import mimetypes
 import os
 import tomllib
 import warnings
@@ -104,52 +105,71 @@ def get_basename(filename: str) -> str:
 
 
 def mime_type_to_extension(mime_type: str) -> str:
-    """Convert MIME type to file extension.
+    """File extension for a media type or a document-kind token.
+
+    Both forms arrive here. ``Document.mime_type`` is a :class:`MimeTypeEnum`,
+    whose values are document KINDS rather than media types -- ``png``,
+    ``markdown``, ``python``, and ``url``, which is not a media type at all --
+    while other callers pass a real ``image/png``. A kind that fell through to
+    ``txt`` meant a PNG stored under a ``.txt`` key and served as
+    ``text/plain``, which browsers refuse to render under ``nosniff``.
+
+    Resolution order: the explicit table, then the stdlib (which knows every
+    image kind both as a media type and as an extension), then the media type's
+    subtype, then ``txt``. The fallback stays: an honest, uninformative
+    extension beats a guessed-wrong media type.
 
     Args:
-        mime_type: MIME type string
+        mime_type: A media type (``image/png``) or a kind token (``png``).
 
     Returns:
-        File extension without dot
+        File extension without the dot.
     """
-    # Common MIME type to extension mappings
-    mime_map = {
+    if not mime_type:
+        return "txt"
+
+    value = mime_type.strip().lower()
+    if not value:
+        return "txt"
+
+    # Spelled out where the stdlib is absent or disagrees with what we store:
+    # the languages have no media type it knows, ``url`` is not a media type,
+    # and we store ``.md`` and ``.jpg`` rather than ``.markdown`` and ``.jpeg``.
+    explicit = {
         "text": "txt",
         "plain": "txt",
         "text/plain": "txt",
-        "text/html": "html",
         "text/markdown": "md",
-        "text/csv": "csv",
-        "application/json": "json",
-        "application/pdf": "pdf",
-        "application/xml": "xml",
+        "markdown": "md",
+        "image/jpeg": "jpg",
+        "jpeg": "jpg",
+        "python": "py",
+        "javascript": "js",
+        "bash": "sh",
+        "yaml": "yaml",
         "application/x-yaml": "yaml",
         "application/octet-stream": "bin",
-        "image/png": "png",
-        "image/jpeg": "jpg",
-        "image/gif": "gif",
-        "markdown": "md",
-        "html": "html",
-        "json": "json",
-        "pdf": "pdf",
-        "xml": "xml",
-        "yaml": "yaml",
-        "csv": "csv",
         "url": "url",
     }
+    if value in explicit:
+        return explicit[value]
 
-    # Try exact match first
-    mime_lower = mime_type.lower()
-    if mime_lower in mime_map:
-        return mime_map[mime_lower]
+    if "/" in value:
+        guessed = mimetypes.guess_extension(value)
+        if guessed:
+            return guessed.lstrip(".")
+        subtype = value.split("/", 1)[1]
+        if subtype in explicit:
+            return explicit[subtype]
+        if mimetypes.guess_type(f"x.{subtype}")[0]:
+            return subtype
+        return "txt"
 
-    # Try to extract from mime type parts
-    if "/" in mime_lower:
-        _, subtype = mime_lower.split("/", 1)
-        if subtype in mime_map:
-            return mime_map[subtype]
+    # A bare token that is already a real extension: png, svg, webp, pdf, json,
+    # html, csv, xml. Resolved rather than listed, so the table stays short.
+    if mimetypes.guess_type(f"x.{value}")[0]:
+        return value
 
-    # Default to txt
     return "txt"
 
 
