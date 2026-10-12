@@ -12,13 +12,14 @@ Contains:
 from __future__ import annotations
 
 import ast
+import functools
 import operator
 import re
 from collections.abc import Callable, Iterable
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from pydantic.functional_validators import BeforeValidator
 
 
@@ -1876,6 +1877,22 @@ Pricing = Annotated[
 ]
 
 
+@functools.cache
+def _pricing_adapter() -> TypeAdapter[Pricing]:
+    """The ``Pricing`` union's validator, built once and reused.
+
+    Building a ``TypeAdapter`` compiles the validation schema for every member
+    of the union, which costs ~0.4-0.5 ms; validating with it afterwards costs
+    microseconds. ``validate_pricing`` used to build one per call, and
+    composite prices (``multiply``, ``add``, ...) validate their nested parts
+    through it too, so pricing one usage event built it several times: ~2 ms
+    of CPU per event in the usage consumer (unitysvc/unitysvc#2591). Built
+    lazily rather than at import so ``Pricing``'s forward references are
+    resolved first. ``TypeAdapter`` is safe to share across threads.
+    """
+    return TypeAdapter(Pricing)
+
+
 def validate_pricing(
     data: dict[str, Any],
 ) -> (
@@ -1915,7 +1932,4 @@ def validate_pricing(
         >>> validated = validate_pricing(data)
         >>> print(validated.input)  # "0.5"
     """
-    from pydantic import TypeAdapter
-
-    adapter: TypeAdapter[Pricing] = TypeAdapter(Pricing)
-    return adapter.validate_python(data)
+    return _pricing_adapter().validate_python(data)
