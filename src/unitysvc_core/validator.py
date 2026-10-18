@@ -1027,8 +1027,32 @@ class DataValidator:
             except Exception as exc:
                 return [f"Cannot check required parameter usage: {exc}"]
             if isinstance(offering, dict) and (offering.get("schema") == "offering_v1" or candidate.stem == "offering"):
-                return validate_required_parameter_usage(listing, offering)
+                return validate_required_parameter_usage(
+                    self._with_template_documents(listing, file_path.parent),
+                    self._with_template_documents(offering, candidate.parent),
+                )
         return []
+
+    @staticmethod
+    def _with_template_documents(data: dict[str, Any], base_dir: Path) -> dict[str, Any]:
+        """``data`` with each ``.j2`` document's template source inlined as
+        ``file_content``, as the seller SDK uploads it — so the seller check
+        sees the same document content backend ingest does."""
+        documents = data.get("documents")
+        if not isinstance(documents, dict):
+            return data
+        inlined: dict[str, Any] = {}
+        for title, doc in documents.items():
+            if isinstance(doc, dict) and "file_content" not in doc:
+                rel = doc.get("file_path")
+                if isinstance(rel, str) and rel.endswith(".j2"):
+                    path = Path(rel) if Path(rel).is_absolute() else base_dir / rel
+                    try:
+                        doc = {**doc, "file_content": path.read_text(encoding="utf-8")}
+                    except OSError:
+                        pass  # a missing file is reported by the file-reference checks
+            inlined[title] = doc
+        return {**data, "documents": inlined}
 
     def _resolve_provider_name(self, file_path: Path) -> str | None:
         """Find the provider name (``provider_v1.name``) governing a listing file.

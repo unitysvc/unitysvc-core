@@ -101,7 +101,11 @@ MIT
 ### Required enrollment parameter usage
 
 The shared validator rejects required user parameters that no channel, interface,
-or document consumes. File validation checks a listing against its paired offering
+or document consumes. Only those consumer fields count — the offering's
+`upstream_access_config`, the listing's `user_access_interfaces`, and document
+content (a `.j2` document's template source, which the seller validator reads from
+disk as the SDK uploads it); metadata such as `display_name` or `description` is
+never rendered with `params`. File validation checks a listing against its paired offering
 when present; backend ingest calls the same `validate_required_parameter_usage`
 helper with the complete listing and offering. Schema declarations alone are not
 consumers. Jinja attribute access, string-key lookups, and `params.get("name")`
