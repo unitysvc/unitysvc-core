@@ -675,3 +675,11 @@ class TestPlatformListingBaseUrls:
     def test_requires_the_address(self, value) -> None:
         errors = validate_platform_listing_base_urls(value)
         assert len(errors) == 1 and "/p/<route>" in errors[0]
+
+
+def test_request_transformer_enum_has_msg_transformer():
+    """The gateway's msg_transformer key must be a valid request_transformer
+    key, or the backend rejects routes that use it (unitysvc/unitysvc#2650)."""
+    from unitysvc_core.models import RequestTransformEnum
+
+    assert RequestTransformEnum("msg_transformer") is RequestTransformEnum.msg_transformer
