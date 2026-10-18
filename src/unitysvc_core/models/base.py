@@ -281,6 +281,11 @@ class RequestTransformEnum(StrEnum):
     # the gateway auto-detects the incoming format and translates in-process only
     # when needed (#923/#929/#1400). Replaces the earlier ``llm_translate`` key.
     llm_translator = "llm_translator"
+    # Normalize a `msg` envelope (title, body, links, attachment, format) for
+    # the destination channel's declared capabilities, optionally mapping the
+    # result into the upstream body. Runs before body_transformer, which can
+    # template the normalized msg (unitysvc/unitysvc#2650).
+    msg_transformer = "msg_transformer"
 
 
 class ServiceTypeEnum(StrEnum):
