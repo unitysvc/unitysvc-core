@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedError
 from jsonschema.validators import Draft7Validator
 
+from .parameter_usage import validate_required_parameter_usage
 from .utils import SCHEMA_TO_STEM, is_hidden_path, load_data_file, schema_for_path
 
 # ``details.model``: a provider-neutral model name (``glm-5.2``, not
@@ -1004,9 +1005,30 @@ class DataValidator:
             errors.extend(validate_listing_smtp_base_urls(uai))
             errors.extend(validate_listing_mcp_base_urls(uai))
             errors.extend(validate_listing_jinja_var_references(data))
+            errors.extend(self.validate_required_parameter_usage(data, file_path))
             errors.extend(self.validate_listing_name_namespace(data, file_path))
 
         return len(errors) == 0, errors
+
+    def validate_required_parameter_usage(self, listing: dict[str, Any], file_path: Path) -> list[str]:
+        """Check the listing against its paired offering, after overrides/presets.
+
+        Standalone listings without an offering cannot establish cross-file
+        usage; full service uploads are always checked by backend ingest too.
+        """
+        schema = listing.get("user_parameters_schema") or listing.get("parameters_schema")
+        if not isinstance(schema, dict) or not schema.get("required"):
+            return []
+        for candidate in sorted(file_path.parent.glob("offering*.*")):
+            if candidate.suffix not in (".json", ".toml") or ".override." in candidate.name:
+                continue
+            try:
+                offering, _ = load_data_file(candidate)
+            except Exception as exc:
+                return [f"Cannot check required parameter usage: {exc}"]
+            if isinstance(offering, dict) and (offering.get("schema") == "offering_v1" or candidate.stem == "offering"):
+                return validate_required_parameter_usage(listing, offering)
+        return []
 
     def _resolve_provider_name(self, file_path: Path) -> str | None:
         """Find the provider name (``provider_v1.name``) governing a listing file.

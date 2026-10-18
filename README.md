@@ -97,3 +97,16 @@ moved to `unitysvc-sellers`.
 ## License
 
 MIT
+
+### Required enrollment parameter usage
+
+The shared validator rejects required user parameters that no channel, interface,
+or document consumes. File validation checks a listing against its paired offering
+when present; backend ingest calls the same `validate_required_parameter_usage`
+helper with the complete listing and offering. Schema declarations alone are not
+consumers. Jinja attribute access, string-key lookups, and `params.get("name")`
+are inspected; dynamic access and whole-map iteration conservatively consume all
+parameters. Deprecated content can still be retired.
+
+This validates usage, not channel attribution: a document reference counts as a
+consumer without proving that the intended paid channel takes enrollment.
