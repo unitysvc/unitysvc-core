@@ -2,6 +2,12 @@
 
 This checks that required parameters have consumers. It does not prove that
 an intended enrollment channel consumes them; interface/document use counts.
+
+Only the fields the platform renders with an enrollment's ``params`` are
+consumers: the offering's channels (``upstream_access_config``), the listing's
+interfaces (``user_access_interfaces``) and document content. Metadata such as
+``display_name`` or ``description`` is never rendered with ``params``, so a
+reference there does not count (unitysvc/unitysvc#2649).
 """
 
 from typing import Any
@@ -66,6 +72,31 @@ def unused_required_params(parameters_schema: dict[str, Any] | None, *sources: A
     return [name for name in required if name not in used]
 
 
+# Keys of a document entry that hold its rendered content. Backend ingest sees
+# a ``.j2`` document's template source inlined as ``file_content``; the seller
+# validator inlines the same file before calling this module.
+_DOCUMENT_CONTENT_KEYS = ("file_content", "content")
+
+
+def _document_contents(documents: Any) -> list[str]:
+    entries = documents.values() if isinstance(documents, dict) else documents if isinstance(documents, list) else ()
+    out: list[str] = []
+    for doc in entries:
+        if isinstance(doc, dict):
+            out.extend(doc[key] for key in _DOCUMENT_CONTENT_KEYS if isinstance(doc.get(key), str))
+    return out
+
+
+def consumer_sources(listing: dict[str, Any], offering: dict[str, Any]) -> list[Any]:
+    """The parts of a service the platform renders with enrollment ``params``."""
+    return [
+        offering.get("upstream_access_config"),
+        listing.get("user_access_interfaces"),
+        _document_contents(listing.get("documents")),
+        _document_contents(offering.get("documents")),
+    ]
+
+
 def validate_required_parameter_usage(listing: dict[str, Any], offering: dict[str, Any]) -> list[str]:
     """Return hard validation errors, shared by seller validation and backend ingest.
 
@@ -75,15 +106,15 @@ def validate_required_parameter_usage(listing: dict[str, Any], offering: dict[st
     if listing.get("status") == "deprecated" or offering.get("status") == "deprecated":
         return []
     schema = listing.get("user_parameters_schema") or listing.get("parameters_schema")
-    content = {k: v for k, v in listing.items() if k not in ("user_parameters_schema", "parameters_schema")}
     try:
-        unused = unused_required_params(schema, content, offering)
+        unused = unused_required_params(schema, *consumer_sources(listing, offering))
     except TemplateSyntaxError as exc:
         return [f"Cannot validate required parameter usage: invalid Jinja template: {exc}"]
     if not unused:
         return []
     return [
-        f"Required user parameter(s) {', '.join(unused)} are used by no channel, interface or document. "
+        f"Required user parameter(s) {', '.join(unused)} are used by no channel (upstream_access_config), "
+        "interface (user_access_interfaces) or document content. "
         "Reference each one as {{ params.NAME }} (for example ${ customer_secrets.{{ params.NAME }} }), "
         "or drop it from the required list."
     ]
