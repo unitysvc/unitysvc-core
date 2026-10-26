@@ -19,7 +19,7 @@ classifiers = [
 dependencies = [
   "pydantic>=2",
   "email-validator",
-  "jsonschema",
+  "jsonschema>=4.18",
   "jinja2",
   "tomli-w",
   # Presets exposed under $<fn> sentinels that load_data_file expands

@@ -131,3 +131,59 @@ A listing may say who the service is for and what a buyer must know before enrol
 ```
 
 At most 8 phrases, each 1-120 characters after trimming, no URLs or markup (details belong in the description or documents), and no phrase twice. The phrases are shown before enrollment and read by assistants matching services to customers; the platform never enforces them. `capabilities` says what a service does; `audience` says who it is for.
+
+### Exports and customer access requests
+
+Three stages (unitysvc/unitysvc#2720): a target service's **`exports`** (what it exposes), a seller's **`customer_access_requests`** (what the seller asks the enrolling customer to approve: using other services through that customer's account and authority), and the issued **key's policy** (what the customer actually approved). There is no central list of services. `unitysvc_core.grants` holds the formats and the checks; it does no I/O.
+
+**Invariant.** Calls made under an approved request run under the enrolling customer's delegated identity, within the approved permissions, options and limits. Looking up a target's `exports` validates a request's *capabilities*; customer consent and key issuance establish its *authority*. A request grants nothing by itself.
+
+**1. The `exports` format (the offering, top level).** How other services may use this one:
+
+```json
+"exports": {
+  "permissions": {"read": ["GET /records/*"], "write": ["POST /records", "PUT /records/*"]},
+  "options": {
+    "type": "object",
+    "properties": {
+      "log_level": {"type": "string", "enum": ["debug", "info", "warn", "error"], "default": "info",
+                    "title": "Lowest level recorded"},
+      "max_size": {"type": "integer", "minimum": 1, "maximum": 10000}
+    }
+  },
+  "options_ui_schema": {"log_level": {"ui:widget": "radio"}}
+}
+```
+
+- `invoke` is always exported and covers every route; it may not be redeclared. A service that declares nothing (most of them) exports `invoke` only, with no options, which `service:<name>` or `service:*` covers.
+- `permissions`: a name → the routes it covers, each `"<METHOD> /<path>"` (`*` for any method, `*` globs in the path). Permissions are never inferred from HTTP methods.
+- `options`: a JSON Schema (draft 7) object of the query arguments the service accepts as customizations, like an enrollment's `user_parameters_schema`, with an optional react-jsonschema-form `options_ui_schema`; the frontend renders it with the same form component. It covers limits only the service can apply (a message size). Restrictions so every value is one query argument: property names are lowercase letters, digits and `_`; each property is a `string`, `integer`, `number`, `boolean` or an `array` of strings, serialized as an OpenAPI form-style query parameter with arrays comma-joined (`style: form, explode: false`); options are optional (no `required`) and only declared properties are accepted; the schema is self-contained (no `$ref`), so validating against it never fetches anything. A property's `default` is what the service does when the option is not sent.
+
+**2. A customer access request (`upstream_access_config.<channel>.customer_access_requests`), and the policy entry it becomes.** Any channel may declare its own list; each approved request becomes an entry (a grant) in the issued key's policy, in the same shape:
+
+```json
+"customer_access_requests": [{"object": "service:log", "permissions": ["invoke"], "required": true,
+                "justification": "Records each check you run",
+                "options": "log_level=warn",
+                "limits": {"count_per_day": 1000}}]
+```
+
+- `object` names one service (`service:<name>`, no wildcards). `enrollment:<CODE>` (one enrollment of an enrollable service) may be allowed later.
+- `options` is a query string (`parse_options`): each name once, each value non-empty; with a catalog, each value is converted to its declared type and validated against the target's `options` schema.
+- **Enrollment is where options and limits are set.** In a request, `options` and `limits` only pre-fill the enrollment form for convenience. When enrolling, the customer confirms and sets the options (a form rendered from the target's `options` schema) and the limits, and adds their own limits; the result is the issued key's policy.
+- `limits` (`validate_limits`): `count_per_hour` / `count_per_day` / `count_per_month` / `count_total` (positive integer) and the same for `amount_` (finite positive decimal, as a number or a string). Limits are universal: the platform meters every call, so any service can be limited without exporting anything. The seller's limits are a pre-fill; the customer sets them at enrollment, and an enrollment's own limits (unitysvc/unitysvc#2687) use the same shape. They are counted per policy entry (the enrollment's calls to that service) from the usage stream (counters keyed by scope, metric and window bucket), and the gateway refuses calls once one is exceeded.
+
+**3. How options reach the service.** No new channel: the upstream URL. When the gateway constructs the target's upstream URL for a call made under a policy entry, it appends that entry's `options` as query arguments, `?log_level=warn&max_size=2000`, the way query arguments already reach every upstream, `log://` included. Rules:
+
+- The gateway first strips any query argument the client sent under one of the target's exported option names, then appends the policy's values. Today the client's arguments win on a name collision, so without this a caller could override its own policy.
+- An option the policy does not set is not sent; the service applies its own default. A plain `service:*` key sends none.
+- Enrollment parameters are unchanged and keep working alongside: `{{ params.X }}` still renders into the channel config, including a templated `base_url` query.
+- The platform's own services are terminated in gateway stages before the upstream URI is built, so each stage reads its options from the request's arguments (`log_dispatch` drops entries below `log_level`).
+- SMTP has no query string; options for pure-SMTP delivery are out of scope.
+
+**4. Where exports are published.** In the public catalog bundle: every service row carries its `exports` exactly as declared (`null` when none). `GET /v1/catalog/bundle` returns the bundle's URL; a `service:<name>` is the row whose `name` is `<name>`.
+
+**5. Validating `customer_access_requests`.** `validate_channel_access_requests(upstream_access_config, resolve)` checks every channel's requests. Limits and a default claim (`invoke`, no options) need no lookup. For any other claim, `resolve(name)` returns the target's `exports` from the catalog (`{}` when it declares none) or `None` when no such service is published; core parses it with `parse_exports` and checks the claimed permissions and the options (names, then values against its `options` schema) against it, refusing an unpublished target. Without a resolver only the shape is checked.
+
+- `DataValidator(data_dir, schema_dir, exports_resolver=...)` runs both checks on every `offering_v1` (`exports` and each channel's `customer_access_requests`). The seller SDK passes a resolver that downloads the catalog bundle once and reads the target row's `exports`; offline it passes none and gets the shape checks.
+- Backend ingest calls the same function with a resolver over the published services, so an unknown target, permission or option fails at upload.

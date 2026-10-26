@@ -1455,6 +1455,20 @@
       "description": "Documents associated with the service, keyed by title (e.g. tech spec.)",
       "title": "Documents"
     },
+    "exports": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "How other services may use this one (what a customer access request can ask for): {\"permissions\": {<name>: [\"<METHOD> /<path>\", ...]}, \"options\": <JSON Schema object of the query arguments it accepts>, \"options_ui_schema\": <rjsf uiSchema>}. invoke is always exported and covers every route; omitted: invoke only, no options. See unitysvc_core.grants.",
+      "title": "Exports"
+    },
     "logo": {
       "anyOf": [
         {

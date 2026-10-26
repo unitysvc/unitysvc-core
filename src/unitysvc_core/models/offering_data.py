@@ -102,6 +102,19 @@ class ServiceOfferingData(BaseModel):
         description="Upstream access channels, keyed by channel name",
     )
 
+    # How other services may use this one (unitysvc/unitysvc#2720)
+    exports: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "How other services may use this one (what a customer access request can ask for): "
+            '{"permissions": {<name>: ["<METHOD> /<path>", ...]}, '
+            '"options": <JSON Schema object of the query arguments it accepts>, '
+            '"options_ui_schema": <rjsf uiSchema>}. '
+            "invoke is always exported and covers every route; omitted: invoke only, no options. "
+            "See unitysvc_core.grants."
+        ),
+    )
+
     # Documents (keyed by title)
     documents: dict[str, dict[str, Any]] | None = Field(
         default=None,
