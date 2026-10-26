@@ -97,6 +97,84 @@ def consumer_sources(listing: dict[str, Any], offering: dict[str, Any]) -> list[
     ]
 
 
+# The keys a channel declares its own enrollment parameters with (unitysvc/unitysvc#2726).
+CHANNEL_PARAMETER_KEYS = ("user_parameters_schema", "user_parameters_ui_schema", "ops_testing_parameters")
+
+
+def _channels(offering: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    config = offering.get("upstream_access_config")
+    if not isinstance(config, dict):
+        return {}
+    return {name: channel for name, channel in config.items() if isinstance(channel, dict)}
+
+
+def _channel_body(channel: dict[str, Any]) -> dict[str, Any]:
+    """The channel config the gateway renders: its declarations are not consumers."""
+    return {key: value for key, value in channel.items() if key not in CHANNEL_PARAMETER_KEYS}
+
+
+def channel_parameter_schemas(offering: dict[str, Any]) -> dict[str, Any]:
+    """``channel name -> user_parameters_schema`` for the channels that declare one."""
+    return {
+        name: channel["user_parameters_schema"]
+        for name, channel in _channels(offering).items()
+        if channel.get("user_parameters_schema") is not None
+    }
+
+
+def validate_channel_parameters(offering: dict[str, Any]) -> list[str]:
+    """Errors in the parameters an offering's channels declare (unitysvc/unitysvc#2726).
+
+    Offering-only rules; :func:`validate_required_parameter_usage` adds the
+    consumer check, which needs the listing's documents too. When no channel
+    declares parameters, the listing's ``user_parameters_schema`` applies to the
+    whole service as before, and nothing here applies. Once one channel declares
+    them, every channel that reads ``{{ params.* }}`` must declare its own.
+    """
+    schemas = channel_parameter_schemas(offering)
+    if not schemas:
+        return []
+    errors: list[str] = []
+    for name, channel in _channels(offering).items():
+        where = f"upstream_access_config.{name}"
+        try:
+            used = referenced_param_names(_channel_body(channel))
+        except TemplateSyntaxError as exc:
+            errors.append(f"{where}: invalid Jinja template: {exc}")
+            continue
+        schema = schemas.get(name)
+        if schema is None:
+            if used is None or used:
+                errors.append(
+                    f"{where} reads enrollment parameters but declares no user_parameters_schema; "
+                    "each channel declares the parameters it uses"
+                )
+            continue
+        if not isinstance(schema, dict):
+            errors.append(f"{where}.user_parameters_schema must be a JSON Schema object")
+            continue
+        ui_schema = channel.get("user_parameters_ui_schema")
+        if ui_schema is not None and not isinstance(ui_schema, dict):
+            errors.append(f"{where}.user_parameters_ui_schema must be an object")
+        raw_properties = schema.get("properties")
+        properties: dict[str, Any] = raw_properties if isinstance(raw_properties, dict) else {}
+        required = [r for r in schema.get("required") or [] if isinstance(r, str)]
+        if used is not None and (undeclared := sorted(used - set(properties) - set(required))):
+            errors.append(
+                f"{where} reads parameter(s) {', '.join(undeclared)} that its user_parameters_schema does not declare"
+            )
+        ops = channel.get("ops_testing_parameters")
+        if ops is not None and not isinstance(ops, dict):
+            errors.append(f"{where}.ops_testing_parameters must be an object")
+            continue
+        if missing := [r for r in required if r not in (ops or {})]:
+            errors.append(
+                f"{where}: required parameter(s) {', '.join(missing)} need a value in "
+                f"{where}.ops_testing_parameters, used to test the channel"
+            )
+    return errors
+
+
 def validate_required_parameter_usage(listing: dict[str, Any], offering: dict[str, Any]) -> list[str]:
     """Return hard validation errors, shared by seller validation and backend ingest.
 
@@ -106,6 +184,15 @@ def validate_required_parameter_usage(listing: dict[str, Any], offering: dict[st
     if listing.get("status") == "deprecated" or offering.get("status") == "deprecated":
         return []
     schema = listing.get("user_parameters_schema") or listing.get("parameters_schema")
+    channel_schemas = channel_parameter_schemas(offering)
+    if channel_schemas:
+        if schema:
+            return [
+                "Enrollment parameters are declared both on the listing (user_parameters_schema) and on "
+                f"channel(s) {', '.join(sorted(channel_schemas))}; declare them on the channels only "
+                "(unitysvc/unitysvc#2726)."
+            ]
+        return _unused_channel_parameters(listing, offering, channel_schemas)
     try:
         unused = unused_required_params(schema, *consumer_sources(listing, offering))
     except TemplateSyntaxError as exc:
@@ -118,3 +205,28 @@ def validate_required_parameter_usage(listing: dict[str, Any], offering: dict[st
         "Reference each one as {{ params.NAME }} (for example ${ customer_secrets.{{ params.NAME }} }), "
         "or drop it from the required list."
     ]
+
+
+def _unused_channel_parameters(
+    listing: dict[str, Any], offering: dict[str, Any], channel_schemas: dict[str, Any]
+) -> list[str]:
+    """Each channel's required parameters must be read by that channel or by
+    document content; another channel's use does not count."""
+    channels = _channels(offering)
+    documents = [_document_contents(listing.get("documents")), _document_contents(offering.get("documents"))]
+    errors: list[str] = []
+    for name, schema in sorted(channel_schemas.items()):
+        if not isinstance(schema, dict):
+            continue  # reported by validate_channel_parameters
+        try:
+            unused = unused_required_params(schema, _channel_body(channels[name]), *documents)
+        except TemplateSyntaxError as exc:
+            errors.append(f"Cannot validate required parameter usage: invalid Jinja template: {exc}")
+            continue
+        if unused:
+            errors.append(
+                f"upstream_access_config.{name}: required parameter(s) {', '.join(unused)} are used by "
+                "neither the channel nor document content. Reference each one as {{ params.NAME }}, "
+                "or drop it from the required list."
+            )
+    return errors

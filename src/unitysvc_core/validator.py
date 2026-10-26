@@ -11,7 +11,7 @@ from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedE
 from jsonschema.validators import Draft7Validator
 
 from .grants import ExportsResolver
-from .parameter_usage import validate_required_parameter_usage
+from .parameter_usage import validate_channel_parameters, validate_required_parameter_usage
 from .utils import SCHEMA_TO_STEM, is_hidden_path, load_data_file, schema_for_path
 
 # ``details.model``: a provider-neutral model name (``glm-5.2``, not
@@ -984,6 +984,11 @@ class DataValidator:
                 validate_channel_access_requests(data.get("upstream_access_config"), self.exports_resolver)
             except ValueError as exc:
                 errors.append(str(exc))
+
+        # Validate the enrollment parameters each channel declares (offering_v1
+        # only, unitysvc/unitysvc#2726).
+        if schema_name == "offering_v1":
+            errors.extend(validate_channel_parameters(data))
 
         # Validate service_options keys and value types (listing_v1 only)
         service_options_errors = self.validate_service_options_keys(data, schema_name)

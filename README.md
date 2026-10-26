@@ -187,3 +187,14 @@ Three stages (unitysvc/unitysvc#2720): a target service's **`exports`** (what it
 
 - `DataValidator(data_dir, schema_dir, exports_resolver=...)` runs both checks on every `offering_v1` (`exports` and each channel's `customer_access_requests`). The seller SDK passes a resolver that downloads the catalog bundle once and reads the target row's `exports`; offline it passes none and gets the shape checks.
 - Backend ingest calls the same function with a resolver over the published services, so an unknown target, permission or option fails at upload.
+
+### Enrollment parameters on channels
+
+A channel may declare its own enrollment parameters, so each plan of a service asks for what it needs (unitysvc/unitysvc#2726): `user_parameters_schema`, `user_parameters_ui_schema` and `ops_testing_parameters` on `upstream_access_config.<channel>`, in the same formats as the listing-level fields. Once any channel declares them:
+
+- a channel reads only the parameters it declares, and a channel that reads `{{ params.* }}` must declare its own schema (`validate_channel_parameters`, on every `offering_v1`);
+- each required parameter has a value in that channel's `ops_testing_parameters`, used to test the channel;
+- each required parameter is read by its own channel or by document content; another channel's use does not count (`validate_required_parameter_usage`, which backend ingest also calls);
+- the listing must not also declare `user_parameters_schema`.
+
+When no channel declares parameters, the listing-level `user_parameters_schema` applies to the whole service as before.
