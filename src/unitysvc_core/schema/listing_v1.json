@@ -1459,6 +1459,22 @@
   "additionalProperties": false,
   "description": "Service listing model for file-based definitions (listing_v1 schema).\n\nExtends ServiceListingData with:\n- time_created: Timestamp for file creation\n- Typed models (AccessInterface, Document, Pricing) instead of dicts\n- Field validators for name format\n\nThis model is used for validating listing.json/listing.toml files\ncreated by the CLI tool.",
   "properties": {
+    "audience": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Who the service is for and what a buyer must know before enrolling, as short plain-text phrases (e.g. 'US customers only / export restrictions may apply'). Shown before enrollment; informational only, never enforced. At most 8 phrases of 1-120 characters, no URLs or markup.",
+      "title": "Audience"
+    },
     "currency": {
       "$ref": "#/$defs/CurrencyEnum",
       "default": "USD",

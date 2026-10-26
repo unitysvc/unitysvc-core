@@ -9,11 +9,17 @@ The `ListingV1` model extends this with file-specific fields
 and `time_created` for data file validation.
 """
 
+import re
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .base import CurrencyEnum, ListingStatusEnum
+
+AUDIENCE_MAX_PHRASES = 8
+AUDIENCE_MAX_LENGTH = 120
+# Plain text only: details belong in the description or documents.
+_AUDIENCE_FORBIDDEN = re.compile(r"https?://|www\.|[<>\[\]`]", re.IGNORECASE)
 
 
 class ServiceListingData(BaseModel):
@@ -102,6 +108,17 @@ class ServiceListingData(BaseModel):
         description="UI schema for user parameters form rendering",
     )
 
+    # Who the service is for (unitysvc/unitysvc#2717)
+    audience: list[str] | None = Field(
+        default=None,
+        description=(
+            "Who the service is for and what a buyer must know before enrolling, as short "
+            "plain-text phrases (e.g. 'US customers only / export restrictions may apply'). "
+            "Shown before enrollment; informational only, never enforced. "
+            f"At most {AUDIENCE_MAX_PHRASES} phrases of 1-{AUDIENCE_MAX_LENGTH} characters, no URLs or markup."
+        ),
+    )
+
     # Service-specific options
     service_options: dict[str, Any] | None = Field(
         default=None,
@@ -109,3 +126,25 @@ class ServiceListingData(BaseModel):
         "Keys are option names, values are option configurations. "
         "The backend decides which options it supports.",
     )
+
+    @field_validator("audience")
+    @classmethod
+    def validate_audience(cls, v: list[str] | None) -> list[str] | None:
+        """At most 8 short plain-text phrases, each trimmed to 1-120 characters,
+        with no URLs or markup (unitysvc/unitysvc#2717)."""
+        if v is None:
+            return None
+        if len(v) > AUDIENCE_MAX_PHRASES:
+            raise ValueError(f"audience has at most {AUDIENCE_MAX_PHRASES} phrases, got {len(v)}")
+        phrases = [phrase.strip() for phrase in v]
+        for phrase in phrases:
+            if not 1 <= len(phrase) <= AUDIENCE_MAX_LENGTH:
+                raise ValueError(f"each audience phrase is 1-{AUDIENCE_MAX_LENGTH} characters, got {phrase!r}")
+            if "\n" in phrase or _AUDIENCE_FORBIDDEN.search(phrase):
+                raise ValueError(
+                    f"audience phrases are plain text, without URLs or markup: {phrase!r}; "
+                    "put details in the description or documents"
+                )
+        if len(set(phrases)) != len(phrases):
+            raise ValueError("audience lists a phrase twice")
+        return phrases

@@ -118,3 +118,16 @@ consumer without proving that the intended paid channel takes enrollment.
 ### Canonical user access interfaces
 
 A user access interface is the service's canonical address, the same for every caller, so `validate_listing_interfaces_are_canonical` refuses one that reads a per-enrollment value (`enrollment.*`, `params.*`). An enrollment is reached through the address the platform gives it: `/e/<CODE>` on the API gateway, which a listing never declares. The only per-enrollment form allowed is where the protocol has no such path and the code itself is the address: an SMTP `routing_key.username` or an S3 bucket segment that is exactly `{{ enrollment.code }}`. Values the same for every caller (`service_name`, `routing_vars`) stay allowed. The shared validator runs it on every `listing_v1`; backend ingest calls the same function (unitysvc/unitysvc#2726).
+
+### Listing audience
+
+A listing may say who the service is for and what a buyer must know before enrolling, as `audience`: a short list of plain-text phrases (unitysvc/unitysvc#2717):
+
+```json
+"audience": [
+  "Rice University students (enrollment at Rice required)",
+  "US customers only / export restrictions may apply"
+]
+```
+
+At most 8 phrases, each 1-120 characters after trimming, no URLs or markup (details belong in the description or documents), and no phrase twice. The phrases are shown before enrollment and read by assistants matching services to customers; the platform never enforces them. `capabilities` says what a service does; `audience` says who it is for.
