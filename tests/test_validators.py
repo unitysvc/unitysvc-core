@@ -6,6 +6,7 @@ import pytest
 
 from unitysvc_core.models.validators import (
     DESCRIPTION_FIRST_PARAGRAPH_MAX_LEN,
+    validate_channel_config,
     validate_channel_name,
     validate_description,
     validate_listing_gateway_base_urls,
@@ -373,6 +374,28 @@ class TestValidateChannelName:
     def test_uses_entity_type_in_error_message(self) -> None:
         with pytest.raises(ValueError, match="custom-label"):
             validate_channel_name("", "custom-label")
+
+
+class TestValidateChannelConfig:
+    """A ``raw`` block is no longer accepted on a channel or its servers."""
+
+    def test_accepts_fields_written_directly(self) -> None:
+        config = {
+            "access_method": "http",
+            "base_url": "https://api.example.com",
+            "request_transformer": {"proxy_rewrite": {"headers": {"set": {"X-A": "1"}}}},
+            "servers": [{"name": "a", "base_url": "https://a.example.com"}],
+        }
+        assert validate_channel_config("default", config) == config
+
+    def test_rejects_channel_raw(self) -> None:
+        with pytest.raises(ValueError, match=r"upstream_access_config\.default\.raw is not supported"):
+            validate_channel_config("default", {"base_url": "https://x", "raw": {"request_transformer": {}}})
+
+    def test_rejects_server_raw(self) -> None:
+        config = {"servers": [{"base_url": "https://a"}, {"base_url": "https://b", "raw": {}}]}
+        with pytest.raises(ValueError, match=r"upstream_access_config\.plus\.servers\[1\]\.raw"):
+            validate_channel_config("plus", config)
 
 
 class TestValidateDescription:
