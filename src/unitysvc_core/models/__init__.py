@@ -87,6 +87,7 @@ from .validators import (
     SUPPORTED_SERVICE_OPTIONS,
     suggest_valid_name,
     validate_listing_gateway_base_urls,
+    validate_listing_interfaces_are_canonical,
     validate_listing_s3_base_urls,
     validate_listing_smtp_base_urls,
     validate_name,
@@ -183,6 +184,7 @@ __all__ = [
     "validate_listing_gateway_base_urls",
     "validate_platform_listing_base_urls",
     "validate_listing_s3_base_urls",
+    "validate_listing_interfaces_are_canonical",
     "validate_listing_smtp_base_urls",
     "suggest_valid_name",
     # Promotions
