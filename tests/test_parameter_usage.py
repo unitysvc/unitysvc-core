@@ -196,14 +196,14 @@ def _offering(**channels):
     return {"status": "ready", "upstream_access_config": channels}
 
 
-def _plus(**fields):
-    channel = {
-        "base_url": "https://u/{{ params.folder }}",
-        "user_parameters_schema": _SCHEMA,
-        "ops_testing_parameters": {"folder": "ops"},
-    }
-    channel.update(fields)
-    return channel
+def _params(**fields):
+    params = {"schema": _SCHEMA, "testing_defaults": {"folder": "ops"}}
+    params.update(fields)
+    return params
+
+
+def _plus(base_url="https://u/{{ params.folder }}", **params_fields):
+    return {"base_url": base_url, "params": _params(**params_fields)}
 
 
 def test_a_channel_declares_and_uses_its_parameters():
@@ -218,8 +218,7 @@ def test_two_plans_declare_different_parameters():
         plus=_plus(),
         managed={
             "base_url": "https://u/{{ params.region }}",
-            "user_parameters_schema": managed_schema,
-            "ops_testing_parameters": {"region": "us"},
+            "params": {"schema": managed_schema, "testing_defaults": {"region": "us"}},
         },
     )
     assert validate_channel_parameters(offering) == []
@@ -249,33 +248,35 @@ def test_dynamic_use_also_needs_a_declaration():
 
 
 def test_required_parameters_need_ops_values():
-    errors = validate_channel_parameters(_offering(plus=_plus(ops_testing_parameters={})))
-    assert any("folder need a value in upstream_access_config.plus.ops_testing_parameters" in e for e in errors)
-    errors = validate_channel_parameters(_offering(plus=_plus(ops_testing_parameters=None)))
-    assert any("ops_testing_parameters" in e for e in errors), errors
+    errors = validate_channel_parameters(_offering(plus=_plus(testing_defaults={})))
+    assert any("folder need a value in upstream_access_config.plus.params.testing_defaults" in e for e in errors)
+    errors = validate_channel_parameters(_offering(plus=_plus(testing_defaults=None)))
+    assert any("testing_defaults" in e for e in errors), errors
 
 
 @pytest.mark.parametrize(
     ("fields", "error"),
     [
-        ({"user_parameters_schema": ["folder"]}, "must be a JSON Schema object"),
-        ({"user_parameters_ui_schema": []}, "user_parameters_ui_schema must be an object"),
-        ({"ops_testing_parameters": ["ops"]}, "ops_testing_parameters must be an object"),
+        ({"schema": ["folder"]}, "params.schema must be a JSON Schema object"),
+        ({"ui_schema": []}, "params.ui_schema must be an object"),
+        ({"testing_defaults": ["ops"]}, "params.testing_defaults must be an object"),
+        ({"ops_testing_parameters": {}}, "unknown keys"),
     ],
 )
 def test_malformed_channel_declarations_are_refused(fields, error):
     assert any(error in e for e in validate_channel_parameters(_offering(plus=_plus(**fields))))
 
 
+def test_params_must_be_an_object():
+    errors = validate_channel_parameters(_offering(plus={"base_url": "https://u", "params": ["folder"]}))
+    assert any('params must be {"schema"' in e for e in errors), errors
+
+
 def test_a_required_parameter_must_be_read_by_its_own_channel():
     """Another channel reading the same name does not count."""
     offering = _offering(
         plus=_plus(base_url="https://u"),
-        other={
-            "base_url": "https://u/{{ params.folder }}",
-            "user_parameters_schema": _SCHEMA,
-            "ops_testing_parameters": {"folder": "x"},
-        },
+        other={"base_url": "https://u/{{ params.folder }}", "params": _params(testing_defaults={"folder": "x"})},
     )
     errors = validate_required_parameter_usage({"status": "ready"}, offering)
     assert len(errors) == 1
@@ -306,11 +307,11 @@ def test_the_file_validator_checks_channel_parameters(tmp_path):
                 "description": "d",
                 "time_created": "2026-01-01T00:00:00Z",
                 "details": {"context_length": None, "parameter_count": None},
-                "upstream_access_config": {"plus": _plus(ops_testing_parameters={})},
+                "upstream_access_config": {"plus": _plus(testing_defaults={})},
             }
         )
     )
     schema_dir = Path(__file__).parent.parent / "src" / "unitysvc_core" / "schema"
     is_valid, errors = DataValidator(tmp_path, schema_dir).validate_data_file(service / "offering.json")
     assert not is_valid
-    assert any("ops_testing_parameters" in e for e in errors), errors
+    assert any("testing_defaults" in e for e in errors), errors

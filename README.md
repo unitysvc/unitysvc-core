@@ -190,11 +190,26 @@ Three stages (unitysvc/unitysvc#2720): a target service's **`exports`** (what it
 
 ### Enrollment parameters on channels
 
-A channel may declare its own enrollment parameters, so each plan of a service asks for what it needs (unitysvc/unitysvc#2726): `user_parameters_schema`, `user_parameters_ui_schema` and `ops_testing_parameters` on `upstream_access_config.<channel>`, in the same formats as the listing-level fields. Once any channel declares them:
+A channel may declare its own enrollment parameters, so each plan of a service asks for what it needs (unitysvc/unitysvc#2726):
 
-- a channel reads only the parameters it declares, and a channel that reads `{{ params.* }}` must declare its own schema (`validate_channel_parameters`, on every `offering_v1`);
-- each required parameter has a value in that channel's `ops_testing_parameters`, used to test the channel;
+```json
+"upstream_access_config": {
+  "plus": {
+    "base_url": "https://u/{{ params.folder }}",
+    "params": {
+      "schema": {"type": "object", "properties": {"folder": {"type": "string"}}, "required": ["folder"]},
+      "ui_schema": {},
+      "testing_defaults": {"folder": "ops"}
+    }
+  }
+}
+```
+
+`params.schema` is a JSON Schema of the parameters (a property's own `default` pre-fills the customer's form), `params.ui_schema` holds form hints, and `params.testing_defaults` holds the values the platform tests the channel with. Once any channel declares `params`:
+
+- a channel reads only the parameters its `params.schema` declares, and a channel that reads `{{ params.* }}` must declare its own `params` (`validate_channel_parameters`, on every `offering_v1`);
+- each required parameter has a value in that channel's `params.testing_defaults`;
 - each required parameter is read by its own channel or by document content; another channel's use does not count (`validate_required_parameter_usage`, which backend ingest also calls);
 - the listing must not also declare `user_parameters_schema`.
 
-When no channel declares parameters, the listing-level `user_parameters_schema` applies to the whole service as before.
+When no channel declares `params`, the listing-level `user_parameters_schema` applies to the whole service as before.
