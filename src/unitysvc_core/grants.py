@@ -370,16 +370,26 @@ def validate_access_requests(where: str, requests: Any, resolve: ExportsResolver
         declared = resolve(name)
         if declared is None:
             raise ValueError(f"{at}: {obj} is not a published service")
-        target = parse_exports(f"{obj} exports", declared)
-        if not set(permissions) <= set(target.permission_names):
-            raise ValueError(f"{at}.permissions: {obj} exports only {list(target.permission_names)}")
-        if unknown := sorted(set(options) - set(target.option_names)):
-            raise ValueError(
-                f"{at}.options: {obj} accepts no option {unknown[0]!r} "
-                f"(options: {sorted(target.option_names) or 'none'})"
-            )
-        if error := _options_error(target.options, options):
-            raise ValueError(f"{at}.options: {error}")
+        check_claim(at, obj, permissions, options, parse_exports(f"{obj} exports", declared))
+
+
+def check_claim(where: str, obj: str, permissions: list[str], options: dict[str, str], exports: Exports) -> None:
+    """Refuse a claim on ``obj`` (``service:<name>``) that its ``exports`` don't cover.
+
+    The check shared by a seller's access request and a key's policy entry:
+    every permission must be one the target exports (``invoke`` only if it
+    does), and every option, already split by :func:`parse_options`, must be
+    one it declares, with a value valid for that option's schema.
+    """
+    if not set(permissions) <= set(exports.permission_names):
+        raise ValueError(f"{where}.permissions: {obj} exports only {list(exports.permission_names)}")
+    if unknown := sorted(set(options) - set(exports.option_names)):
+        raise ValueError(
+            f"{where}.options: {obj} accepts no option {unknown[0]!r} "
+            f"(options: {sorted(exports.option_names) or 'none'})"
+        )
+    if error := _options_error(exports.options, options):
+        raise ValueError(f"{where}.options: {error}")
 
 
 def validate_channel_access_requests(config: Any, resolve: ExportsResolver | None = None) -> None:

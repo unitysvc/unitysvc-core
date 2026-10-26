@@ -8,6 +8,7 @@ import pytest
 
 from unitysvc_core.grants import (
     DEFAULT_EXPORTS,
+    check_claim,
     parse_exports,
     parse_options,
     validate_access_requests,
@@ -334,3 +335,25 @@ def test_validation_never_reaches_the_network(monkeypatch: pytest.MonkeyPatch) -
     remote = {"options": _options(level={"type": "string", "$ref": "http://127.0.0.1:9/schema.json"})}
     with pytest.raises(ValueError, match=r"'\$ref' is not allowed"):
         validate_access_requests(_WHERE, [_dep("service:remote", options="level=x")], lambda name: remote)
+
+
+# A key's policy entry, checked with the same rule as a request -------------------
+
+
+def test_check_claim_accepts_a_covered_claim() -> None:
+    me = parse_exports("exports", _CATALOG["me"])
+    check_claim("policy[0]", "service:me", ["read", "write"], parse_options("o", "fields=research,address.state"), me)
+
+
+@pytest.mark.parametrize(
+    ("permissions", "options", "error"),
+    [
+        (["invoke"], "", r"exports only \['read', 'write'\]"),
+        (["read"], "cap=1", "accepts no option 'cap'"),
+        (["read"], "fields=a,*", "fields.1"),
+    ],
+)
+def test_check_claim_refuses_what_exports_do_not_cover(permissions: list[str], options: str, error: str) -> None:
+    me = parse_exports("exports", _CATALOG["me"])
+    with pytest.raises(ValueError, match=error):
+        check_claim("policy[0]", "service:me", permissions, parse_options("o", options), me)
