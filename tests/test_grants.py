@@ -27,7 +27,7 @@ def _options(**properties: Any) -> dict[str, Any]:
 _CATALOG: dict[str, dict[str, Any]] = {
     "me": {
         "permissions": {"read": ["GET /profile/*"], "write": ["PUT /profile/*"]},
-        "options": _options(fields={"type": "array", "items": {"type": "string", "not": {"const": "*"}}}),
+        "options": _options(profile={"type": "array", "items": {"type": "string", "not": {"const": "*"}}}),
     },
     "needs": {"permissions": {"read": ["GET /needs/*"], "write": ["POST /needs", "PUT /needs/*"]}},
     "notify": {"options": _options(max_size={"type": "integer", "minimum": 1, "maximum": 10000})},
@@ -213,7 +213,7 @@ def test_malformed_limits_are_refused(limits: Any, error: str) -> None:
         _dep("service:notify", options="max_size=2000", limits={"count_per_day": 100}),
         _dep("service:ai", options="model=labs%2Fllm-fast"),
         _dep("service:bill", options="max_charge=1.50", limits={"amount_per_month": "2.00"}),
-        _dep("service:me", permissions=["read"], options="fields=contact.email,location"),
+        _dep("service:me", permissions=["read"], options="profile=contact.email,location"),
         _dep("service:needs", permissions=["read", "write"]),
         _dep("service:resp200"),
     ],
@@ -261,7 +261,7 @@ def test_an_empty_list_requests_nothing() -> None:
         ([_dep("service:notify", options="max_size=99999")], "greater than the maximum"),
         ([_dep("service:bill", options="max_charge=-1")], "max_charge -1.0 is less than or equal"),
         ([_dep("service:bill", options="max_charge=nan")], "max_charge 'nan' is not of type 'number'"),
-        ([_dep("service:me", permissions=["read"], options="fields=a,*")], "fields.1"),
+        ([_dep("service:me", permissions=["read"], options="profile=a,*")], "profile.1"),
         ([_dep(limits={"calls_per_day": 5})], "count_/amount_"),
     ],
 )
@@ -342,7 +342,7 @@ def test_validation_never_reaches_the_network(monkeypatch: pytest.MonkeyPatch) -
 
 def test_check_claim_accepts_a_covered_claim() -> None:
     me = parse_exports("exports", _CATALOG["me"])
-    check_claim("policy[0]", "service:me", ["read", "write"], parse_options("o", "fields=research,address.state"), me)
+    check_claim("policy[0]", "service:me", ["read", "write"], parse_options("o", "profile=research,address.state"), me)
 
 
 @pytest.mark.parametrize(
@@ -350,7 +350,7 @@ def test_check_claim_accepts_a_covered_claim() -> None:
     [
         (["invoke"], "", r"exports only \['read', 'write'\]"),
         (["read"], "cap=1", "accepts no option 'cap'"),
-        (["read"], "fields=a,*", "fields.1"),
+        (["read"], "profile=a,*", "profile.1"),
     ],
 )
 def test_check_claim_refuses_what_exports_do_not_cover(permissions: list[str], options: str, error: str) -> None:
