@@ -377,7 +377,7 @@ class TestValidateChannelName:
 
 
 class TestValidateChannelConfig:
-    """A ``raw`` block is no longer accepted on a channel or its servers."""
+    """Retired keys (``raw``, channel ``is_primary``) are rejected on a channel."""
 
     def test_accepts_fields_written_directly(self) -> None:
         config = {
@@ -391,6 +391,10 @@ class TestValidateChannelConfig:
     def test_rejects_channel_raw(self) -> None:
         with pytest.raises(ValueError, match=r"upstream_access_config\.default\.raw is not supported"):
             validate_channel_config("default", {"base_url": "https://x", "raw": {"request_transformer": {}}})
+
+    def test_rejects_channel_is_primary(self) -> None:
+        with pytest.raises(ValueError, match=r"upstream_access_config\.default\.is_primary is not supported"):
+            validate_channel_config("default", {"base_url": "https://x", "is_primary": True})
 
     def test_rejects_server_raw(self) -> None:
         config = {"servers": [{"base_url": "https://a"}, {"base_url": "https://b", "raw": {}}]}

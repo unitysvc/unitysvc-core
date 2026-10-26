@@ -253,7 +253,7 @@ def validate_channel_name(name: str, entity_type: str = "channel") -> str:
 
 
 def validate_channel_config(name: str, config: dict[str, Any]) -> dict[str, Any]:
-    """Reject a ``raw`` block in an upstream access channel or its servers.
+    """Reject retired keys in an upstream access channel or its servers.
 
     ``raw`` once marked fields the backend should not Jinja-expand. The backend
     no longer renders channels at routing time — the gateway renders
@@ -262,10 +262,19 @@ def validate_channel_config(name: str, config: dict[str, Any]) -> dict[str, Any]
     adds a second spelling of a field. Write its keys on the channel (or the
     server) directly.
 
+    ``is_primary`` once ranked a channel ahead of the others. Channels now rank
+    by ``sort_order`` alone. (A listing's user access interface still has its
+    own, unrelated ``is_primary``.)
+
     Raises:
-        ValueError: If the channel, or any entry of its ``servers`` list,
-            declares ``raw``.
+        ValueError: If the channel declares ``is_primary``, or the channel or
+            any entry of its ``servers`` list declares ``raw``.
     """
+    if "is_primary" in config:
+        raise ValueError(
+            f"upstream_access_config.{name}.is_primary is not supported: channels rank by "
+            f"'sort_order' (lowest first); remove 'is_primary'."
+        )
     if "raw" in config:
         raise ValueError(
             f"upstream_access_config.{name}.raw is not supported: move its keys "
