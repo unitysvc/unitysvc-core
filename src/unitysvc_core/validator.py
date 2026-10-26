@@ -984,6 +984,7 @@ class DataValidator:
                 PLATFORM_SERVICES_DIRNAME,
                 validate_access_interface_names,
                 validate_listing_gateway_base_urls,
+                validate_listing_interfaces_are_canonical,
                 validate_listing_jinja_var_references,
                 validate_listing_mcp_base_urls,
                 validate_listing_s3_base_urls,
@@ -1005,6 +1006,7 @@ class DataValidator:
             errors.extend(validate_listing_smtp_base_urls(uai))
             errors.extend(validate_listing_mcp_base_urls(uai))
             errors.extend(validate_listing_jinja_var_references(data))
+            errors.extend(validate_listing_interfaces_are_canonical(uai))
             errors.extend(self.validate_required_parameter_usage(data, file_path))
             errors.extend(self.validate_listing_name_namespace(data, file_path))
 

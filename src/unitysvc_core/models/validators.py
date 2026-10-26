@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedError
+from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedError, nodes
 
 
 def validate_name(name: str, entity_type: str, display_name: str | None = None, *, allow_slash: bool = False) -> str:
@@ -1135,6 +1135,77 @@ def _iter_strings(value: Any, path: str):
     elif isinstance(value, list):
         for idx, sub in enumerate(value):
             yield from _iter_strings(sub, f"{path}[{idx}]")
+
+
+# The per-enrollment namespaces: a value from one of them differs per
+# enrollment, so an interface reading it is not the service's canonical address.
+_PER_ENROLLMENT_NAMES = frozenset({"enrollment", "params"})
+# The one per-enrollment form an interface may carry, where the protocol has no
+# ``/e/<CODE>`` path of its own: the whole SMTP username, or the whole S3 bucket
+# segment, is the enrollment code (unitysvc/unitysvc#2726).
+_ENROLLMENT_CODE = re.compile(r"^\{\{\s*enrollment\.code\s*\}\}$")
+_S3_ENROLLMENT_BASE_URL = re.compile(r"^\$\{S3_GATEWAY_BASE_URL\}/\{\{\s*enrollment\.code\s*\}\}/?$")
+
+
+def _reads_per_enrollment_value(value: str) -> bool:
+    try:
+        tree = Environment().parse(value)
+    except TemplateSyntaxError:
+        return False  # reported by validate_listing_jinja_var_references
+    return any(node.name in _PER_ENROLLMENT_NAMES for node in tree.find_all(nodes.Name))
+
+
+def validate_listing_interfaces_are_canonical(user_access_interfaces: dict[str, Any] | None) -> list[str]:
+    """Refuse user access interfaces that read a per-enrollment value.
+
+    A user access interface is the service's canonical address, the same for
+    every caller, so it may not reference ``enrollment.*`` or ``params.*``. An
+    enrollment is reached through an address the platform gives it: on the API
+    gateway ``/e/<CODE>``, which a listing never declares. The exceptions are the
+    protocols with no such path, where the enrollment code itself is the
+    address: an SMTP ``routing_key.username`` or an S3 bucket segment that is
+    exactly ``{{ enrollment.code }}``. Values that are the same for every caller
+    (``service_name``, ``routing_vars``) stay allowed (unitysvc/unitysvc#2726).
+
+    Returns a list of error messages (empty if all valid).
+    """
+    if not user_access_interfaces or not isinstance(user_access_interfaces, dict):
+        return []
+
+    errors: list[str] = []
+    for iface_name, iface in user_access_interfaces.items():
+        if not isinstance(iface, dict):
+            continue
+        base_url = iface.get("base_url")
+        prefix = f"user_access_interfaces.{iface_name}"
+        for field_path, value in _iter_strings(iface, prefix):
+            if "{{" not in value and "{%" not in value:
+                continue
+            if not _reads_per_enrollment_value(value):
+                continue
+            if (
+                base_url == _SMTP_GATEWAY_BASE_URL
+                and field_path == f"{prefix}.routing_key.username"
+                and _ENROLLMENT_CODE.match(value.strip())
+            ):
+                continue
+            if field_path == f"{prefix}.base_url" and _S3_ENROLLMENT_BASE_URL.match(value.strip()):
+                continue
+            if isinstance(base_url, str) and base_url.startswith(_API_GATEWAY_PREFIX):
+                hint = (
+                    "an enrollment on the API gateway is reached at /e/<CODE>, which the platform "
+                    "provides; remove this interface (or this part of it)"
+                )
+            else:
+                hint = (
+                    "the only per-enrollment form allowed is an SMTP routing_key.username or an "
+                    "S3 bucket segment that is exactly '{{ enrollment.code }}'"
+                )
+            errors.append(
+                f"{field_path}: a user access interface is the service's canonical address and "
+                f"may not read enrollment.* or params.* ('{value}'); {hint}."
+            )
+    return errors
 
 
 def validate_listing_jinja_var_references(data: dict[str, Any] | None) -> list[str]:
