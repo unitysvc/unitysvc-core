@@ -93,6 +93,84 @@ def test_validate_service_json(schema_dir, example_data_dir):
     assert is_valid, f"Service JSON validation failed: {errors}"
 
 
+def test_validate_service_json_refuses_invalid_access_requests(schema_dir, example_data_dir, tmp_path):
+    """A channel's customer_access_requests are checked locally, as at backend ingest."""
+    import json
+    import shutil
+
+    service_dir = tmp_path / "provider2" / "services" / "service2"
+    shutil.copytree(example_data_dir / "provider2", tmp_path / "provider2")
+    offering_file = service_dir / "offering.json"
+    offering = json.loads(offering_file.read_text())
+    channel = next(iter(offering["upstream_access_config"]))
+    offering["upstream_access_config"][channel]["customer_access_requests"] = [
+        {"object": "service:*", "permissions": ["invoke"], "justification": "x"}
+    ]
+    offering_file.write_text(json.dumps(offering))
+
+    is_valid, errors = DataValidator(tmp_path, schema_dir).validate_data_file(offering_file)
+
+    assert not is_valid
+    assert any("'service:*' cannot be requested" in e for e in errors), errors
+
+
+def _offering_with(tmp_path, example_data_dir, **fields):
+    """Copy service2 into tmp_path and merge ``fields`` into its offering."""
+    import json
+    import shutil
+
+    shutil.copytree(example_data_dir / "provider2", tmp_path / "provider2")
+    offering_file = tmp_path / "provider2" / "services" / "service2" / "offering.json"
+    offering = json.loads(offering_file.read_text())
+    offering.update(fields)
+    offering_file.write_text(json.dumps(offering))
+    return offering_file, offering
+
+
+def test_validate_service_json_refuses_malformed_exports(schema_dir, example_data_dir, tmp_path):
+    offering_file, _ = _offering_with(
+        tmp_path, example_data_dir, exports={"options": {"type": "object", "properties": {"per_day": {"type": "x"}}}}
+    )
+
+    is_valid, errors = DataValidator(tmp_path, schema_dir).validate_data_file(offering_file)
+
+    assert not is_valid
+    assert any("exports.options" in e for e in errors), errors
+
+
+def test_validate_service_json_reports_a_union_typed_option(schema_dir, example_data_dir, tmp_path):
+    """An unsupported option type is a validation error, not an exception."""
+    offering_file, _ = _offering_with(
+        tmp_path,
+        example_data_dir,
+        exports={"options": {"type": "object", "properties": {"level": {"type": ["string", "null"]}}}},
+    )
+
+    is_valid, errors = DataValidator(tmp_path, schema_dir).validate_data_file(offering_file)
+
+    assert not is_valid
+    assert any("must be one type" in e for e in errors), errors
+
+
+def test_validate_service_json_checks_access_requests_against_the_resolver(schema_dir, example_data_dir, tmp_path):
+    """With a catalog resolver, a request naming an unpublished service is refused."""
+    import json
+
+    offering_file, offering = _offering_with(tmp_path, example_data_dir)
+    channel = next(iter(offering["upstream_access_config"]))
+    offering["upstream_access_config"][channel]["customer_access_requests"] = [
+        {"object": "service:no-such-svc", "permissions": ["read"], "justification": "x"}
+    ]
+    offering_file.write_text(json.dumps(offering))
+
+    assert DataValidator(tmp_path, schema_dir).validate_data_file(offering_file)[0]
+    is_valid, errors = DataValidator(tmp_path, schema_dir, exports_resolver=lambda name: None).validate_data_file(
+        offering_file
+    )
+    assert not is_valid
+    assert any("service:no-such-svc is not a published service" in e for e in errors), errors
+
+
 def test_validate_listing_toml(schema_dir, example_data_dir):
     """Test validation of listing TOML file."""
     validator = DataValidator(example_data_dir, schema_dir)

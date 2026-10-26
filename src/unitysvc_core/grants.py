@@ -1,0 +1,375 @@
+"""Service access: what a service exports, and what a seller asks a customer to approve.
+
+Three stages (unitysvc/unitysvc#2720):
+
+* **Exports** — what a target service exposes. A service declares it in its own
+  definition, as the offering's ``exports``::
+
+      "exports": {
+        "permissions": {"read": ["GET /records/*"], "write": ["POST /records"]},
+        "options": {"type": "object", "properties": {
+          "log_level": {"type": "string", "enum": ["info", "warn", "error"], "default": "info"},
+          "max_size": {"type": "integer", "minimum": 1}}}
+      }
+
+  ``invoke`` is always exported and covers every route. A service that
+  declares nothing exports just that: ``invoke``, no options, which
+  ``service:<name>`` or ``service:*`` already covers. Permissions name the
+  routes they cover; they are never inferred from HTTP methods
+  (``POST /chat/completions`` modifies nothing). ``options`` is a JSON Schema,
+  like an enrollment's ``user_parameters_schema`` (with an optional
+  ``options_ui_schema``), of the query arguments the service accepts as
+  customizations, including limits only it can apply (a message size); a
+  property's ``default`` is what the service does when the option is not sent.
+  Each property is a string, integer, number, boolean or array of strings,
+  serialized as an OpenAPI form-style query parameter (arrays comma-joined).
+
+* **Customer access requests** — what a seller asks the enrolling customer to
+  approve: to use other services through that customer's account and
+  authority (write to their log, notify them, call AI with their preference
+  and wallet). A channel declares them as
+  ``upstream_access_config.<channel>.customer_access_requests``::
+
+      {"object": "service:log", "permissions": ["invoke"],
+       "required": true, "justification": "Records each check you run",
+       "options": "log_level=warn",
+       "limits": {"count_per_day": 1000}}
+
+  A request grants nothing by itself. Its ``options`` and ``limits`` only
+  pre-fill the enrollment form.
+
+* **The key's policy** — what the customer actually approves when enrolling:
+  they confirm or decline each request, set its options and limits, and may
+  add limits of their own. Each approved request becomes an entry (a grant) in
+  the policy of the key issued for that enrollment, in the same shape.
+
+**Invariant.** Calls made under an approved request run under the enrolling
+customer's delegated identity, within the approved permissions, options and
+limits. Looking up a target's ``exports`` validates a request's *capabilities*;
+customer consent and key issuance establish its *authority*.
+
+* **Options travel as a query string.** When the gateway constructs the target's
+  upstream URL, it appends the policy entry's ``options`` (``?log_level=warn``),
+  so they reach any upstream, ``log://`` included, the way query arguments
+  already do. An option the policy does not set is left to the service's own
+  default.
+
+* **Limits are universal**: the platform meters every call, so any service can
+  be limited by ``count`` or ``amount`` per hour, day or month, or in total,
+  without exporting anything (``{"count_per_day": 2, "amount_per_month": "2.00"}``).
+
+Today a request's ``object`` is ``service:<name>``; ``enrollment:<CODE>`` (one
+enrollment of an enrollable service) may follow.
+
+There is no central list of services. Core does no I/O: a request that claims
+more than the default (a permission other than ``invoke``, or any option) is
+checked against its target's ``exports`` when the caller passes an
+:data:`ExportsResolver` that looks the target up in the published catalog
+bundle, where every service row carries its ``exports``. Limits need no lookup.
+Without a resolver, only the shape of each entry is checked.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Callable
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from typing import Any
+from urllib.parse import parse_qsl
+
+from jsonschema import Draft7Validator
+from jsonschema.exceptions import SchemaError
+from referencing import Registry
+
+from .models.validators import validate_service_identifier
+
+SERVICE_PREFIX = "service:"
+INVOKE = "invoke"
+# The channel key a seller's requests are declared under.
+REQUESTS_KEY = "customer_access_requests"
+
+ExportsResolver = Callable[[str], dict[str, Any] | None]
+"""Look up a service by name: its ``exports`` (``{}`` when it declares none),
+or ``None`` when the catalog has no such service."""
+
+_ROUTE = re.compile(r"^(\*|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /\S*$")
+# An option is a query argument, so its name stays plain.
+_OPTION_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+# ``count_per_day``, ``amount_per_month``, ``count_total`` ...
+_LIMIT = re.compile(r"^(count|amount)_(per_hour|per_day|per_month|total)$")
+
+
+# The JSON Schema types an option may have: each serializes to one query value
+# (an array as comma-joined strings, OpenAPI ``style: form, explode: false``).
+_SCALAR_TYPES = frozenset({"string", "integer", "number", "boolean"})
+
+
+@dataclass(frozen=True)
+class Exports:
+    permissions: dict[str, tuple[str, ...]]
+    # The ``options`` JSON Schema (``{"type": "object", "properties": ...}``),
+    # empty when the service accepts none.
+    options: dict[str, Any]
+
+    @property
+    def permission_names(self) -> tuple[str, ...]:
+        return (INVOKE, *self.permissions)
+
+    @property
+    def option_names(self) -> tuple[str, ...]:
+        return tuple(self.options.get("properties", {}))
+
+
+DEFAULT_EXPORTS = Exports({}, {})
+
+_REQUEST_KEYS = frozenset({"object", "permissions", "required", "justification", "options", "limits"})
+
+
+def _strings(value: Any) -> bool:
+    """A non-empty list of distinct non-empty strings."""
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(v, str) and v.strip() for v in value)
+        and len(set(value)) == len(value)
+    )
+
+
+def parse_exports(where: str, declared: Any) -> Exports:
+    """Read an offering's ``exports``, refusing a malformed one.
+
+    ``None`` or ``{}`` is the default: ``invoke`` on every route, no options.
+    """
+    if declared is None:
+        return DEFAULT_EXPORTS
+    if not isinstance(declared, dict):
+        raise ValueError(f"{where} must be an object")
+    if extra := set(declared) - {"permissions", "options", "options_ui_schema"}:
+        raise ValueError(f"{where}: unknown keys {sorted(extra)}")
+    permissions = declared.get("permissions", {})
+    if not isinstance(permissions, dict):
+        raise ValueError(f'{where}.permissions must be {{"<name>": ["<METHOD> /<path>", ...]}}')
+    for name, routes in permissions.items():
+        at = f"{where}.permissions.{name}"
+        if name == INVOKE:
+            raise ValueError(f"{at}: '{INVOKE}' is always exported and covers every route")
+        if not _strings(routes) or not all(_ROUTE.match(r) for r in routes):
+            raise ValueError(f"{at} must be a non-empty list of routes like 'GET /records/*'")
+    options = declared.get("options", {})
+    if options != {}:
+        _check_options_schema(f"{where}.options", options)
+    ui_schema = declared.get("options_ui_schema")
+    if ui_schema is not None and not isinstance(ui_schema, dict):
+        raise ValueError(f"{where}.options_ui_schema must be an object")
+    return Exports({name: tuple(routes) for name, routes in permissions.items()}, options)
+
+
+def _check_options_schema(where: str, schema: Any) -> None:
+    """Refuse an ``options`` schema that is not a JSON Schema object whose
+    properties are query-serializable: ``string``, ``integer``, ``number``,
+    ``boolean``, or an ``array`` of strings. Options are optional, so
+    ``required`` is refused, and only the declared properties are accepted."""
+    if not isinstance(schema, dict) or schema.get("type") != "object" or not isinstance(schema.get("properties"), dict):
+        raise ValueError(f'{where} must be a JSON Schema {{"type": "object", "properties": {{...}}}}')
+    if extra := set(schema) - {"type", "properties", "additionalProperties", "title", "description"}:
+        raise ValueError(f"{where}: unknown keys {sorted(extra)} (options are optional; no 'required')")
+    if schema.get("additionalProperties", False) is not False:
+        raise ValueError(f"{where}.additionalProperties must be false")
+    if ref := _find_reference(schema):
+        raise ValueError(f"{where}: {ref!r} is not allowed; an options schema is self-contained")
+    try:
+        Draft7Validator.check_schema(schema)
+    except SchemaError as exc:
+        raise ValueError(f"{where} is not a valid JSON Schema: {exc.message}") from None
+    for name, prop in schema["properties"].items():
+        at = f"{where}.properties.{name}"
+        if not _OPTION_NAME.match(name):
+            raise ValueError(f"{at}: an option is a query argument; name it in lowercase letters, digits and '_'")
+        kind = prop.get("type") if isinstance(prop, dict) else None
+        if not isinstance(kind, str):
+            raise ValueError(f"{at}.type must be one type, one of {sorted(_SCALAR_TYPES | {'array'})}")
+        if kind == "array":
+            items = prop.get("items")
+            if not isinstance(items, dict) or items.get("type") != "string":
+                raise ValueError(f"{at}: an array option is a list of strings")
+        elif kind not in _SCALAR_TYPES:
+            raise ValueError(f"{at}.type must be one of {sorted(_SCALAR_TYPES | {'array'})}")
+
+
+_REFERENCE_KEYS = frozenset({"$ref", "$dynamicRef", "$recursiveRef"})
+
+
+def _find_reference(node: Any) -> str | None:
+    """The first schema reference keyword anywhere in ``node``, or ``None``.
+
+    Options schemas are flat, so a reference is never needed, and resolving one
+    could fetch a URL: refusing them keeps validation free of I/O."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in _REFERENCE_KEYS:
+                return str(key)
+            if found := _find_reference(value):
+                return found
+    elif isinstance(node, list):
+        for item in node:
+            if found := _find_reference(item):
+                return found
+    return None
+
+
+def _typed(prop: dict[str, Any], text: str) -> Any:
+    """``text`` (a query value) as the type ``prop`` declares, or ``text``
+    unchanged when it does not convert, so the schema reports the mismatch."""
+    kind = prop.get("type")
+    try:
+        if kind == "integer":
+            return int(text)
+        if kind == "number":
+            number = Decimal(text)
+            return float(number) if number.is_finite() else text
+    except (ValueError, InvalidOperation):
+        return text
+    if kind == "boolean":
+        return {"true": True, "false": False}.get(text, text)
+    if kind == "array":
+        return text.split(",")
+    return text
+
+
+def _options_error(schema: dict[str, Any], values: dict[str, str]) -> str | None:
+    """Why query-string option ``values`` do not satisfy the ``options``
+    schema, or ``None``."""
+    properties = schema.get("properties", {})
+    typed = {name: _typed(properties.get(name, {}), text) for name, text in values.items()}
+    # An empty registry retrieves nothing, so validation never performs I/O even
+    # for a schema that bypassed ``_check_options_schema``.
+    validator = Draft7Validator(schema, registry=Registry())
+    error = next(iter(sorted(validator.iter_errors(typed), key=lambda e: list(e.path))), None)
+    if error is None:
+        return None
+    field = ".".join(str(p) for p in error.path)
+    return f"{field} {error.message}" if field else error.message
+
+
+def _positive_decimal(text: str) -> bool:
+    try:
+        return Decimal(text).is_finite() and Decimal(text) > 0
+    except InvalidOperation:
+        return False
+
+
+def parse_options(where: str, options: Any) -> dict[str, str]:
+    """Read a grant's ``options`` query string (``"log_level=warn&max_size=2000"``)
+    into names and values, refusing a malformed one. Each name appears once."""
+    if not isinstance(options, str):
+        raise ValueError(f'{where} must be a query string like "log_level=warn"')
+    if not options:
+        return {}
+    try:
+        pairs = parse_qsl(options, keep_blank_values=True, strict_parsing=True)
+    except ValueError:
+        raise ValueError(f'{where} must be a query string like "log_level=warn"') from None
+    parsed: dict[str, str] = {}
+    for name, value in pairs:
+        if not _OPTION_NAME.match(name):
+            raise ValueError(f"{where}: {name!r} is not an option name")
+        if name in parsed:
+            raise ValueError(f"{where}: {name} is set twice")
+        if not value:
+            raise ValueError(f'{where} must be a query string like "log_level=warn"; {name} has no value')
+        parsed[name] = value
+    return parsed
+
+
+def validate_limits(where: str, limits: Any) -> None:
+    """Refuse ``limits`` unless it maps ``<metric>_per_<window>`` or
+    ``<metric>_total`` to a maximum: ``count`` a positive integer, ``amount`` a
+    finite positive decimal, as a number (``2.5``) or a string (``"2.50"``).
+    Windows: hour, day, month. The same shape serves a request's suggested
+    limits, the limits a customer sets in a key's policy, and an enrollment's own
+    limits."""
+    if not isinstance(limits, dict):
+        raise ValueError(f'{where} must be an object like {{"count_per_day": 2}}')
+    for key, value in limits.items():
+        at = f"{where}.{key}"
+        match = _LIMIT.match(key) if isinstance(key, str) else None
+        if match is None:
+            raise ValueError(f"{at}: a limit is count_/amount_ followed by per_hour, per_day, per_month or total")
+        if match.group(1) == "count":
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                raise ValueError(f"{at} must be a positive integer")
+        elif isinstance(value, bool) or not isinstance(value, (int, float, str)) or not _positive_decimal(str(value)):
+            raise ValueError(f"{at} must be a positive amount")
+
+
+def validate_access_requests(where: str, requests: Any, resolve: ExportsResolver | None = None) -> None:
+    """Refuse a channel's ``customer_access_requests`` unless every entry is a
+    valid request.
+
+    ``where`` prefixes error messages
+    (``upstream_access_config.<channel>.customer_access_requests``).
+    With ``resolve``, an entry claiming more than the default (a permission
+    other than ``invoke``, or any option) is checked against its target's
+    ``exports``, and an unknown target is refused; a default claim and limits
+    need no lookup. Without ``resolve``, only the shape is checked.
+    """
+    if not isinstance(requests, list):
+        raise ValueError(f"{where} must be a list of access request objects")
+    seen: set[str] = set()
+    for index, entry in enumerate(requests):
+        at = f"{where}[{index}]"
+        if not isinstance(entry, dict) or not isinstance(entry.get("object"), str):
+            raise ValueError(f'{at} must be {{"object": "service:<name>", ...}}')
+        obj = entry["object"]
+        if not obj.startswith(SERVICE_PREFIX):
+            raise ValueError(f"{at}: {obj!r} cannot be requested; name one service as 'service:<name>'")
+        name = obj.removeprefix(SERVICE_PREFIX)
+        try:
+            validate_service_identifier(name, "requested service")
+        except ValueError as exc:
+            raise ValueError(f"{at}: {obj!r} cannot be requested: {exc}") from None
+        if obj in seen:
+            raise ValueError(f"{at}: {obj} is listed twice")
+        seen.add(obj)
+        if extra := set(entry) - _REQUEST_KEYS:
+            raise ValueError(f"{at}: unknown keys {sorted(extra)}")
+        justification = entry.get("justification")
+        if not isinstance(justification, str) or not justification.strip():
+            raise ValueError(
+                f"{at}.justification must say why the service needs {obj}; the customer reads it before approving"
+            )
+        if not isinstance(entry.get("required", False), bool):
+            raise ValueError(f"{at}.required must be true or false")
+        permissions: list[str] = entry.get("permissions") or []
+        if not _strings(permissions):
+            raise ValueError(f"{at}.permissions must be a non-empty list of distinct names")
+        options = parse_options(f"{at}.options", entry.get("options", ""))
+        validate_limits(f"{at}.limits", entry.get("limits", {}))
+        # A default claim (``invoke``, no options) is what every service
+        # exports, so only a claim beyond it needs the target's exports.
+        if resolve is None or (set(permissions) <= {INVOKE} and not options):
+            continue
+        declared = resolve(name)
+        if declared is None:
+            raise ValueError(f"{at}: {obj} is not a published service")
+        target = parse_exports(f"{obj} exports", declared)
+        if not set(permissions) <= set(target.permission_names):
+            raise ValueError(f"{at}.permissions: {obj} exports only {list(target.permission_names)}")
+        if unknown := sorted(set(options) - set(target.option_names)):
+            raise ValueError(
+                f"{at}.options: {obj} accepts no option {unknown[0]!r} "
+                f"(options: {sorted(target.option_names) or 'none'})"
+            )
+        if error := _options_error(target.options, options):
+            raise ValueError(f"{at}.options: {error}")
+
+
+def validate_channel_access_requests(config: Any, resolve: ExportsResolver | None = None) -> None:
+    """Refuse the ``customer_access_requests`` of any channel of an ``upstream_access_config``
+    unless valid. Each channel declares its own (unitysvc/unitysvc#2726)."""
+    if not isinstance(config, dict):
+        return
+    for name, channel in config.items():
+        if isinstance(channel, dict) and REQUESTS_KEY in channel:
+            validate_access_requests(f"upstream_access_config.{name}.{REQUESTS_KEY}", channel[REQUESTS_KEY], resolve)

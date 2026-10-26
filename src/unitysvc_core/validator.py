@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedError
 from jsonschema.validators import Draft7Validator
 
+from .grants import ExportsResolver
 from .parameter_usage import validate_required_parameter_usage
 from .utils import SCHEMA_TO_STEM, is_hidden_path, load_data_file, schema_for_path
 
@@ -68,9 +69,12 @@ class DataValidationError(Exception):
 class DataValidator:
     """Validates data files against JSON schemas."""
 
-    def __init__(self, data_dir: Path, schema_dir: Path):
+    def __init__(self, data_dir: Path, schema_dir: Path, exports_resolver: ExportsResolver | None = None):
         self.data_dir = data_dir
         self.schema_dir = schema_dir
+        # Looks up the service a channel's request names; without it only the
+        # shape of each customer access request is checked (see unitysvc_core.grants).
+        self.exports_resolver = exports_resolver
         self.schemas: dict[str, dict[str, Any]] = {}
         self.load_schemas()
 
@@ -969,6 +973,17 @@ class DataValidator:
             from .models.validators import validate_mcp_offering
 
             errors.extend(validate_mcp_offering(data))
+
+            # Validate what this service exports and what each channel requests
+            # from customers (offering_v1 only); backend ingest runs the same checks
+            # (unitysvc/unitysvc#2720).
+            from .grants import parse_exports, validate_channel_access_requests
+
+            try:
+                parse_exports("exports", data.get("exports"))
+                validate_channel_access_requests(data.get("upstream_access_config"), self.exports_resolver)
+            except ValueError as exc:
+                errors.append(str(exc))
 
         # Validate service_options keys and value types (listing_v1 only)
         service_options_errors = self.validate_service_options_keys(data, schema_name)
