@@ -108,7 +108,7 @@ class ServiceOfferingData(BaseModel):
         description=(
             "How other services may use this one (what a customer access request can ask for): "
             '{"permissions": {<name>: ["<METHOD> /<path>", ...]}, '
-            '"options": <JSON Schema object of the query arguments it accepts>, '
+            '"options": <JSON Schema object of the options a grant may set>, '
             '"options_ui_schema": <rjsf uiSchema>}. '
             "Without permissions, the service exports one, invoke, on every route; with permissions, "
             "exactly those (invoke only if declared), so a data service declaring read/write is never "

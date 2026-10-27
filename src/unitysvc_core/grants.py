@@ -23,11 +23,13 @@ Three stages (unitysvc/unitysvc#2720):
   name the routes they cover; they are never inferred from HTTP methods
   (``POST /chat/completions`` modifies nothing). ``options`` is a JSON Schema,
   like an enrollment's ``user_parameters_schema`` (with an optional
-  ``options_ui_schema``), of the query arguments the service accepts as
-  customizations, including limits only it can apply (a message size); a
-  property's ``default`` is what the service does when the option is not sent.
-  Each property is a string, integer, number, boolean or array of strings,
-  serialized as an OpenAPI form-style query parameter (arrays comma-joined).
+  ``options_ui_schema``), of the customizations a grant may set on the
+  service, including limits only it can apply (a message size); a property's
+  ``default`` is what the service does when the policy does not set the
+  option. Each property is a string, integer, number, boolean or array of
+  strings, so a grant can write its options in query-string syntax
+  (``"log_level=warn"``, arrays comma-joined). That is only how a grant stores
+  them, not how they reach the service (below).
 
 * **Customer access requests** — what a seller asks the enrolling customer to
   approve: to use other services through that customer's account and
@@ -53,11 +55,18 @@ customer's delegated identity, within the approved permissions, options and
 limits. Looking up a target's ``exports`` validates a request's *capabilities*;
 customer consent and key issuance establish its *authority*.
 
-* **Options travel as a query string.** When the gateway constructs the target's
-  upstream URL, it appends the policy entry's ``options`` (``?log_level=warn``),
-  so they reach any upstream, ``log://`` included, the way query arguments
-  already do. An option the policy does not set is left to the service's own
-  default.
+* **The service applies its options; the upstream URL is never the channel.**
+  The gateway does not change a target's upstream URL (its ``base_url`` or
+  query) to carry policy. A service implemented in the gateway (``me``,
+  ``log``, ``ai``, ``notify``, ``email``, ``bill``) reads the calling key's
+  policy from the routing context and applies the option itself. A proxied
+  service can only be influenced through its own upstream's interface, so it
+  applies an option only where its configuration maps it into the upstream
+  request in a form that upstream understands (for example a request
+  transformer setting a body field); until such a mapping exists, options are
+  enforced by gateway-implemented services only. Either way the policy itself
+  never reaches a seller. An option the policy does not set takes the
+  service's ``default``.
 
 * **Limits are universal**: the platform meters every call, so any service can
   be limited by ``count`` or ``amount`` per hour, day or month, or in total,
@@ -100,7 +109,8 @@ ExportsResolver = Callable[[str], dict[str, Any] | None]
 or ``None`` when the catalog has no such service."""
 
 _ROUTE = re.compile(r"^(\*|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /\S*$")
-# An option is a query argument, so its name stays plain; so does a permission's.
+# A grant writes its options in query-string syntax, so an option's name stays
+# plain; so does a permission's.
 _OPTION_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 _PERMISSION_NAME = _OPTION_NAME
 # ``count_per_day``, ``amount_per_month``, ``count_total`` ...
@@ -203,7 +213,7 @@ def _check_options_schema(where: str, schema: Any) -> None:
     for name, prop in schema["properties"].items():
         at = f"{where}.properties.{name}"
         if not _OPTION_NAME.match(name):
-            raise ValueError(f"{at}: an option is a query argument; name it in lowercase letters, digits and '_'")
+            raise ValueError(f"{at}: an option name is lowercase letters, digits and '_'")
         kind = prop.get("type") if isinstance(prop, dict) else None
         if not isinstance(kind, str):
             raise ValueError(f"{at}.type must be one type, one of {sorted(_SCALAR_TYPES | {'array'})}")

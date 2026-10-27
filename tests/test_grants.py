@@ -120,7 +120,7 @@ def test_each_catalog_export_parses(name: str) -> None:
         ({"options": {"max_size": {"type": "integer"}}}, "JSON Schema"),
         ({"options": {"type": "object", "properties": {}, "required": ["x"]}}, "no 'required'"),
         ({"options": {"type": "object", "properties": {}, "additionalProperties": True}}, "additionalProperties"),
-        ({"options": _options(**{"Log-Level": {"type": "string"}})}, "query argument"),
+        ({"options": _options(**{"Log-Level": {"type": "string"}})}, "option name"),
         ({"options": _options(nested={"type": "object"})}, "type must be one of"),
         ({"options": _options(untyped={"enum": ["a"]})}, "must be one type"),
         ({"options": _options(ids={"type": "array", "items": {"type": "integer"}})}, "list of strings"),
