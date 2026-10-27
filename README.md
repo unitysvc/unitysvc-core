@@ -188,3 +188,29 @@ Three stages (unitysvc/unitysvc#2720): a target service's **`exports`** (what it
 
 - `DataValidator(data_dir, schema_dir, exports_resolver=...)` runs both checks on every `offering_v1` (`exports` and each channel's `customer_access_requests`). The seller SDK passes a resolver that downloads the catalog bundle once and reads the target row's `exports`; offline it passes none and gets the shape checks.
 - Backend ingest calls the same function with a resolver over the published services, so an unknown target, permission or option fails at upload.
+
+### Enrollment parameters on channels
+
+A channel may declare its own enrollment parameters, so each plan of a service asks for what it needs (unitysvc/unitysvc#2726):
+
+```json
+"upstream_access_config": {
+  "plus": {
+    "base_url": "https://u/{{ params.folder }}",
+    "params": {
+      "schema": {"type": "object", "properties": {"folder": {"type": "string"}}, "required": ["folder"]},
+      "ui_schema": {},
+      "testing_defaults": {"folder": "ops"}
+    }
+  }
+}
+```
+
+`params.schema` is a JSON Schema of the parameters (a property's own `default` pre-fills the customer's form), `params.ui_schema` holds form hints, and `params.testing_defaults` holds the values the platform tests the channel with. Once any channel declares `params`:
+
+- a channel reads only the parameters its `params.schema` declares, and a channel that reads `{{ params.* }}` must declare its own `params` (`validate_channel_parameters`, on every `offering_v1`);
+- each required parameter has a value in that channel's `params.testing_defaults`;
+- each required parameter is read by its own channel or by document content; another channel's use does not count (`validate_required_parameter_usage`, which backend ingest also calls);
+- the listing must not also declare `user_parameters_schema`.
+
+When no channel declares `params`, the listing-level `user_parameters_schema` applies to the whole service as before.
