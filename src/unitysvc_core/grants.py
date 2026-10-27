@@ -12,17 +12,24 @@ Three stages (unitysvc/unitysvc#2720):
           "max_size": {"type": "integer", "minimum": 1}}}
       }
 
-  ``invoke`` is always exported and covers every route. A service that
-  declares nothing exports just that: ``invoke``, no options, which
-  ``service:<name>`` or ``service:*`` already covers. Permissions name the
-  routes they cover; they are never inferred from HTTP methods
+  A service that declares no ``permissions`` has one implicit permission,
+  ``invoke``, covering every route (``"* /*"``); that is what
+  ``service:<name>`` and the ``service:*`` wildcard grant. A service that
+  declares ``permissions`` has exactly those, each covering the routes it
+  lists, and ``invoke`` only if it declares it too. A data service (``me``,
+  ``log``, ``needs``) therefore declares ``read`` / ``write`` and no
+  ``invoke``: holding the customer's own data, it is reached only by a grant
+  that names its permissions, never by ``invoke`` or a wildcard. Permissions
+  name the routes they cover; they are never inferred from HTTP methods
   (``POST /chat/completions`` modifies nothing). ``options`` is a JSON Schema,
   like an enrollment's ``user_parameters_schema`` (with an optional
-  ``options_ui_schema``), of the query arguments the service accepts as
-  customizations, including limits only it can apply (a message size); a
-  property's ``default`` is what the service does when the option is not sent.
-  Each property is a string, integer, number, boolean or array of strings,
-  serialized as an OpenAPI form-style query parameter (arrays comma-joined).
+  ``options_ui_schema``), of the customizations a grant may set on the
+  service, including limits only it can apply (a message size); a property's
+  ``default`` is what the service does when the policy does not set the
+  option. Each property is a string, integer, number, boolean or array of
+  strings, so a grant can write its options in query-string syntax
+  (``"log_level=warn"``, arrays comma-joined). That is only how a grant stores
+  them, not how they reach the service (below).
 
 * **Customer access requests** — what a seller asks the enrolling customer to
   approve: to use other services through that customer's account and
@@ -48,11 +55,18 @@ customer's delegated identity, within the approved permissions, options and
 limits. Looking up a target's ``exports`` validates a request's *capabilities*;
 customer consent and key issuance establish its *authority*.
 
-* **Options travel as a query string.** When the gateway constructs the target's
-  upstream URL, it appends the policy entry's ``options`` (``?log_level=warn``),
-  so they reach any upstream, ``log://`` included, the way query arguments
-  already do. An option the policy does not set is left to the service's own
-  default.
+* **The service applies its options; the upstream URL is never the channel.**
+  The gateway does not change a target's upstream URL (its ``base_url`` or
+  query) to carry policy. A service implemented in the gateway (``me``,
+  ``log``, ``ai``, ``notify``, ``email``, ``bill``) reads the calling key's
+  policy from the routing context and applies the option itself. A proxied
+  service can only be influenced through its own upstream's interface, so it
+  applies an option only where its configuration maps it into the upstream
+  request in a form that upstream understands (for example a request
+  transformer setting a body field); until such a mapping exists, options are
+  enforced by gateway-implemented services only. Either way the policy itself
+  never reaches a seller. An option the policy does not set takes the
+  service's ``default``.
 
 * **Limits are universal**: the platform meters every call, so any service can
   be limited by ``count`` or ``amount`` per hour, day or month, or in total,
@@ -61,12 +75,13 @@ customer consent and key issuance establish its *authority*.
 Today a request's ``object`` is ``service:<name>``; ``enrollment:<CODE>`` (one
 enrollment of an enrollable service) may follow.
 
-There is no central list of services. Core does no I/O: a request that claims
-more than the default (a permission other than ``invoke``, or any option) is
-checked against its target's ``exports`` when the caller passes an
-:data:`ExportsResolver` that looks the target up in the published catalog
-bundle, where every service row carries its ``exports``. Limits need no lookup.
-Without a resolver, only the shape of each entry is checked.
+There is no central list of services. Core does no I/O: every request's
+permissions and options are checked against its target's ``exports`` when the
+caller passes an :data:`ExportsResolver` that looks the target up in the
+published catalog bundle, where every service row carries its ``exports``. An
+``invoke`` claim is looked up too, since a service that declares permissions
+may not export ``invoke``. Limits need no lookup. Without a resolver, only the
+shape of each entry is checked.
 """
 
 from __future__ import annotations
@@ -94,8 +109,10 @@ ExportsResolver = Callable[[str], dict[str, Any] | None]
 or ``None`` when the catalog has no such service."""
 
 _ROUTE = re.compile(r"^(\*|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /\S*$")
-# An option is a query argument, so its name stays plain.
+# A grant writes its options in query-string syntax, so an option's name stays
+# plain; so does a permission's.
 _OPTION_NAME = re.compile(r"^[a-z][a-z0-9_]*$")
+_PERMISSION_NAME = _OPTION_NAME
 # ``count_per_day``, ``amount_per_month``, ``count_total`` ...
 _LIMIT = re.compile(r"^(count|amount)_(per_hour|per_day|per_month|total)$")
 
@@ -114,14 +131,17 @@ class Exports:
 
     @property
     def permission_names(self) -> tuple[str, ...]:
-        return (INVOKE, *self.permissions)
+        return tuple(self.permissions)
 
     @property
     def option_names(self) -> tuple[str, ...]:
         return tuple(self.options.get("properties", {}))
 
 
-DEFAULT_EXPORTS = Exports({}, {})
+# Every route, for the implicit ``invoke`` of a service that declares no permissions.
+ALL_ROUTES = "* /*"
+DEFAULT_PERMISSIONS: dict[str, tuple[str, ...]] = {INVOKE: (ALL_ROUTES,)}
+DEFAULT_EXPORTS = Exports(DEFAULT_PERMISSIONS, {})
 
 _REQUEST_KEYS = frozenset({"object", "permissions", "required", "justification", "options", "limits"})
 
@@ -140,6 +160,9 @@ def parse_exports(where: str, declared: Any) -> Exports:
     """Read an offering's ``exports``, refusing a malformed one.
 
     ``None`` or ``{}`` is the default: ``invoke`` on every route, no options.
+    Without ``permissions`` (options only), ``invoke`` is still the one
+    permission. With ``permissions``, the service exports exactly those; it
+    may declare ``invoke`` among them.
     """
     if declared is None:
         return DEFAULT_EXPORTS
@@ -148,12 +171,15 @@ def parse_exports(where: str, declared: Any) -> Exports:
     if extra := set(declared) - {"permissions", "options", "options_ui_schema"}:
         raise ValueError(f"{where}: unknown keys {sorted(extra)}")
     permissions = declared.get("permissions", {})
-    if not isinstance(permissions, dict):
-        raise ValueError(f'{where}.permissions must be {{"<name>": ["<METHOD> /<path>", ...]}}')
+    if not isinstance(permissions, dict) or ("permissions" in declared and not permissions):
+        raise ValueError(
+            f'{where}.permissions must be {{"<name>": ["<METHOD> /<path>", ...]}} with at least one '
+            f"permission; omit it to export only '{INVOKE}' on every route"
+        )
     for name, routes in permissions.items():
         at = f"{where}.permissions.{name}"
-        if name == INVOKE:
-            raise ValueError(f"{at}: '{INVOKE}' is always exported and covers every route")
+        if not _PERMISSION_NAME.match(name):
+            raise ValueError(f"{at}: a permission name is lowercase letters, digits and '_'")
         if not _strings(routes) or not all(_ROUTE.match(r) for r in routes):
             raise ValueError(f"{at} must be a non-empty list of routes like 'GET /records/*'")
     options = declared.get("options", {})
@@ -162,6 +188,8 @@ def parse_exports(where: str, declared: Any) -> Exports:
     ui_schema = declared.get("options_ui_schema")
     if ui_schema is not None and not isinstance(ui_schema, dict):
         raise ValueError(f"{where}.options_ui_schema must be an object")
+    if not permissions:
+        return Exports(DEFAULT_PERMISSIONS, options)
     return Exports({name: tuple(routes) for name, routes in permissions.items()}, options)
 
 
@@ -185,7 +213,7 @@ def _check_options_schema(where: str, schema: Any) -> None:
     for name, prop in schema["properties"].items():
         at = f"{where}.properties.{name}"
         if not _OPTION_NAME.match(name):
-            raise ValueError(f"{at}: an option is a query argument; name it in lowercase letters, digits and '_'")
+            raise ValueError(f"{at}: an option name is lowercase letters, digits and '_'")
         kind = prop.get("type") if isinstance(prop, dict) else None
         if not isinstance(kind, str):
             raise ValueError(f"{at}.type must be one type, one of {sorted(_SCALAR_TYPES | {'array'})}")
@@ -309,10 +337,11 @@ def validate_access_requests(where: str, requests: Any, resolve: ExportsResolver
 
     ``where`` prefixes error messages
     (``upstream_access_config.<channel>.customer_access_requests``).
-    With ``resolve``, an entry claiming more than the default (a permission
-    other than ``invoke``, or any option) is checked against its target's
-    ``exports``, and an unknown target is refused; a default claim and limits
-    need no lookup. Without ``resolve``, only the shape is checked.
+    With ``resolve``, every entry's permissions and options are checked
+    against its target's ``exports`` (``invoke`` included: a service that
+    declares permissions may not export it), and an unknown target is
+    refused. Limits need no lookup. Without ``resolve``, only the shape is
+    checked.
     """
     if not isinstance(requests, list):
         raise ValueError(f"{where} must be a list of access request objects")
@@ -346,23 +375,31 @@ def validate_access_requests(where: str, requests: Any, resolve: ExportsResolver
             raise ValueError(f"{at}.permissions must be a non-empty list of distinct names")
         options = parse_options(f"{at}.options", entry.get("options", ""))
         validate_limits(f"{at}.limits", entry.get("limits", {}))
-        # A default claim (``invoke``, no options) is what every service
-        # exports, so only a claim beyond it needs the target's exports.
-        if resolve is None or (set(permissions) <= {INVOKE} and not options):
+        if resolve is None:
             continue
         declared = resolve(name)
         if declared is None:
             raise ValueError(f"{at}: {obj} is not a published service")
-        target = parse_exports(f"{obj} exports", declared)
-        if not set(permissions) <= set(target.permission_names):
-            raise ValueError(f"{at}.permissions: {obj} exports only {list(target.permission_names)}")
-        if unknown := sorted(set(options) - set(target.option_names)):
-            raise ValueError(
-                f"{at}.options: {obj} accepts no option {unknown[0]!r} "
-                f"(options: {sorted(target.option_names) or 'none'})"
-            )
-        if error := _options_error(target.options, options):
-            raise ValueError(f"{at}.options: {error}")
+        check_claim(at, obj, permissions, options, parse_exports(f"{obj} exports", declared))
+
+
+def check_claim(where: str, obj: str, permissions: list[str], options: dict[str, str], exports: Exports) -> None:
+    """Refuse a claim on ``obj`` (``service:<name>``) that its ``exports`` don't cover.
+
+    The check shared by a seller's access request and a key's policy entry:
+    every permission must be one the target exports (``invoke`` only if it
+    does), and every option, already split by :func:`parse_options`, must be
+    one it declares, with a value valid for that option's schema.
+    """
+    if not set(permissions) <= set(exports.permission_names):
+        raise ValueError(f"{where}.permissions: {obj} exports only {list(exports.permission_names)}")
+    if unknown := sorted(set(options) - set(exports.option_names)):
+        raise ValueError(
+            f"{where}.options: {obj} accepts no option {unknown[0]!r} "
+            f"(options: {sorted(exports.option_names) or 'none'})"
+        )
+    if error := _options_error(exports.options, options):
+        raise ValueError(f"{where}.options: {error}")
 
 
 def validate_channel_access_requests(config: Any, resolve: ExportsResolver | None = None) -> None:

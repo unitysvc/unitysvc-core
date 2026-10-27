@@ -8,6 +8,7 @@ import pytest
 
 from unitysvc_core.grants import (
     DEFAULT_EXPORTS,
+    check_claim,
     parse_exports,
     parse_options,
     validate_access_requests,
@@ -26,7 +27,7 @@ def _options(**properties: Any) -> dict[str, Any]:
 _CATALOG: dict[str, dict[str, Any]] = {
     "me": {
         "permissions": {"read": ["GET /profile/*"], "write": ["PUT /profile/*"]},
-        "options": _options(fields={"type": "array", "items": {"type": "string", "not": {"const": "*"}}}),
+        "options": _options(profile={"type": "array", "items": {"type": "string", "not": {"const": "*"}}}),
     },
     "needs": {"permissions": {"read": ["GET /needs/*"], "write": ["POST /needs", "PUT /needs/*"]}},
     "notify": {"options": _options(max_size={"type": "integer", "minimum": 1, "maximum": 10000})},
@@ -75,10 +76,24 @@ def test_declaring_nothing_exports_invoke_only(declared: Any) -> None:
     assert exports.options == {}
 
 
-def test_declared_permissions_add_to_invoke() -> None:
+def test_declared_permissions_are_exactly_what_is_exported() -> None:
+    """A data service declares read/write and gets no implicit invoke."""
     exports = parse_exports("exports", _CATALOG["me"])
-    assert exports.permission_names == ("invoke", "read", "write")
+    assert exports.permission_names == ("read", "write")
     assert exports.permissions["read"] == ("GET /profile/*",)
+
+
+def test_options_alone_keep_the_implicit_invoke() -> None:
+    exports = parse_exports("exports", _CATALOG["log"])
+    assert exports.permission_names == ("invoke",)
+    assert exports.permissions["invoke"] == ("* /*",)
+    assert exports.option_names == ("log_level", "include_attributes")
+
+
+def test_invoke_may_be_declared_beside_other_permissions() -> None:
+    exports = parse_exports("exports", {"permissions": {"invoke": ["POST /checks"], "admin": ["DELETE /checks/*"]}})
+    assert exports.permission_names == ("invoke", "admin")
+    assert exports.permissions["invoke"] == ("POST /checks",)
 
 
 @pytest.mark.parametrize("name", sorted(_CATALOG))
@@ -92,7 +107,10 @@ def test_each_catalog_export_parses(name: str) -> None:
         ([], "must be an object"),
         ({"scope": "x"}, r"unknown keys \['scope'\]"),
         ({"permissions": ["read"]}, "permissions must be"),
-        ({"permissions": {"invoke": ["GET /x"]}}, "always exported"),
+        ({"permissions": {}}, "at least one permission"),
+        ({"permissions": {"Read": ["GET /x"]}}, "permission name"),
+        ({"permissions": {"read-all": ["GET /x"]}}, "permission name"),
+        ({"permissions": {"read": "GET /x"}}, "list of routes"),
         ({"permissions": {"read": []}}, "list of routes"),
         ({"permissions": {"read": ["/records"]}}, "list of routes"),
         ({"permissions": {"read": ["FETCH /records"]}}, "list of routes"),
@@ -102,7 +120,7 @@ def test_each_catalog_export_parses(name: str) -> None:
         ({"options": {"max_size": {"type": "integer"}}}, "JSON Schema"),
         ({"options": {"type": "object", "properties": {}, "required": ["x"]}}, "no 'required'"),
         ({"options": {"type": "object", "properties": {}, "additionalProperties": True}}, "additionalProperties"),
-        ({"options": _options(**{"Log-Level": {"type": "string"}})}, "query argument"),
+        ({"options": _options(**{"Log-Level": {"type": "string"}})}, "option name"),
         ({"options": _options(nested={"type": "object"})}, "type must be one of"),
         ({"options": _options(untyped={"enum": ["a"]})}, "must be one type"),
         ({"options": _options(ids={"type": "array", "items": {"type": "integer"}})}, "list of strings"),
@@ -195,7 +213,7 @@ def test_malformed_limits_are_refused(limits: Any, error: str) -> None:
         _dep("service:notify", options="max_size=2000", limits={"count_per_day": 100}),
         _dep("service:ai", options="model=labs%2Fllm-fast"),
         _dep("service:bill", options="max_charge=1.50", limits={"amount_per_month": "2.00"}),
-        _dep("service:me", permissions=["read"], options="fields=contact.email,location"),
+        _dep("service:me", permissions=["read"], options="profile=contact.email,location"),
         _dep("service:needs", permissions=["read", "write"]),
         _dep("service:resp200"),
     ],
@@ -227,6 +245,9 @@ def test_an_empty_list_requests_nothing() -> None:
         ([_dep(permissions=["invoke", "invoke"])], "permissions must be"),
         ([_dep(permissions=["read"])], r"exports only \['invoke'\]"),
         ([_dep("service:resp200", permissions=["write"])], r"exports only \['invoke'\]"),
+        ([_dep("service:me")], r"exports only \['read', 'write'\]"),
+        ([_dep("service:needs", permissions=["invoke", "read"])], r"exports only \['read', 'write'\]"),
+        ([_dep("service:unknown-svc")], "service:unknown-svc is not a published service"),
         ([{k: v for k, v in _dep().items() if k != "justification"}], "justification"),
         ([_dep(justification="  ")], "justification"),
         ([_dep(required="yes")], "required must be"),
@@ -240,7 +261,7 @@ def test_an_empty_list_requests_nothing() -> None:
         ([_dep("service:notify", options="max_size=99999")], "greater than the maximum"),
         ([_dep("service:bill", options="max_charge=-1")], "max_charge -1.0 is less than or equal"),
         ([_dep("service:bill", options="max_charge=nan")], "max_charge 'nan' is not of type 'number'"),
-        ([_dep("service:me", permissions=["read"], options="fields=a,*")], "fields.1"),
+        ([_dep("service:me", permissions=["read"], options="profile=a,*")], "profile.1"),
         ([_dep(limits={"calls_per_day": 5})], "count_/amount_"),
     ],
 )
@@ -249,13 +270,16 @@ def test_an_invalid_request_is_refused(entries: Any, error: str) -> None:
         validate_access_requests(_WHERE, entries, _resolve)
 
 
-def test_a_default_claim_and_limits_need_no_lookup() -> None:
-    """invoke with no options is what every service exports; limits are universal."""
-    validate_access_requests(
-        _WHERE,
-        [_dep("service:anything"), _dep("service:other", limits={"count_per_month": 2})],
-        _never_resolve,
-    )
+def test_an_invoke_claim_is_looked_up() -> None:
+    """A service that declares permissions may not export invoke, so even the
+    default claim is checked against the target's exports."""
+    with pytest.raises(AssertionError, match="looked up anything"):
+        validate_access_requests(_WHERE, [_dep("service:anything")], _never_resolve)
+
+
+def test_limits_alone_need_no_option_schema() -> None:
+    """Limits are universal: a target that exports no options still takes them."""
+    _check(_dep("service:resp200", limits={"count_per_month": 2}))
 
 
 # Without a catalog only the shape is checked --------------------------------------
@@ -311,3 +335,25 @@ def test_validation_never_reaches_the_network(monkeypatch: pytest.MonkeyPatch) -
     remote = {"options": _options(level={"type": "string", "$ref": "http://127.0.0.1:9/schema.json"})}
     with pytest.raises(ValueError, match=r"'\$ref' is not allowed"):
         validate_access_requests(_WHERE, [_dep("service:remote", options="level=x")], lambda name: remote)
+
+
+# A key's policy entry, checked with the same rule as a request -------------------
+
+
+def test_check_claim_accepts_a_covered_claim() -> None:
+    me = parse_exports("exports", _CATALOG["me"])
+    check_claim("policy[0]", "service:me", ["read", "write"], parse_options("o", "profile=research,address.state"), me)
+
+
+@pytest.mark.parametrize(
+    ("permissions", "options", "error"),
+    [
+        (["invoke"], "", r"exports only \['read', 'write'\]"),
+        (["read"], "cap=1", "accepts no option 'cap'"),
+        (["read"], "profile=a,*", "profile.1"),
+    ],
+)
+def test_check_claim_refuses_what_exports_do_not_cover(permissions: list[str], options: str, error: str) -> None:
+    me = parse_exports("exports", _CATALOG["me"])
+    with pytest.raises(ValueError, match=error):
+        check_claim("policy[0]", "service:me", permissions, parse_options("o", options), me)
