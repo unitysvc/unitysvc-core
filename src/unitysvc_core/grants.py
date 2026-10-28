@@ -72,8 +72,11 @@ customer consent and key issuance establish its *authority*.
   be limited by ``count`` or ``amount`` per hour, day or month, or in total,
   without exporting anything (``{"count_per_day": 2, "amount_per_month": "2.00"}``).
 
-Today a request's ``object`` is ``service:<name>``; ``enrollment:<CODE>`` (one
-enrollment of an enrollable service) may follow.
+Today a request's ``object`` is ``service:<name>``, or ``apikey``: how long a
+key leased for the enrollment lives (``limits.api_key_lifespan``, up to a day,
+with a justification), which grants nothing. ``enrollment:<CODE>`` (one
+enrollment of an enrollable service) may follow. :func:`build_policy` turns a
+customer's approvals into the policy an enrollment keeps.
 
 There is no central list of services. Core does no I/O: every request's
 permissions and options are checked against its target's ``exports`` when the
@@ -101,6 +104,13 @@ from .models.validators import validate_service_identifier
 
 SERVICE_PREFIX = "service:"
 INVOKE = "invoke"
+# The key itself: a request for a longer-lived leased key, and the approved
+# lifespan in a policy. It grants nothing.
+APIKEY_OBJECT = "apikey"
+API_KEY_LIFESPAN = "api_key_lifespan"
+# Seconds a leased key lives unless the policy says otherwise, and at most.
+DEFAULT_API_KEY_LIFESPAN = 3600
+MAX_API_KEY_LIFESPAN = 86400
 # The channel key a seller's requests are declared under.
 REQUESTS_KEY = "customer_access_requests"
 
@@ -144,6 +154,9 @@ DEFAULT_PERMISSIONS: dict[str, tuple[str, ...]] = {INVOKE: (ALL_ROUTES,)}
 DEFAULT_EXPORTS = Exports(DEFAULT_PERMISSIONS, {})
 
 _REQUEST_KEYS = frozenset({"object", "permissions", "required", "justification", "options", "limits"})
+_APIKEY_REQUEST_KEYS = frozenset({"object", "justification", "limits"})
+# What a policy entry (an approved request) holds.
+_POLICY_KEYS = frozenset({"object", "permissions", "options", "limits"})
 
 
 def _strings(value: Any) -> bool:
@@ -310,15 +323,29 @@ def parse_options(where: str, options: Any) -> dict[str, str]:
     return parsed
 
 
-def validate_limits(where: str, limits: Any) -> None:
+def validate_limits(where: str, limits: Any, *, apikey: bool = False) -> None:
     """Refuse ``limits`` unless it maps ``<metric>_per_<window>`` or
     ``<metric>_total`` to a maximum: ``count`` a positive integer, ``amount`` a
     finite positive decimal, as a number (``2.5``) or a string (``"2.50"``).
     Windows: hour, day, month. The same shape serves a request's suggested
     limits, the limits a customer sets in a key's policy, and an enrollment's own
-    limits."""
+    limits.
+
+    With ``apikey`` (the ``apikey`` entry), the only limit is
+    ``api_key_lifespan``: how many seconds a leased key lives, an integer from 1
+    to :data:`MAX_API_KEY_LIFESPAN`.
+    """
     if not isinstance(limits, dict):
         raise ValueError(f'{where} must be an object like {{"count_per_day": 2}}')
+    if apikey:
+        if set(limits) != {API_KEY_LIFESPAN}:
+            raise ValueError(f'{where} must be {{"{API_KEY_LIFESPAN}": <seconds>}}')
+        value = limits[API_KEY_LIFESPAN]
+        if not isinstance(value, int) or isinstance(value, bool) or not 0 < value <= MAX_API_KEY_LIFESPAN:
+            raise ValueError(
+                f"{where}.{API_KEY_LIFESPAN} must be a whole number of seconds from 1 to {MAX_API_KEY_LIFESPAN}"
+            )
+        return
     for key, value in limits.items():
         at = f"{where}.{key}"
         match = _LIMIT.match(key) if isinstance(key, str) else None
@@ -351,6 +378,12 @@ def validate_access_requests(where: str, requests: Any, resolve: ExportsResolver
         if not isinstance(entry, dict) or not isinstance(entry.get("object"), str):
             raise ValueError(f'{at} must be {{"object": "service:<name>", ...}}')
         obj = entry["object"]
+        if obj == APIKEY_OBJECT:
+            if obj in seen:
+                raise ValueError(f"{at}: {obj} is listed twice")
+            seen.add(obj)
+            _check_apikey_request(at, entry)
+            continue
         if not obj.startswith(SERVICE_PREFIX):
             raise ValueError(f"{at}: {obj!r} cannot be requested; name one service as 'service:<name>'")
         name = obj.removeprefix(SERVICE_PREFIX)
@@ -383,6 +416,16 @@ def validate_access_requests(where: str, requests: Any, resolve: ExportsResolver
         check_claim(at, obj, permissions, options, parse_exports(f"{obj} exports", declared))
 
 
+def _check_apikey_request(at: str, entry: dict[str, Any]) -> None:
+    """The ``apikey`` request: how long a leased key should live, with why."""
+    if extra := set(entry) - _APIKEY_REQUEST_KEYS:
+        raise ValueError(f"{at}: unknown keys {sorted(extra)} (the {APIKEY_OBJECT} request takes only limits)")
+    justification = entry.get("justification")
+    if not isinstance(justification, str) or not justification.strip():
+        raise ValueError(f"{at}.justification must say why a leased key needs to live this long; the customer reads it")
+    validate_limits(f"{at}.limits", entry.get("limits"), apikey=True)
+
+
 def check_claim(where: str, obj: str, permissions: list[str], options: dict[str, str], exports: Exports) -> None:
     """Refuse a claim on ``obj`` (``service:<name>``) that its ``exports`` don't cover.
 
@@ -410,3 +453,84 @@ def validate_channel_access_requests(config: Any, resolve: ExportsResolver | Non
     for name, channel in config.items():
         if isinstance(channel, dict) and REQUESTS_KEY in channel:
             validate_access_requests(f"upstream_access_config.{name}.{REQUESTS_KEY}", channel[REQUESTS_KEY], resolve)
+
+
+def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None = None) -> list[dict[str, Any]]:
+    """The key policy a customer's ``approvals`` of a channel's ``requests``
+    make (unitysvc/unitysvc#2766).
+
+    ``requests`` is the channel's ``customer_access_requests``; ``approvals``
+    lists the requests the customer approves, each ``{"object", "permissions",
+    "options", "limits"}`` (the ``apikey`` entry only ``{"object", "limits"}``).
+    Each approval names a requested object, at most once; its permissions are
+    some of those requested; every ``required`` request is approved. The
+    customer sets options and limits: a request's own only pre-fill them, so
+    they are checked against the target's ``exports`` (with ``resolve``) and
+    :func:`validate_limits`, not against the request. A key lifespan may only
+    be shortened. Returns the approvals as policy entries, without empty
+    ``options`` / ``limits``. Raises ``ValueError``.
+    """
+    validate_access_requests("requests", requests)
+    requested = {entry["object"]: entry for entry in requests}
+    if not isinstance(approvals, list):
+        raise ValueError("approvals must be a list of approved requests")
+    policy: list[dict[str, Any]] = []
+    for index, approval in enumerate(approvals):
+        at = f"approvals[{index}]"
+        if not isinstance(approval, dict) or not isinstance(approval.get("object"), str):
+            raise ValueError(f'{at} must be {{"object": ..., "permissions": [...]}}')
+        obj = approval["object"]
+        request = requested.get(obj)
+        if request is None:
+            raise ValueError(f"{at}: {obj} is not requested")
+        if any(entry["object"] == obj for entry in policy):
+            raise ValueError(f"{at}: {obj} is approved twice")
+        if obj == APIKEY_OBJECT:
+            if extra := set(approval) - {"object", "limits"}:
+                raise ValueError(f"{at}: unknown keys {sorted(extra)} (the {APIKEY_OBJECT} entry takes only limits)")
+            validate_limits(f"{at}.limits", approval.get("limits"), apikey=True)
+            asked = request["limits"][API_KEY_LIFESPAN]
+            if approval["limits"][API_KEY_LIFESPAN] > asked:
+                raise ValueError(f"{at}.limits.{API_KEY_LIFESPAN}: the service asks for at most {asked} seconds")
+            policy.append({"object": obj, "limits": dict(approval["limits"])})
+            continue
+        if extra := set(approval) - _POLICY_KEYS:
+            raise ValueError(f"{at}: unknown keys {sorted(extra)}")
+        permissions: list[str] = approval.get("permissions") or []
+        if not _strings(permissions):
+            raise ValueError(f"{at}.permissions must be a non-empty list of distinct names")
+        if not set(permissions) <= set(request["permissions"]):
+            raise ValueError(f"{at}.permissions: the service requests only {request['permissions']}")
+        options_text = approval.get("options", "")
+        options = parse_options(f"{at}.options", options_text)
+        limits = approval.get("limits", {})
+        validate_limits(f"{at}.limits", limits)
+        if resolve is not None:
+            declared = resolve(obj.removeprefix(SERVICE_PREFIX))
+            if declared is None:
+                raise ValueError(f"{at}: {obj} is not a published service")
+            check_claim(at, obj, permissions, options, parse_exports(f"{obj} exports", declared))
+        entry: dict[str, Any] = {"object": obj, "permissions": list(permissions)}
+        if options:
+            entry["options"] = options_text
+        if limits:
+            entry["limits"] = dict(limits)
+        policy.append(entry)
+    approved = {entry["object"] for entry in policy}
+    if missing := sorted(obj for obj, request in requested.items() if request.get("required") and obj not in approved):
+        raise ValueError(f"approvals: the service requires {', '.join(missing)}")
+    return policy
+
+
+def api_key_lifespan(policy: Any) -> int:
+    """Seconds a key leased with ``policy`` lives: its ``apikey`` entry's
+    ``api_key_lifespan``, else :data:`DEFAULT_API_KEY_LIFESPAN`. A malformed
+    entry gets the default, never more."""
+    for entry in policy if isinstance(policy, list) else []:
+        if isinstance(entry, dict) and entry.get("object") == APIKEY_OBJECT:
+            try:
+                validate_limits("apikey.limits", entry.get("limits"), apikey=True)
+            except ValueError:
+                return DEFAULT_API_KEY_LIFESPAN
+            return int(entry["limits"][API_KEY_LIFESPAN])
+    return DEFAULT_API_KEY_LIFESPAN

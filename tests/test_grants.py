@@ -7,7 +7,10 @@ from typing import Any
 import pytest
 
 from unitysvc_core.grants import (
+    DEFAULT_API_KEY_LIFESPAN,
     DEFAULT_EXPORTS,
+    api_key_lifespan,
+    build_policy,
     check_claim,
     parse_exports,
     parse_options,
@@ -357,3 +360,154 @@ def test_check_claim_refuses_what_exports_do_not_cover(permissions: list[str], o
     me = parse_exports("exports", _CATALOG["me"])
     with pytest.raises(ValueError, match=error):
         check_claim("policy[0]", "service:me", permissions, parse_options("o", options), me)
+
+
+# The apikey request: how long a leased key lives (unitysvc/unitysvc#2766) ----------
+
+
+def _lifespan(seconds: Any = 14400, **fields: Any) -> dict[str, Any]:
+    return {
+        "object": "apikey",
+        "limits": {"api_key_lifespan": seconds},
+        "justification": "Batch runs take up to four hours",
+        **fields,
+    }
+
+
+def test_a_key_lifespan_may_be_requested_without_a_lookup() -> None:
+    """The apikey entry names no service, so it needs no catalog."""
+    validate_access_requests(_WHERE, [_lifespan(86400)], _never_resolve)
+    _check(_lifespan(1), _dep())
+
+
+@pytest.mark.parametrize(
+    ("entry", "error"),
+    [
+        ({k: v for k, v in _lifespan().items() if k != "justification"}, "justification"),
+        (_lifespan(86401), "from 1 to 86400"),
+        (_lifespan(0), "from 1 to 86400"),
+        (_lifespan("3600"), "from 1 to 86400"),
+        (_lifespan(True), "from 1 to 86400"),
+        (_lifespan(permissions=["invoke"]), "takes only limits"),
+        (_lifespan(required=True), "takes only limits"),
+        ({**_lifespan(), "limits": {"api_key_lifespan": 7200, "count_per_day": 2}}, "must be"),
+        ({**_lifespan(), "limits": {}}, "must be"),
+    ],
+)
+def test_a_malformed_lifespan_request_is_refused(entry: dict[str, Any], error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        _check(entry)
+
+
+def test_the_lifespan_is_requested_once_and_only_on_the_apikey_entry() -> None:
+    with pytest.raises(ValueError, match="listed twice"):
+        _check(_lifespan(), _lifespan(7200))
+    with pytest.raises(ValueError, match="count_/amount_"):
+        _check(_dep(limits={"api_key_lifespan": 7200}))
+
+
+# A customer's approvals become a policy ------------------------------------------
+
+_REQUESTS: list[dict[str, Any]] = [
+    _dep("service:log", required=True, options="log_level=warn", limits={"count_per_day": 1000}),
+    _dep("service:me", permissions=["read", "write"], options="profile=address.state"),
+    _lifespan(),
+]
+
+
+_LOG_APPROVAL: dict[str, Any] = {"object": "service:log", "permissions": ["invoke"]}
+
+
+def _approve(*approvals: dict[str, Any]) -> list[dict[str, Any]]:
+    return build_policy(_REQUESTS, list(approvals), _resolve)
+
+
+def test_approvals_become_a_policy_with_the_customers_options_and_limits() -> None:
+    policy = _approve(
+        {"object": "service:log", "permissions": ["invoke"], "options": "log_level=error"},
+        {
+            "object": "service:me",
+            "permissions": ["read"],
+            "options": "profile=address",
+            "limits": {"count_per_hour": 10, "amount_total": "5.00"},
+        },
+        {"object": "apikey", "limits": {"api_key_lifespan": 7200}},
+    )
+    assert policy == [
+        {"object": "service:log", "permissions": ["invoke"], "options": "log_level=error"},
+        {
+            "object": "service:me",
+            "permissions": ["read"],
+            "options": "profile=address",
+            "limits": {"count_per_hour": 10, "amount_total": "5.00"},
+        },
+        {"object": "apikey", "limits": {"api_key_lifespan": 7200}},
+    ]
+    assert api_key_lifespan(policy) == 7200
+
+
+def test_optional_requests_may_be_declined_and_empty_options_are_dropped() -> None:
+    policy = _approve({"object": "service:log", "permissions": ["invoke"], "options": "", "limits": {}})
+    assert policy == [{"object": "service:log", "permissions": ["invoke"]}]
+    assert api_key_lifespan(policy) == DEFAULT_API_KEY_LIFESPAN
+
+
+@pytest.mark.parametrize(
+    ("approvals", "error"),
+    [
+        ([], "requires service:log"),
+        ([{"object": "service:me", "permissions": ["read"]}], "requires service:log"),
+        ([{"object": "service:ai", "permissions": ["invoke"]}], "service:ai is not requested"),
+        ([_LOG_APPROVAL, _LOG_APPROVAL], "approved twice"),
+        ([{"object": "service:log", "permissions": []}], "permissions must be"),
+        ([{"object": "service:log", "permissions": ["invoke", "admin"]}], "requests only"),
+        ([{"object": "service:log", "permissions": ["invoke"], "options": "log_level=trace"}], "log_level 'trace'"),
+        ([{"object": "service:log", "permissions": ["invoke"], "options": "cap=1"}], "accepts no option 'cap'"),
+        ([{"object": "service:log", "permissions": ["invoke"], "limits": {"count_per_week": 1}}], "count_/amount_"),
+        ([{"object": "service:log", "permissions": ["invoke"], "required": True}], "unknown keys"),
+        (
+            [
+                {"object": "service:log", "permissions": ["invoke"]},
+                {"object": "apikey", "limits": {"api_key_lifespan": 20000}},
+            ],
+            "asks for at most 14400",
+        ),
+        (
+            [
+                {"object": "service:log", "permissions": ["invoke"]},
+                {"object": "apikey", "permissions": ["invoke"], "limits": {"api_key_lifespan": 60}},
+            ],
+            "takes only limits",
+        ),
+        ("all", "must be a list"),
+    ],
+)
+def test_an_approval_outside_the_requests_or_exports_is_refused(approvals: Any, error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        build_policy(_REQUESTS, approvals, _resolve)
+
+
+def test_an_approval_of_an_unpublished_target_is_refused() -> None:
+    with pytest.raises(ValueError, match="service:gone is not a published service"):
+        build_policy([_dep("service:gone")], [{"object": "service:gone", "permissions": ["invoke"]}], _resolve)
+
+
+def test_without_a_resolver_only_the_shape_is_checked() -> None:
+    policy = build_policy(
+        [_dep("service:not-yet-published")],
+        [{"object": "service:not-yet-published", "permissions": ["invoke"], "options": "anything=1"}],
+    )
+    assert policy[0]["options"] == "anything=1"
+
+
+def test_malformed_requests_build_no_policy() -> None:
+    with pytest.raises(ValueError, match="justification"):
+        build_policy([_dep(justification="")], [])
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [None, [], [{"object": "service:*", "permissions": ["invoke"]}], [{"object": "apikey", "limits": {}}], "x"],
+)
+def test_a_policy_without_a_valid_lifespan_gets_the_default(policy: Any) -> None:
+    assert api_key_lifespan(policy) == DEFAULT_API_KEY_LIFESPAN
