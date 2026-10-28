@@ -87,9 +87,12 @@ A policy has three kinds of entry (unitysvc/unitysvc#2770):
   seller may name a specific service (``service:labs/llm-premium`` rather than
   ``service:ai`` with ``options="service=labs/llm-premium"``), at the cost of
   the customer's choice of provider, which a customer may decline.
-* ``{"object": "service:<name>", "enrollment": "<CODE>", ...}``: one
-  enrollment of a service that requires enrolling (a chain enrollment), which
-  the app would call through ``/e/<CODE>``. Not supported yet: refused.
+* ``{"object": "service:<name>", "enrollment": "<CODE>", ...}``: one of the
+  customer's enrollments of a service that requires enrolling (a chain
+  enrollment), which the app calls through ``/e/<CODE>``. Its params are fixed
+  by that enrollment, so it takes no ``options``. Which enrollment is the
+  customer's choice when approving, so a request never names one; core checks
+  the code's form, the caller that the enrollment is the customer's.
 
 There is no central list of services. Core does no I/O: every request's
 permissions and options are checked against its target's ``exports`` when the
@@ -174,6 +177,8 @@ _POLICY_KEYS = frozenset({"object", "permissions", "options", "limits"})
 ENROLLMENT_OBJECT = "enrollment"
 # On a service entry, one enrollment of that service (a chain enrollment).
 ENROLLMENT_KEY = "enrollment"
+# An enrollment code: canonical Crockford base32 (no I, L, O, U).
+_ENROLLMENT_CODE = re.compile(r"^[0-9A-HJKMNP-TV-Z]+$")
 
 
 def _strings(value: Any) -> bool:
@@ -489,9 +494,10 @@ def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None 
 
     The customer may also add, at most once and without a request, this
     enrollment's own limits: ``{"object": "enrollment", "limits": {...}}``,
-    with at least one limit and nothing else (unitysvc/unitysvc#2770). An
-    entry selecting an enrollment of another service (``enrollment`` on a
-    service entry) is refused until chain enrollments are supported.
+    with at least one limit and nothing else (unitysvc/unitysvc#2770). And an
+    approval of a service may select one of the customer's enrollments of it
+    (``"enrollment": "<CODE>"``, a chain enrollment): a canonical code, and no
+    ``options``. The caller checks the enrollment is the customer's.
     """
     validate_access_requests("requests", requests)
     requested = {entry["object"]: entry for entry in requests}
@@ -508,11 +514,6 @@ def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None 
                 raise ValueError(f"{at}: {obj} is listed twice")
             policy.append(_enrollment_entry(at, approval))
             continue
-        if ENROLLMENT_KEY in approval:
-            raise ValueError(
-                f"{at}.{ENROLLMENT_KEY}: calling an enrollment of another service is not supported yet; "
-                f'cap this enrollment with {{"object": "{ENROLLMENT_OBJECT}", "limits": ...}}'
-            )
         request = requested.get(obj)
         if request is None:
             raise ValueError(f"{at}: {obj} is not requested")
@@ -527,8 +528,14 @@ def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None 
                 raise ValueError(f"{at}.limits.{API_KEY_LIFESPAN}: the service asks for at most {asked} seconds")
             policy.append({"object": obj, "limits": dict(approval["limits"])})
             continue
-        if extra := set(approval) - _POLICY_KEYS:
+        if extra := set(approval) - _POLICY_KEYS - {ENROLLMENT_KEY}:
             raise ValueError(f"{at}: unknown keys {sorted(extra)}")
+        code = approval.get(ENROLLMENT_KEY)
+        if ENROLLMENT_KEY in approval:
+            if not isinstance(code, str) or not _ENROLLMENT_CODE.match(code):
+                raise ValueError(f"{at}.{ENROLLMENT_KEY} must be an enrollment code, like JYY87Y")
+            if approval.get("options"):
+                raise ValueError(f"{at}.options: an enrollment's params are fixed; it takes no options")
         permissions: list[str] = approval.get("permissions") or []
         if not _strings(permissions):
             raise ValueError(f"{at}.permissions must be a non-empty list of distinct names")
@@ -544,6 +551,8 @@ def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None 
                 raise ValueError(f"{at}: {obj} is not a published service")
             check_claim(at, obj, permissions, options, parse_exports(f"{obj} exports", declared))
         entry: dict[str, Any] = {"object": obj, "permissions": list(permissions)}
+        if code is not None:
+            entry[ENROLLMENT_KEY] = code
         if options:
             entry["options"] = options_text
         if limits:

@@ -212,7 +212,7 @@ A policy has three kinds of entry (unitysvc/unitysvc#2770):
 | --- | --- |
 | `{"object": "enrollment", "limits": {"amount_per_day": "1.00"}}` | This enrollment's own limits (total spending, say). The customer adds it without a request; it takes only `limits`, at least one, at most one entry. It grants nothing. |
 | `{"object": "service:ai", ...}` | A service the app calls for the customer. A seller may name a specific one (`service:labs/llm-premium` instead of `service:ai` with `options="service=labs/llm-premium"`), at the cost of the customer's choice of provider, which a customer may decline. |
-| `{"object": "service:<name>", "enrollment": "<CODE>", ...}` | One enrollment of a service that requires enrolling (a chain enrollment), called through `/e/<CODE>`. **Refused for now.** |
+| `{"object": "service:<name>", "enrollment": "<CODE>", ...}` | One of the customer's enrollments of a service that requires enrolling (a chain enrollment), called through `/e/<CODE>`. The customer picks the enrollment when approving the request for `service:<name>`, so a request never carries a code. A canonical code, no `options` (the enrollment's params are fixed), permissions and limits as for any service entry. Core checks the code's form; the caller checks the enrollment is the customer's. |
 
 ### Upstream access channels
 

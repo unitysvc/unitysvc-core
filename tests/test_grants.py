@@ -548,9 +548,45 @@ def test_the_enrollment_entry_appears_once() -> None:
         _approve(_LOG_APPROVAL, entry, entry)
 
 
-def test_an_enrollment_of_another_service_is_refused_for_now() -> None:
-    with pytest.raises(ValueError, match=r"approvals\[1\]\.enrollment: calling an enrollment of another service"):
-        _approve(_LOG_APPROVAL, {"object": "service:me", "enrollment": "ABC123", "limits": {"count_total": 1}})
+def test_an_approval_may_select_one_of_the_customers_enrollments() -> None:
+    policy = _approve(
+        _LOG_APPROVAL,
+        {"object": "service:me", "permissions": ["read"], "enrollment": "JYY87Y", "limits": {"count_per_day": 3}},
+    )
+    assert policy[-1] == {
+        "object": "service:me",
+        "permissions": ["read"],
+        "enrollment": "JYY87Y",
+        "limits": {"count_per_day": 3},
+    }
+
+
+@pytest.mark.parametrize(
+    ("extra", "error"),
+    [
+        ({"enrollment": "jyy87y"}, "must be an enrollment code"),
+        ({"enrollment": "AB-12"}, "must be an enrollment code"),
+        ({"enrollment": "ABCDIO"}, "must be an enrollment code"),
+        ({"enrollment": ""}, "must be an enrollment code"),
+        ({"enrollment": 123}, "must be an enrollment code"),
+        ({"enrollment": "JYY87Y", "options": "profile=address"}, "takes no options"),
+    ],
+)
+def test_a_chain_enrollment_names_a_code_and_takes_no_options(extra: dict[str, Any], error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        _approve(_LOG_APPROVAL, {"object": "service:me", "permissions": ["read"], **extra})
+
+
+def test_a_chain_enrollment_is_still_an_approval_of_a_request() -> None:
+    with pytest.raises(ValueError, match="is not requested"):
+        _approve(_LOG_APPROVAL, {"object": "service:notify", "permissions": ["invoke"], "enrollment": "JYY87Y"})
+    with pytest.raises(ValueError, match="requests only"):
+        _approve(_LOG_APPROVAL, {"object": "service:me", "permissions": ["delete"], "enrollment": "JYY87Y"})
+
+
+def test_a_request_never_names_an_enrollment() -> None:
+    with pytest.raises(ValueError, match="unknown keys"):
+        validate_access_requests(_WHERE, [_dep("service:me", enrollment="JYY87Y")])
 
 
 def test_a_seller_cannot_request_the_enrollment_entry() -> None:
