@@ -158,21 +158,24 @@ def test_file_validator_reads_template_documents_like_ingest(tmp_path):
 
 
 def test_validation_pipeline_invokes_the_shared_rule(tmp_path, monkeypatch):
+    import unitysvc_core.validator as validator_module
+
     schema_dir = Path(__file__).parents[1] / "src/unitysvc_core/schema"
     validator = DataValidator(tmp_path, schema_dir)
     path = tmp_path / "listing.json"
     path.write_text(json.dumps({"name": "labs/test"}))
+    (tmp_path / "offering.json").write_text(json.dumps(channel()))
     calls = []
 
-    def check(data, file_path):
-        calls.append(file_path)
+    def check(listing, offering):
+        calls.append((listing, offering))
         return ["unused-param-sentinel"]
 
-    monkeypatch.setattr(validator, "validate_required_parameter_usage", check)
+    monkeypatch.setattr(validator_module, "validate_required_parameter_usage", check)
     valid, errors = validator.validate_data_file(path, "listing_v1")
     assert not valid
     assert "unused-param-sentinel" in errors
-    assert calls == [path]
+    assert calls and calls[0][1]["upstream_access_config"] == channel()["upstream_access_config"]
 
 
 def test_invalid_jinja_does_not_bypass_the_rule():
