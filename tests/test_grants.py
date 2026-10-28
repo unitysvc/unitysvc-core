@@ -511,3 +511,84 @@ def test_malformed_requests_build_no_policy() -> None:
 )
 def test_a_policy_without_a_valid_lifespan_gets_the_default(policy: Any) -> None:
     assert api_key_lifespan(policy) == DEFAULT_API_KEY_LIFESPAN
+
+
+# This enrollment's own limits (unitysvc/unitysvc#2770) ---------------------------
+
+
+def test_the_enrollment_entry_needs_no_request() -> None:
+    policy = _approve(_LOG_APPROVAL, {"object": "enrollment", "limits": {"amount_per_day": "1.00"}})
+    assert policy[-1] == {"object": "enrollment", "limits": {"amount_per_day": "1.00"}}
+    # Any enrollment may carry one, even of a channel that requests nothing.
+    assert build_policy([], [{"object": "enrollment", "limits": {"count_total": 5}}]) == [
+        {"object": "enrollment", "limits": {"count_total": 5}}
+    ]
+    assert api_key_lifespan(policy) == DEFAULT_API_KEY_LIFESPAN
+
+
+@pytest.mark.parametrize(
+    ("entry", "error"),
+    [
+        ({"object": "enrollment"}, "at least one limit"),
+        ({"object": "enrollment", "limits": {}}, "at least one limit"),
+        ({"object": "enrollment", "limits": {"calls": 1}}, "count_/amount_"),
+        ({"object": "enrollment", "permissions": ["invoke"], "limits": {"count_total": 1}}, "takes only limits"),
+        ({"object": "enrollment", "options": "a=b", "limits": {"count_total": 1}}, "takes only limits"),
+        ({"object": "enrollment", "enrollment": "ABC123", "limits": {"count_total": 1}}, "takes only limits"),
+    ],
+)
+def test_the_enrollment_entry_takes_only_limits(entry: dict[str, Any], error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        _approve(_LOG_APPROVAL, entry)
+
+
+def test_the_enrollment_entry_appears_once() -> None:
+    entry = {"object": "enrollment", "limits": {"count_total": 1}}
+    with pytest.raises(ValueError, match="listed twice"):
+        _approve(_LOG_APPROVAL, entry, entry)
+
+
+def test_an_approval_may_select_one_of_the_customers_enrollments() -> None:
+    policy = _approve(
+        _LOG_APPROVAL,
+        {"object": "service:me", "permissions": ["read"], "enrollment": "JYY87Y", "limits": {"count_per_day": 3}},
+    )
+    assert policy[-1] == {
+        "object": "service:me",
+        "permissions": ["read"],
+        "enrollment": "JYY87Y",
+        "limits": {"count_per_day": 3},
+    }
+
+
+@pytest.mark.parametrize(
+    ("extra", "error"),
+    [
+        ({"enrollment": "jyy87y"}, "must be an enrollment code"),
+        ({"enrollment": "AB-12"}, "must be an enrollment code"),
+        ({"enrollment": "ABCDIO"}, "must be an enrollment code"),
+        ({"enrollment": ""}, "must be an enrollment code"),
+        ({"enrollment": 123}, "must be an enrollment code"),
+        ({"enrollment": "JYY87Y", "options": "profile=address"}, "takes no options"),
+    ],
+)
+def test_a_chain_enrollment_names_a_code_and_takes_no_options(extra: dict[str, Any], error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        _approve(_LOG_APPROVAL, {"object": "service:me", "permissions": ["read"], **extra})
+
+
+def test_a_chain_enrollment_is_still_an_approval_of_a_request() -> None:
+    with pytest.raises(ValueError, match="is not requested"):
+        _approve(_LOG_APPROVAL, {"object": "service:notify", "permissions": ["invoke"], "enrollment": "JYY87Y"})
+    with pytest.raises(ValueError, match="requests only"):
+        _approve(_LOG_APPROVAL, {"object": "service:me", "permissions": ["delete"], "enrollment": "JYY87Y"})
+
+
+def test_a_request_never_names_an_enrollment() -> None:
+    with pytest.raises(ValueError, match="unknown keys"):
+        validate_access_requests(_WHERE, [_dep("service:me", enrollment="JYY87Y")])
+
+
+def test_a_seller_cannot_request_the_enrollment_entry() -> None:
+    with pytest.raises(ValueError, match="cannot be requested"):
+        validate_access_requests(_WHERE, [{"object": "enrollment", "justification": "x", "limits": {"count_total": 1}}])

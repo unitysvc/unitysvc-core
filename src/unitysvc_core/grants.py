@@ -74,9 +74,25 @@ customer consent and key issuance establish its *authority*.
 
 Today a request's ``object`` is ``service:<name>``, or ``apikey``: how long a
 key leased for the enrollment lives (``limits.api_key_lifespan``, up to a day,
-with a justification), which grants nothing. ``enrollment:<CODE>`` (one
-enrollment of an enrollable service) may follow. :func:`build_policy` turns a
+with a justification), which grants nothing. :func:`build_policy` turns a
 customer's approvals into the policy an enrollment keeps.
+
+A policy has three kinds of entry (unitysvc/unitysvc#2770):
+
+* ``{"object": "enrollment", "limits": {...}}``: this enrollment's own limits
+  (what it may cost in total, say). The customer's own; no seller requests it,
+  and it grants nothing.
+* ``{"object": "service:<name>", ...}``: a service the enrolled app calls for
+  the customer, usually a common one (``service:ai``, ``service:notify``). A
+  seller may name a specific service (``service:labs/llm-premium`` rather than
+  ``service:ai`` with ``options="service=labs/llm-premium"``), at the cost of
+  the customer's choice of provider, which a customer may decline.
+* ``{"object": "service:<name>", "enrollment": "<CODE>", ...}``: one of the
+  customer's enrollments of a service that requires enrolling (a chain
+  enrollment), which the app calls through ``/e/<CODE>``. Its params are fixed
+  by that enrollment, so it takes no ``options``. Which enrollment is the
+  customer's choice when approving, so a request never names one; core checks
+  the code's form, the caller that the enrollment is the customer's.
 
 There is no central list of services. Core does no I/O: every request's
 permissions and options are checked against its target's ``exports`` when the
@@ -157,6 +173,12 @@ _REQUEST_KEYS = frozenset({"object", "permissions", "required", "justification",
 _APIKEY_REQUEST_KEYS = frozenset({"object", "justification", "limits"})
 # What a policy entry (an approved request) holds.
 _POLICY_KEYS = frozenset({"object", "permissions", "options", "limits"})
+# This enrollment itself: an entry capping what it may cost. It grants nothing.
+ENROLLMENT_OBJECT = "enrollment"
+# On a service entry, one enrollment of that service (a chain enrollment).
+ENROLLMENT_KEY = "enrollment"
+# An enrollment code: canonical Crockford base32 (no I, L, O, U).
+_ENROLLMENT_CODE = re.compile(r"^[0-9A-HJKMNP-TV-Z]+$")
 
 
 def _strings(value: Any) -> bool:
@@ -469,6 +491,13 @@ def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None 
     :func:`validate_limits`, not against the request. A key lifespan may only
     be shortened. Returns the approvals as policy entries, without empty
     ``options`` / ``limits``. Raises ``ValueError``.
+
+    The customer may also add, at most once and without a request, this
+    enrollment's own limits: ``{"object": "enrollment", "limits": {...}}``,
+    with at least one limit and nothing else (unitysvc/unitysvc#2770). And an
+    approval of a service may select one of the customer's enrollments of it
+    (``"enrollment": "<CODE>"``, a chain enrollment): a canonical code, and no
+    ``options``. The caller checks the enrollment is the customer's.
     """
     validate_access_requests("requests", requests)
     requested = {entry["object"]: entry for entry in requests}
@@ -480,6 +509,11 @@ def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None 
         if not isinstance(approval, dict) or not isinstance(approval.get("object"), str):
             raise ValueError(f'{at} must be {{"object": ..., "permissions": [...]}}')
         obj = approval["object"]
+        if obj == ENROLLMENT_OBJECT:
+            if any(entry["object"] == obj for entry in policy):
+                raise ValueError(f"{at}: {obj} is listed twice")
+            policy.append(_enrollment_entry(at, approval))
+            continue
         request = requested.get(obj)
         if request is None:
             raise ValueError(f"{at}: {obj} is not requested")
@@ -494,8 +528,14 @@ def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None 
                 raise ValueError(f"{at}.limits.{API_KEY_LIFESPAN}: the service asks for at most {asked} seconds")
             policy.append({"object": obj, "limits": dict(approval["limits"])})
             continue
-        if extra := set(approval) - _POLICY_KEYS:
+        if extra := set(approval) - _POLICY_KEYS - {ENROLLMENT_KEY}:
             raise ValueError(f"{at}: unknown keys {sorted(extra)}")
+        code = approval.get(ENROLLMENT_KEY)
+        if ENROLLMENT_KEY in approval:
+            if not isinstance(code, str) or not _ENROLLMENT_CODE.match(code):
+                raise ValueError(f"{at}.{ENROLLMENT_KEY} must be an enrollment code, like JYY87Y")
+            if approval.get("options"):
+                raise ValueError(f"{at}.options: an enrollment's params are fixed; it takes no options")
         permissions: list[str] = approval.get("permissions") or []
         if not _strings(permissions):
             raise ValueError(f"{at}.permissions must be a non-empty list of distinct names")
@@ -511,6 +551,8 @@ def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None 
                 raise ValueError(f"{at}: {obj} is not a published service")
             check_claim(at, obj, permissions, options, parse_exports(f"{obj} exports", declared))
         entry: dict[str, Any] = {"object": obj, "permissions": list(permissions)}
+        if code is not None:
+            entry[ENROLLMENT_KEY] = code
         if options:
             entry["options"] = options_text
         if limits:
@@ -520,6 +562,17 @@ def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None 
     if missing := sorted(obj for obj, request in requested.items() if request.get("required") and obj not in approved):
         raise ValueError(f"approvals: the service requires {', '.join(missing)}")
     return policy
+
+
+def _enrollment_entry(at: str, approval: dict[str, Any]) -> dict[str, Any]:
+    """This enrollment's own entry: limits only, and at least one."""
+    if extra := set(approval) - {"object", "limits"}:
+        raise ValueError(f"{at}: unknown keys {sorted(extra)} (the {ENROLLMENT_OBJECT} entry takes only limits)")
+    limits = approval.get("limits")
+    if not limits:
+        raise ValueError(f"{at}.limits: the {ENROLLMENT_OBJECT} entry must set at least one limit")
+    validate_limits(f"{at}.limits", limits)
+    return {"object": ENROLLMENT_OBJECT, "limits": dict(limits)}
 
 
 def api_key_lifespan(policy: Any) -> int:
