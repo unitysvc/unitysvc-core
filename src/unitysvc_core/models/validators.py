@@ -1147,55 +1147,110 @@ def _reads_per_enrollment_value(value: str) -> bool:
     return any(node.name in _PER_ENROLLMENT_NAMES for node in tree.find_all(nodes.Name))
 
 
+# The four gateways a user access interface may address (unitysvc/unitysvc#2726).
+_GATEWAY_BASE_URLS = (
+    _API_GATEWAY_PREFIX,
+    _S3_GATEWAY_PREFIX.rstrip("/"),
+    _SMTP_GATEWAY_BASE_URL,
+    _MCP_GATEWAY_BASE_URL,
+)
+
+
+def _is_enrollment_code_reminder(field_path: str, prefix: str, base_url: Any, value: str) -> bool:
+    """The two places ``{{ enrollment.code }}`` may stand, as a reminder of the
+    per-enrollment address the platform gives: the whole SMTP
+    ``routing_key.username``, and the whole S3 bucket segment."""
+    if (
+        base_url == _SMTP_GATEWAY_BASE_URL
+        and field_path == f"{prefix}.routing_key.username"
+        and _ENROLLMENT_CODE.match(value.strip())
+    ):
+        return True
+    return field_path == f"{prefix}.base_url" and bool(_S3_ENROLLMENT_BASE_URL.match(value.strip()))
+
+
 def validate_listing_interfaces_are_canonical(user_access_interfaces: dict[str, Any] | None) -> list[str]:
-    """Refuse user access interfaces that read a per-enrollment value.
+    """Refuse a user access interface that is not a canonical gateway address.
 
     A user access interface is the service's canonical address, the same for
-    every caller, so it may not reference ``enrollment.*`` or ``params.*``. An
-    enrollment is reached through an address the platform gives it: on the API
-    gateway ``/e/<CODE>``, which a listing never declares. The exceptions are the
-    protocols with no such path, where the enrollment code itself is the
-    address: an SMTP ``routing_key.username`` or an S3 bucket segment that is
-    exactly ``{{ enrollment.code }}``. Values that are the same for every caller
-    (``service_name``, ``routing_vars``) stay allowed (unitysvc/unitysvc#2726).
+    every caller. ``{{ service_name }}``, the one value the platform fills in
+    when it stores an interface, is rendered first; the result must then:
+
+    - have a ``base_url`` that is one of the four gateways
+      (``${API_GATEWAY_BASE_URL}``, ``${S3_GATEWAY_BASE_URL}``,
+      ``${SMTP_GATEWAY_BASE_URL}``, ``${MCP_GATEWAY_BASE_URL}``), optionally
+      followed by ``/`` and a path, and no other ``${...}`` reference: never an
+      external URL, another variable or a secret;
+    - contain no template left over: nothing else is rendered into a stored
+      interface, so ``{{ routing_vars.X }}`` would stay literal and never route.
+      A per-enrollment value (``enrollment.*``,
+      ``params.*``) is never canonical: an enrollment is reached through the
+      address the platform gives it (``/e/<CODE>`` on the API gateway). The one
+      exception is ``{{ enrollment.code }}`` as the whole SMTP
+      ``routing_key.username`` or the whole S3 bucket segment, a reminder of
+      that address where the protocol has no path for it.
 
     Returns a list of error messages (empty if all valid).
     """
     if not user_access_interfaces or not isinstance(user_access_interfaces, dict):
         return []
 
+    env = Environment(undefined=StrictUndefined, autoescape=False)
+    context = {"service_name": "service"}
     errors: list[str] = []
     for iface_name, iface in user_access_interfaces.items():
         if not isinstance(iface, dict):
             continue
         base_url = iface.get("base_url")
         prefix = f"user_access_interfaces.{iface_name}"
+        rendered_base_url = base_url
         for field_path, value in _iter_strings(iface, prefix):
             if "{{" not in value and "{%" not in value:
                 continue
-            if not _reads_per_enrollment_value(value):
+            if _is_enrollment_code_reminder(field_path, prefix, base_url, value):
                 continue
-            if (
-                base_url == _SMTP_GATEWAY_BASE_URL
-                and field_path == f"{prefix}.routing_key.username"
-                and _ENROLLMENT_CODE.match(value.strip())
-            ):
-                continue
-            if field_path == f"{prefix}.base_url" and _S3_ENROLLMENT_BASE_URL.match(value.strip()):
-                continue
-            if isinstance(base_url, str) and base_url.startswith(_API_GATEWAY_PREFIX):
-                hint = (
-                    "an enrollment on the API gateway is reached at /e/<CODE>, which the platform "
-                    "provides; remove this interface (or this part of it)"
+            if _reads_per_enrollment_value(value):
+                if isinstance(base_url, str) and base_url.startswith(_API_GATEWAY_PREFIX):
+                    hint = (
+                        "an enrollment on the API gateway is reached at /e/<CODE>, which the platform "
+                        "provides; remove this interface (or this part of it)"
+                    )
+                else:
+                    hint = (
+                        "the only per-enrollment form allowed is an SMTP routing_key.username or an "
+                        "S3 bucket segment that is exactly '{{ enrollment.code }}'"
+                    )
+                errors.append(
+                    f"{field_path}: a user access interface is the service's canonical address and "
+                    f"may not read enrollment.* or params.* ('{value}'); {hint}."
                 )
-            else:
-                hint = (
-                    "the only per-enrollment form allowed is an SMTP routing_key.username or an "
-                    "S3 bucket segment that is exactly '{{ enrollment.code }}'"
+                continue
+            try:
+                rendered = env.from_string(value).render(**context)
+            except TemplateSyntaxError:
+                continue  # reported by validate_listing_jinja_var_references
+            except UndefinedError as exc:
+                errors.append(
+                    f"{field_path}: '{value}' uses {exc.message}; the only template a user access "
+                    "interface may use is {{ service_name }}, which the platform fills in when it "
+                    "stores the interface."
                 )
+                continue
+            if field_path == f"{prefix}.base_url":
+                rendered_base_url = rendered
+        if not isinstance(rendered_base_url, str) or _is_enrollment_code_reminder(
+            f"{prefix}.base_url", prefix, base_url, rendered_base_url
+        ):
+            continue
+        gateway = next(
+            (g for g in _GATEWAY_BASE_URLS if rendered_base_url == g or rendered_base_url.startswith(g + "/")),
+            None,
+        )
+        if gateway is None or "${" in rendered_base_url[len(gateway) :]:
             errors.append(
-                f"{field_path}: a user access interface is the service's canonical address and "
-                f"may not read enrollment.* or params.* ('{value}'); {hint}."
+                f"{prefix}.base_url: '{base_url}' is not a gateway address; a user access interface "
+                f"is reached through one of {', '.join(_GATEWAY_BASE_URLS)}, optionally followed by "
+                "'/' and a path (no external URL, other variable or secret reference)."
             )
     return errors
 

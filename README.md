@@ -116,7 +116,12 @@ still be retired.
 
 ### Canonical user access interfaces
 
-A user access interface is the service's canonical address, the same for every caller, so `validate_listing_interfaces_are_canonical` refuses one that reads a per-enrollment value (`enrollment.*`, `params.*`). An enrollment is reached through the address the platform gives it: `/e/<CODE>` on the API gateway, which a listing never declares. The only per-enrollment form allowed is where the protocol has no such path and the code itself is the address: an SMTP `routing_key.username` or an S3 bucket segment that is exactly `{{ enrollment.code }}`. Values the same for every caller (`service_name`, `routing_vars`) stay allowed. The shared validator runs it on every `listing_v1`; backend ingest calls the same function (unitysvc/unitysvc#2726).
+A user access interface is the service's canonical address, the same for every caller. `validate_listing_interfaces_are_canonical` renders `{{ service_name }}` (the one value the platform fills in when it stores an interface) and then requires:
+
+- a `base_url` that is one of the four gateways, `${API_GATEWAY_BASE_URL}`, `${S3_GATEWAY_BASE_URL}`, `${SMTP_GATEWAY_BASE_URL}` or `${MCP_GATEWAY_BASE_URL}`, optionally followed by `/` and a path (`/a/<alias>` included); never an external URL, another variable or a secret reference;
+- no template left over. `{{ routing_vars.X }}` would stay literal in the stored interface and never route, and a per-enrollment value (`enrollment.*`, `params.*`) is never canonical: an enrollment is reached through `/e/<CODE>` on the API gateway, which a listing never declares.
+
+The one exception is `{{ enrollment.code }}` as the whole SMTP `routing_key.username` or the whole S3 bucket segment, a reminder of the per-enrollment address on protocols without a path for it. The shared validator runs it on every `listing_v1`; backend ingest calls the same function (unitysvc/unitysvc#2726).
 
 ### Listing audience
 
