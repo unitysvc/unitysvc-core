@@ -3,10 +3,11 @@ from typing import Any
 
 from pydantic import ConfigDict, Field, HttpUrl, field_validator
 
+from .channel import UpstreamAccessConfig
 from .documents import DocumentData
 from .offering_data import ServiceOfferingData
 from .pricing import Pricing
-from .validators import validate_channel_config, validate_channel_name, validate_service_identifier
+from .validators import validate_service_identifier
 
 
 class OfferingV1(ServiceOfferingData):
@@ -38,16 +39,10 @@ class OfferingV1(ServiceOfferingData):
     # Convenience field for logo (converted to documents during import)
     logo: str | HttpUrl | None = None
 
-    # Required in file validation (base allows None for API flexibility). Each
-    # value is an OPAQUE per-channel JSON object: the gateway reads
-    # upstream_access_config as raw JSONB, and channels are genuinely
-    # heterogeneous (http has base_url; smtp has host/port; s3 has bucket/region).
-    # A typed model here enforced nothing (extra="allow") while misfitting
-    # non-HTTP channels — so it is intentionally left open and validated by the
-    # gateway/backend at use, apart from a few rules checked in
-    # ``validate_channels``. See unitysvc/unitysvc#1717.
-    upstream_access_config: dict[str, dict[str, Any]] = Field(  # type: ignore[assignment]
-        description="Upstream access channels, keyed by channel name (opaque per-channel objects)",
+    # Required in file validation (the base allows None and keeps channels as
+    # plain dicts, for stored data the platform has annotated).
+    upstream_access_config: UpstreamAccessConfig = Field(  # type: ignore[assignment]
+        description="Upstream access channels, keyed by channel name",
     )
 
     documents: dict[str, DocumentData] | None = Field(  # type: ignore[assignment]
@@ -70,18 +65,3 @@ class OfferingV1(ServiceOfferingData):
         ``validate_service_identifier`` for full rules.
         """
         return validate_service_identifier(v, "service")
-
-    @field_validator("upstream_access_config")
-    @classmethod
-    def validate_channels(cls, v: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        """Validate every channel name (key of ``upstream_access_config``) and config.
-
-        Channel names are selected via the ``<name>@<channel>`` identifier
-        suffix, so each must follow the channel-name grammar and must not
-        contain ``@``. See ``validate_channel_name``. A channel (or server) must
-        not carry a ``raw`` block; see ``validate_channel_config``.
-        """
-        for channel_name, channel_config in v.items():
-            validate_channel_name(channel_name)
-            validate_channel_config(channel_name, channel_config)
-        return v

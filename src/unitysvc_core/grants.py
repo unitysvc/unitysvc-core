@@ -22,7 +22,7 @@ Three stages (unitysvc/unitysvc#2720):
   that names its permissions, never by ``invoke`` or a wildcard. Permissions
   name the routes they cover; they are never inferred from HTTP methods
   (``POST /chat/completions`` modifies nothing). ``options`` is a JSON Schema,
-  like an enrollment's ``user_parameters_schema`` (with an optional
+  like a channel's ``params.schema`` (with an optional
   ``options_ui_schema``), of the customizations a grant may set on the
   service, including limits only it can apply (a message size); a property's
   ``default`` is what the service does when the policy does not set the

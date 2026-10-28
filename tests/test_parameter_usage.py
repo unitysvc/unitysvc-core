@@ -34,25 +34,27 @@ def test_strings_comments_and_non_template_text_are_not_consumers():
     assert referenced_param_names(["params.name", "{# params.name #}", '{{ "params.name" }}']) == set()
 
 
+_HOST_TOKEN = {"type": "object", "properties": {"host": {}, "token": {}}, "required": ["host", "token"]}
+
+
 def listing(**changes):
-    return {"status": "ready", "user_parameters_schema": {"required": ["host", "token"]}, **changes}
+    return {"status": "ready", **changes}
 
 
-def channel(**fields):
-    """An offering whose one channel carries ``fields``."""
-    return {"upstream_access_config": {"plus": fields}}
+def channel(schema=None, **fields):
+    """An offering whose one channel requires ``host`` and ``token`` and carries ``fields``."""
+    params = {"schema": schema or _HOST_TOKEN, "testing_defaults": {"host": "h", "token": "t"}}
+    return {"upstream_access_config": {"plus": {**fields, "params": params}}}
 
 
 def test_required_names_in_the_schema_do_not_count_as_use():
-    errors = validate_required_parameter_usage(
-        listing(), {"upstream_access_config": {"free": {"api_key": "${ customer_secrets.TOKEN }"}}}
-    )
+    errors = validate_required_parameter_usage(listing(), channel(api_key="${ customer_secrets.TOKEN }"))
     assert len(errors) == 1
-    assert "host, token are used by no channel" in errors[0]
+    assert "plus: required parameter(s) host, token are used by neither" in errors[0]
 
 
 @pytest.mark.parametrize(
-    ("listing_changes", "offering"),
+    ("listing_changes", "offering_changes"),
     [
         ({"display_name": "{{ params.host }} {{ params.token }}"}, {}),
         ({"description": "{{ params.host }}", "summary": "{{ params.token }}"}, {}),
@@ -60,39 +62,31 @@ def test_required_names_in_the_schema_do_not_count_as_use():
         # a document's metadata is not its content
         ({"documents": {"Doc": {"description": "{{ params.host }} {{ params.token }}"}}}, {}),
         ({"service_options": {"note": "{{ params.host }} {{ params.token }}"}}, {}),
+        # an interface is the canonical address and never reads params
+        ({"user_access_interfaces": {"canonical": {"base_url": "{{ params.host }}/{{ params.token }}"}}}, {}),
     ],
 )
-def test_metadata_is_not_a_consumer(listing_changes, offering):
-    """Only channels, interfaces and document content are rendered with
-    params; a reference anywhere else must not satisfy the rule (#2649)."""
-    errors = validate_required_parameter_usage(listing(**listing_changes), offering)
+def test_metadata_is_not_a_consumer(listing_changes, offering_changes):
+    """Only the channel and document content are rendered with params; a
+    reference anywhere else must not satisfy the rule (#2649)."""
+    errors = validate_required_parameter_usage(listing(**listing_changes), {**channel(), **offering_changes})
     assert len(errors) == 1
-    assert "host, token are used by no channel" in errors[0]
+    assert "host, token are used by neither" in errors[0]
 
 
 def test_dynamic_use_in_metadata_does_not_disable_the_rule():
-    errors = validate_required_parameter_usage(listing(description="{{ params | tojson }}"), {})
+    errors = validate_required_parameter_usage(listing(description="{{ params | tojson }}"), channel())
     assert "host, token" in errors[0]
 
 
 def test_partial_use_is_rejected():
     errors = validate_required_parameter_usage(listing(), channel(base_url="{{ params.host }}"))
-    assert "token are used by no channel" in errors[0]
+    assert "required parameter(s) token are used by neither" in errors[0]
 
 
-def test_channel_interface_and_document_reads_count_without_proving_attribution():
+def test_channel_and_document_reads_count():
     data = listing(documents={"example": {"file_content": "{{ params.token }}"}})
     assert validate_required_parameter_usage(data, channel(base_url="{{ params.host }}")) == []
-    assert (
-        validate_required_parameter_usage(
-            listing(
-                user_access_interfaces={"canonical": {"base_url": "{{ params.host }}"}},
-                documents={"Example": {"file_content": "{{ params.token }}"}},
-            ),
-            {},
-        )
-        == []
-    )
     # offering-level document content counts too
     assert (
         validate_required_parameter_usage(
@@ -104,21 +98,24 @@ def test_channel_interface_and_document_reads_count_without_proving_attribution(
 
 
 def test_required_parameter_can_have_punctuation_in_its_name():
-    assert (
-        validate_required_parameter_usage(
-            listing(user_parameters_schema={"required": ["host-name"]}), channel(host="{{ params['host-name'] }}")
-        )
-        == []
-    )
+    schema = {"properties": {"host-name": {}}, "required": ["host-name"]}
+    assert validate_required_parameter_usage(listing(), channel(schema, host="{{ params['host-name'] }}")) == []
 
 
 def test_deprecated_content_can_be_retired():
-    assert validate_required_parameter_usage(listing(status="deprecated"), {}) == []
-    assert validate_required_parameter_usage(listing(), {"status": "deprecated"}) == []
+    assert validate_required_parameter_usage(listing(status="deprecated"), channel()) == []
+    assert validate_required_parameter_usage(listing(), {**channel(), "status": "deprecated"}) == []
 
 
 def test_no_required_parameters():
     assert validate_required_parameter_usage({}, {}) == []
+
+
+def test_parameters_on_the_listing_are_refused():
+    for field in ("user_parameters_schema", "parameters_schema"):
+        errors = validate_required_parameter_usage(listing(**{field: _HOST_TOKEN}), {})
+        assert len(errors) == 1
+        assert "declare them in the params of the channel" in errors[0]
 
 
 @pytest.mark.parametrize("suffix", ["json", "toml"])
@@ -128,13 +125,17 @@ def test_file_validator_checks_paired_offering(tmp_path, suffix):
     data = listing()
     (tmp_path / "listing.json").write_text(json.dumps(data))
     path = tmp_path / f"offering.{suffix}"
-    path.write_text("{}" if suffix == "json" else "")
+    params = (
+        '[upstream_access_config.plus.params]\ntesting_defaults = {host = "h", token = "t"}\n'
+        '[upstream_access_config.plus.params.schema]\nrequired = ["host", "token"]\n'
+    )
+    path.write_text(json.dumps(channel()) if suffix == "json" else params)
     errors = validator.validate_required_parameter_usage(data, tmp_path / "listing.json")
     assert "host, token" in errors[0]
     path.write_text(
         json.dumps(channel(host="{{ params.host }}", token="{{ params.token }}"))
         if suffix == "json"
-        else '[upstream_access_config.plus]\nhost = "{{ params.host }}"\ntoken = "{{ params.token }}"\n'
+        else '[upstream_access_config.plus]\nhost = "{{ params.host }}"\ntoken = "{{ params.token }}"\n' + params
     )
     assert validator.validate_required_parameter_usage(data, tmp_path / "listing.json") == []
 
@@ -153,7 +154,7 @@ def test_file_validator_reads_template_documents_like_ingest(tmp_path):
     (tmp_path / "usage.md").write_text("{{ params.token }}")
     data = listing(documents={"Usage": {"file_path": "usage.md"}})
     errors = validator.validate_required_parameter_usage(data, tmp_path / "listing.json")
-    assert "token are used by no channel" in errors[0]
+    assert "token are used by neither" in errors[0]
 
 
 def test_validation_pipeline_invokes_the_shared_rule(tmp_path, monkeypatch):
@@ -181,8 +182,8 @@ def test_invalid_jinja_does_not_bypass_the_rule():
 
 def test_invalid_jinja_in_metadata_is_ignored():
     """Metadata is never rendered with params, so it is not parsed either."""
-    errors = validate_required_parameter_usage(listing(description="Go: {{ .Name }}"), {})
-    assert "host, token are used by no channel" in errors[0]
+    errors = validate_required_parameter_usage(listing(description="Go: {{ .Name }}"), channel())
+    assert "host, token are used by neither" in errors[0]
 
 
 # Parameters declared on channels (unitysvc/unitysvc#2726) ---------------------------
@@ -225,9 +226,9 @@ def test_two_plans_declare_different_parameters():
     assert validate_required_parameter_usage({"status": "ready"}, offering) == []
 
 
-def test_without_channel_declarations_nothing_changes():
-    """The listing-level schema keeps applying to the whole service."""
-    assert validate_channel_parameters(channel(base_url="{{ params.host }}")) == []
+def test_a_lone_channel_reading_parameters_must_declare_them():
+    errors = validate_channel_parameters(_offering(only={"base_url": "https://u/{{ params.folder }}"}))
+    assert any("upstream_access_config.only reads enrollment parameters" in e for e in errors), errors
 
 
 def test_a_channel_may_read_only_parameters_it_declares():
@@ -287,12 +288,6 @@ def test_document_content_counts_as_use_for_a_channel():
     offering = _offering(plus=_plus(base_url="https://u"))
     listing = {"status": "ready", "documents": {"Guide": {"file_content": "{{ params.folder }}"}}}
     assert validate_required_parameter_usage(listing, offering) == []
-
-
-def test_parameters_on_both_the_listing_and_a_channel_are_refused():
-    errors = validate_required_parameter_usage(listing(), _offering(plus=_plus()))
-    assert len(errors) == 1
-    assert "both on the listing" in errors[0]
 
 
 def test_the_file_validator_checks_channel_parameters(tmp_path):

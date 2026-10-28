@@ -22,6 +22,8 @@ src/unitysvc_core/
 │   ├── base.py            # All enums (status, type, currency, rate-limit, etc.)
 │   ├── pricing.py         # PriceStr, UsageData, all *PriceData classes,
 │   │                      # Pricing union, validate_pricing, cost calculation
+│   ├── channel.py         # UpstreamAccessConfig, ChannelConfig, per-protocol
+│   │                      # servers, ChannelParams, RETIRED_CHANNEL_KEYS
 │   ├── documents.py       # DocumentData
 │   ├── service.py         # RateLimit, ServiceConstraints, AccessInterfaceData,
 │   │                      # UpstreamAccessConfigData
@@ -100,20 +102,17 @@ MIT
 
 ### Required enrollment parameter usage
 
-The shared validator rejects required user parameters that no channel, interface,
-or document consumes. Only those consumer fields count — the offering's
-`upstream_access_config`, the listing's `user_access_interfaces`, and document
-content (a `.j2` document's template source, which the seller validator reads from
-disk as the SDK uploads it); metadata such as `display_name` or `description` is
-never rendered with `params`. File validation checks a listing against its paired offering
-when present; backend ingest calls the same `validate_required_parameter_usage`
-helper with the complete listing and offering. Schema declarations alone are not
-consumers. Jinja attribute access, string-key lookups, and `params.get("name")`
-are inspected; dynamic access and whole-map iteration conservatively consume all
-parameters. Deprecated content can still be retired.
-
-This validates usage, not channel attribution: a document reference counts as a
-consumer without proving that the intended paid channel takes enrollment.
+Each channel's required parameters must be read by that channel or by document
+content (a `.j2` document's template source, which the seller validator reads
+from disk as the SDK uploads it); another channel's use does not count. Metadata
+such as `display_name` or `description` is never rendered with `params`, and a
+user access interface never reads them. File validation checks a listing against
+its paired offering when present; backend ingest calls the same
+`validate_required_parameter_usage` helper with the complete listing and
+offering. Schema declarations alone are not consumers. Jinja attribute access,
+string-key lookups, and `params.get("name")` are inspected; dynamic access and
+whole-map iteration conservatively consume all parameters. Deprecated content can
+still be retired.
 
 ### Canonical user access interfaces
 
@@ -158,7 +157,7 @@ Three stages (unitysvc/unitysvc#2720): a target service's **`exports`** (what it
 - **Without `permissions`** (most services, including one that declares only `options`), the service exports one permission, `invoke`, on every route (`"* /*"`); `service:<name>` and the `service:*` wildcard grant it.
 - **With `permissions`**, the service exports exactly those, and `invoke` only if it declares it too. A data service (`me`, `log`, `needs`) declares `read` / `write` and no `invoke`: it holds the customer's own data, so only a grant that names its permissions reaches it, never `invoke` or a wildcard.
 - `permissions`: a name (lowercase letters, digits and `_`) → the routes it covers, each `"<METHOD> /<path>"` (`*` for any method, `*` globs in the path). Permissions are never inferred from HTTP methods.
-- `options`: a JSON Schema (draft 7) object of the customizations a grant may set on the service, like an enrollment's `user_parameters_schema`, with an optional react-jsonschema-form `options_ui_schema`; the frontend renders it with the same form component. It covers limits only the service can apply (a message size). Restrictions so a grant can write every value in query-string syntax: property names are lowercase letters, digits and `_`; each property is a `string`, `integer`, `number`, `boolean` or an `array` of strings, serialized as an OpenAPI form-style query parameter with arrays comma-joined (`style: form, explode: false`); options are optional (no `required`) and only declared properties are accepted; the schema is self-contained (no `$ref`), so validating against it never fetches anything. A property's `default` is what the service does when the policy does not set the option.
+- `options`: a JSON Schema (draft 7) object of the customizations a grant may set on the service, like a channel's `params.schema`, with an optional react-jsonschema-form `options_ui_schema`; the frontend renders it with the same form component. It covers limits only the service can apply (a message size). Restrictions so a grant can write every value in query-string syntax: property names are lowercase letters, digits and `_`; each property is a `string`, `integer`, `number`, `boolean` or an `array` of strings, serialized as an OpenAPI form-style query parameter with arrays comma-joined (`style: form, explode: false`); options are optional (no `required`) and only declared properties are accepted; the schema is self-contained (no `$ref`), so validating against it never fetches anything. A property's `default` is what the service does when the policy does not set the option.
 
 **2. A customer access request (`upstream_access_config.<channel>.customer_access_requests`), and the policy entry it becomes.** Any channel may declare its own list; each approved request becomes an entry (a grant) in the issued key's policy, in the same shape:
 
@@ -202,9 +201,28 @@ Three stages (unitysvc/unitysvc#2720): a target service's **`exports`** (what it
 - The `apikey` lifespan may be shortened, never lengthened beyond the request.
 - The result drops `required` / `justification` and empty `options` / `limits`. `api_key_lifespan(policy)` reads the lifespan back (the default when there is none).
 
+### Upstream access channels
+
+`upstream_access_config` maps a channel name to a channel (`UpstreamAccessConfig`, `ChannelConfig`; unitysvc/unitysvc#2730). A channel describes one way the platform reaches the upstream, as a whole, and its `servers` hold the connection, typed by the channel's protocol:
+
+| Channel key | What it is |
+| --- | --- |
+| `access_method` | `http` (default), `smtp`, `s3` or `mcp`; selects the server type |
+| `type` | normally derived by the platform; declare `external` (or `enrollable`) to state it |
+| `description`, `is_active`, `sort_order` | display text; inactive channels are skipped; rank, lowest first |
+| `request_formats`, `applicable_interfaces` | the formats the channel serves; the interfaces that reach it (display only) |
+| `rate_limit_refs` | the provider rate limits it consumes |
+| `customer_access_requests` | what the enrolling customer is asked to approve (see above) |
+| `params` | the enrollment parameters (below) |
+| `servers` | the connection: `HttpServer`, `SmtpServer`, `S3Server` or `McpServer` |
+
+The common one-server case writes the connection fields directly on the channel; they are read as `servers[0]`. When a channel has both, each server inherits the direct fields it does not set. Any string may be a template (`{{ params.X }}`, `${ secrets.X }`, `${ customer_secrets.X ?? default }`), so numeric and boolean connection fields also accept strings.
+
+Unknown keys are refused. Retired keys are refused with what to do instead (`RETIRED_CHANNEL_KEYS`): `raw`, `is_primary`, the listing-style parameter trio, `grants`, `rate_limits` (nothing reads it; use `rate_limit_refs`), `storage_type` (use `access_method: s3`), `response_rules`, `timeout_ms`, `transport`, and the platform-derived `customer_secrets_required` / `customer_secrets_optional`.
+
 ### Enrollment parameters on channels
 
-A channel may declare its own enrollment parameters, so each plan of a service asks for what it needs (unitysvc/unitysvc#2726):
+A channel declares the enrollment parameters it reads, so each plan of a service asks for what it needs (unitysvc/unitysvc#2726). A listing declares none: `user_parameters_schema`, `user_parameters_ui_schema` and `service_options.ops_testing_parameters` are refused.
 
 ```json
 "upstream_access_config": {
@@ -219,11 +237,8 @@ A channel may declare its own enrollment parameters, so each plan of a service a
 }
 ```
 
-`params.schema` is a JSON Schema of the parameters (a property's own `default` pre-fills the customer's form), `params.ui_schema` holds form hints, and `params.testing_defaults` holds the values the platform tests the channel with. Once any channel declares `params`:
+`params.schema` is a JSON Schema of the parameters (a property's own `default` pre-fills the customer's form), `params.ui_schema` holds form hints, and `params.testing_defaults` holds the values the platform tests the channel with. Rules:
 
-- a channel reads only the parameters its `params.schema` declares, and a channel that reads `{{ params.* }}` must declare its own `params` (`validate_channel_parameters`, on every `offering_v1`);
-- each required parameter has a value in that channel's `params.testing_defaults`;
-- each required parameter is read by its own channel or by document content; another channel's use does not count (`validate_required_parameter_usage`, which backend ingest also calls);
-- the listing must not also declare `user_parameters_schema`.
-
-When no channel declares `params`, the listing-level `user_parameters_schema` applies to the whole service as before.
+- a channel reads only the parameters its `params.schema` declares, and a channel that reads `{{ params.* }}` must declare `params` (`validate_channel_parameters`, on every `offering_v1`);
+- each required parameter has a value in that channel's `params.testing_defaults`, which is also what `${ customer_secrets.{{ params.X }} }` renders with when secret references are checked;
+- each required parameter is read by its own channel or by document content (`validate_required_parameter_usage`, which backend ingest also calls).

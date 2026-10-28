@@ -363,149 +363,25 @@ class TestFilePathAbsolutePresetExpansion:
         assert errors == [], f"Unexpected errors: {errors}"
 
 
-class TestRequiredParameterDefaults:
-    """Tests for validate_required_parameter_defaults method."""
-
-    def test_no_user_parameters_schema(self, schema_dir, example_data_dir):
-        """Test validation passes when user_parameters_schema is not present."""
-        validator = DataValidator(example_data_dir, schema_dir)
-
-        data = {"schema": "listing_v1"}
-        errors = validator.validate_required_parameter_defaults(data, "listing_v1")
-        assert len(errors) == 0
-
-    def test_no_required_parameters(self, schema_dir, example_data_dir):
-        """Test validation passes when user_parameters_schema has no required field."""
-        validator = DataValidator(example_data_dir, schema_dir)
-
-        data = {
-            "schema": "listing_v1",
-            "user_parameters_schema": {
-                "type": "object",
-                "properties": {"param1": {"type": "string"}},
-            },
-        }
-        errors = validator.validate_required_parameter_defaults(data, "listing_v1")
-        assert len(errors) == 0
-
-    def test_empty_required_parameters(self, schema_dir, example_data_dir):
-        """Test validation passes when required is an empty list."""
-        validator = DataValidator(example_data_dir, schema_dir)
-
-        data = {
-            "schema": "listing_v1",
-            "user_parameters_schema": {
-                "type": "object",
-                "properties": {"param1": {"type": "string"}},
-                "required": [],
-            },
-        }
-        errors = validator.validate_required_parameter_defaults(data, "listing_v1")
-        assert len(errors) == 0
-
-    def test_required_params_with_defaults(self, schema_dir, example_data_dir):
-        """Test validation passes when all required params have defaults."""
-        validator = DataValidator(example_data_dir, schema_dir)
-
-        data = {
-            "schema": "listing_v1",
-            "user_parameters_schema": {
-                "type": "object",
-                "properties": {
-                    "param1": {"type": "string"},
-                    "param2": {"type": "integer"},
-                },
-                "required": ["param1", "param2"],
-            },
-            "service_options": {
-                "ops_testing_parameters": {
-                    "param1": "default_value",
-                    "param2": 42,
-                }
-            },
-        }
-        errors = validator.validate_required_parameter_defaults(data, "listing_v1")
-        assert len(errors) == 0
-
-    def test_required_params_missing_service_options(self, schema_dir, example_data_dir):
-        """Test validation fails when required params exist but service_options is missing."""
-        validator = DataValidator(example_data_dir, schema_dir)
-
-        data = {
-            "schema": "listing_v1",
-            "user_parameters_schema": {
-                "type": "object",
-                "properties": {"param1": {"type": "string"}},
-                "required": ["param1"],
-            },
-        }
-        errors = validator.validate_required_parameter_defaults(data, "listing_v1")
-        assert len(errors) == 1
-        assert "service_options is missing" in errors[0]
-
-    def test_required_params_missing_ops_testing_parameters(self, schema_dir, example_data_dir):
-        """Test validation fails when required params exist but ops_testing_parameters is missing."""
-        validator = DataValidator(example_data_dir, schema_dir)
-
-        data = {
-            "schema": "listing_v1",
-            "user_parameters_schema": {
-                "type": "object",
-                "properties": {"param1": {"type": "string"}},
-                "required": ["param1"],
-            },
-            "service_options": {"other_option": "value"},
-        }
-        errors = validator.validate_required_parameter_defaults(data, "listing_v1")
-        assert len(errors) == 1
-        assert "ops_testing_parameters is missing" in errors[0]
-
-    def test_required_params_missing_some_defaults(self, schema_dir, example_data_dir):
-        """Test validation fails when some required params are missing defaults."""
-        validator = DataValidator(example_data_dir, schema_dir)
-
-        data = {
-            "schema": "listing_v1",
-            "user_parameters_schema": {
-                "type": "object",
-                "properties": {
-                    "param1": {"type": "string"},
-                    "param2": {"type": "integer"},
-                    "param3": {"type": "boolean"},
-                },
-                "required": ["param1", "param2", "param3"],
-            },
-            "service_options": {
-                "ops_testing_parameters": {
-                    "param1": "default_value",
-                    # param2 and param3 are missing
-                }
-            },
-        }
-        errors = validator.validate_required_parameter_defaults(data, "listing_v1")
-        assert len(errors) == 1
-        assert "param2" in errors[0]
-        assert "param3" in errors[0]
-        assert "missing default values" in errors[0]
-
-    def test_non_listing_schema_skipped(self, schema_dir, example_data_dir):
-        """Test validation is skipped for non-listing_v1 schemas."""
-        validator = DataValidator(example_data_dir, schema_dir)
-
-        # This data would fail if validated, but should be skipped for offering_v1
-        data = {
-            "schema": "offering_v1",
-            "user_parameters_schema": {
-                "type": "object",
-                "required": ["param1"],
-            },
-        }
-        errors = validator.validate_required_parameter_defaults(data, "offering_v1")
-        assert len(errors) == 0
-
-
 class TestApiKeySecretsValidation:
     """Tests for validate_api_key_secrets method."""
+
+    def test_channel_params_schema_is_not_a_key(self, schema_dir, example_data_dir):
+        """``api_key`` naming a parameter in params.schema/ui_schema is a declaration, not a key."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        params = {"schema": {"properties": {"api_key": {"type": "string"}}}, "ui_schema": {"api_key": "password"}}
+        data = {"upstream_access_config": {"plus": {"base_url": "https://u", "params": params}}}
+        assert validator.validate_api_key_secrets(data) == []
+
+    def test_channel_testing_defaults_api_key_is_checked(self, schema_dir, example_data_dir):
+        """A test value for an ``api_key`` parameter must be a secret reference, never a disposition."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        for value in ("sk-live-123", "__forward__"):
+            params = {"schema": {}, "testing_defaults": {"api_key": value}}
+            data = {"upstream_access_config": {"plus": {"base_url": "https://u", "params": params}}}
+            errors = validator.validate_api_key_secrets(data)
+            assert len(errors) == 1
+            assert "upstream_access_config.plus.params.testing_defaults.api_key" in errors[0]
 
     def test_valid_secrets_format_with_spaces(self, schema_dir, example_data_dir):
         """Test that api_key with spaces in secrets format is valid."""
@@ -652,7 +528,6 @@ class TestServiceOptionsValidation:
                     "limit_per_customer": 2,
                     "limit_per_user": 3,
                 },
-                "ops_testing_parameters": {"model": "gpt-4"},
             },
         }
         errors = validator.validate_service_options_keys(data, "listing_v1")
@@ -730,15 +605,15 @@ class TestServiceOptionsValidation:
         assert len(errors) == 1
         assert "service_options.enrollment.required must be bool, got str" in errors[0]
 
-    def test_wrong_type_ops_testing_parameters(self, schema_dir, example_data_dir):
+    def test_ops_testing_parameters_moved_to_the_channel(self, schema_dir, example_data_dir):
         validator = DataValidator(example_data_dir, schema_dir)
         data = {
             "schema": "listing_v1",
-            "service_options": {"ops_testing_parameters": "not a dict"},
+            "service_options": {"ops_testing_parameters": {"model": "gpt-4"}},
         }
         errors = validator.validate_service_options_keys(data, "listing_v1")
         assert len(errors) == 1
-        assert "must be dict, got str" in errors[0]
+        assert "params.testing_defaults" in errors[0]
 
     def test_non_positive_enrollment_limit(self, schema_dir, example_data_dir):
         validator = DataValidator(example_data_dir, schema_dir)
@@ -969,12 +844,16 @@ class TestSecretReferencesValidation:
             tmp_path,
             offering={
                 "upstream_access_config": {
-                    "S3": {"access_key": "${ customer_secrets.{{ params.s3_access_key_secret }} }"}
+                    "S3": {
+                        "access_key": "${ customer_secrets.{{ params.s3_access_key_secret }} }",
+                        "params": {
+                            "schema": {},
+                            "testing_defaults": {"s3_access_key_secret": "SVCMARKET_S3_ACCESS_KEY_ID"},
+                        },
+                    }
                 }
             },
-            listing={
-                "service_options": {"ops_testing_parameters": {"s3_access_key_secret": "SVCMARKET_S3_ACCESS_KEY_ID"}}
-            },
+            listing={"service_options": {}},
         )
         import json
 
@@ -990,15 +869,13 @@ class TestSecretReferencesValidation:
             offering={
                 "upstream_access_config": {
                     "A": {"api_key": "${ secrets.{{ routing_vars.region }}_KEY }"},
-                    "B": {"api_key": "${ secrets.{{ params.env }}_KEY }"},
+                    "B": {
+                        "api_key": "${ secrets.{{ params.env }}_KEY }",
+                        "params": {"schema": {}, "testing_defaults": {"env": "PROD"}},
+                    },
                 }
             },
-            listing={
-                "service_options": {
-                    "routing_vars": {"region": "US"},
-                    "ops_testing_parameters": {"env": "PROD"},
-                }
-            },
+            listing={"service_options": {"routing_vars": {"region": "US"}}},
         )
         import json
 
@@ -1016,7 +893,7 @@ class TestSecretReferencesValidation:
                     "S3": {"access_key": ("${ customer_secrets[enrollment_params.s3_access_key_secret] }")}
                 }
             },
-            listing={"service_options": {"ops_testing_parameters": {}}},
+            listing={"service_options": {}},
         )
         import json
 
@@ -1027,14 +904,19 @@ class TestSecretReferencesValidation:
         assert "not a valid form" in errors[0]
 
     def test_undefined_jinja_variable_is_rejected(self, schema_dir, example_data_dir, tmp_path):
-        """Referencing `params.MISSING` when ops_testing_parameters has no such key."""
+        """Referencing `params.MISSING` when the channel's testing_defaults has no such key."""
         validator = DataValidator(example_data_dir, schema_dir)
         offering_path = self._write_pair(
             tmp_path,
             offering={
-                "upstream_access_config": {"S3": {"access_key": "${ customer_secrets.{{ params.missing_key }} }"}}
+                "upstream_access_config": {
+                    "S3": {
+                        "access_key": "${ customer_secrets.{{ params.missing_key }} }",
+                        "params": {"schema": {}, "testing_defaults": {"other_key": "VALUE"}},
+                    }
+                }
             },
-            listing={"service_options": {"ops_testing_parameters": {"other_key": "VALUE"}}},
+            listing={"service_options": {}},
         )
         import json
 
@@ -1050,9 +932,14 @@ class TestSecretReferencesValidation:
         offering_path = self._write_pair(
             tmp_path,
             offering={
-                "upstream_access_config": {"API": {"api_key": "${ customer_secrets.{{ params.a }}-{{ params.b }} }"}}
+                "upstream_access_config": {
+                    "API": {
+                        "api_key": "${ customer_secrets.{{ params.a }}-{{ params.b }} }",
+                        "params": {"schema": {}, "testing_defaults": {"a": "FOO", "b": "BAR"}},
+                    }
+                }
             },
-            listing={"service_options": {"ops_testing_parameters": {"a": "FOO", "b": "BAR"}}},
+            listing={"service_options": {}},
         )
         import json
 
@@ -1131,16 +1018,44 @@ class TestSecretReferencesValidation:
             tmp_path,
             offering={
                 "upstream_access_config": {
-                    "S3": {"region": ("${ customer_secrets.{{ params.region_secret }} ?? us-east-1 }")}
+                    "S3": {
+                        "region": "${ customer_secrets.{{ params.region_secret }} ?? us-east-1 }",
+                        "params": {"schema": {}, "testing_defaults": {"region_secret": "SVCPASS_S3_REGION"}},
+                    }
                 }
             },
-            listing={"service_options": {"ops_testing_parameters": {"region_secret": "SVCPASS_S3_REGION"}}},
+            listing={"service_options": {}},
         )
         import json
 
         data = json.loads(offering_path.read_text())
         errors = validator.validate_secret_references(data, "offering_v1", offering_path)
         assert errors == []
+
+    def test_server_fields_are_checked(self, schema_dir, example_data_dir, tmp_path):
+        """References inside ``servers`` entries are rendered and checked too."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        offering_path = self._write_pair(
+            tmp_path,
+            offering={
+                "upstream_access_config": {
+                    "API": {
+                        "params": {"schema": {}, "testing_defaults": {"a": "FOO"}},
+                        "servers": [
+                            {"base_url": "https://a", "api_key": "${ customer_secrets.{{ params.a }} }"},
+                            {"base_url": "https://b", "api_key": "${ customer_secrets[x] }"},
+                        ],
+                    }
+                }
+            },
+            listing={"service_options": {}},
+        )
+        import json
+
+        data = json.loads(offering_path.read_text())
+        errors = validator.validate_secret_references(data, "offering_v1", offering_path)
+        assert len(errors) == 1
+        assert "upstream_access_config.API.servers[1].api_key" in errors[0]
 
     def test_empty_default_is_ok(self, schema_dir, example_data_dir, tmp_path):
         """`${ secrets.X ?? }` (empty default) is valid — matches backend
@@ -1497,30 +1412,19 @@ class TestListingJinjaVarReferences:
         }
         assert validate_listing_jinja_var_references(data) == []
 
-    def test_params_resolved_from_user_parameters_schema(self):
-        """A ``params.X`` ref is satisfied by user_parameters_schema.properties
-        even without an ops_testing_parameters default — the runtime gets
-        the value from the user."""
+    def test_params_are_never_defined_on_a_listing(self):
+        """A listing declares no parameters; they belong to channels."""
         from unitysvc_core.models.validators import validate_listing_jinja_var_references
 
         data = {
             "user_access_interfaces": {
                 "default": {"base_url": "https://api/{{ params.region }}"},
             },
-            "user_parameters_schema": {"properties": {"region": {"type": "string"}}},
+            "service_options": {"routing_vars": {"region": "us-east-1"}},
         }
-        assert validate_listing_jinja_var_references(data) == []
-
-    def test_params_resolved_from_ops_testing_parameters(self):
-        from unitysvc_core.models.validators import validate_listing_jinja_var_references
-
-        data = {
-            "user_access_interfaces": {
-                "default": {"base_url": "https://api/{{ params.region }}"},
-            },
-            "service_options": {"ops_testing_parameters": {"region": "us-east-1"}},
-        }
-        assert validate_listing_jinja_var_references(data) == []
+        errors = validate_listing_jinja_var_references(data)
+        assert len(errors) == 1
+        assert "undefined" in errors[0]
 
     def test_undefined_params_rejected(self):
         from unitysvc_core.models.validators import validate_listing_jinja_var_references

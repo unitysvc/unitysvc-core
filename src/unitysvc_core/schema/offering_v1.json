@@ -66,6 +66,51 @@
       "title": "AddPriceData",
       "type": "object"
     },
+    "ChannelParams": {
+      "additionalProperties": false,
+      "description": "The enrollment parameters a channel asks the customer for (unitysvc/unitysvc#2726).\n\nThe channel's templates read them as ``{{ params.NAME }}``.",
+      "properties": {
+        "schema": {
+          "additionalProperties": true,
+          "description": "JSON Schema of the parameters; a property's own `default` pre-fills the customer's form",
+          "title": "Schema",
+          "type": "object"
+        },
+        "testing_defaults": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The values the platform tests the channel with; every required parameter needs one",
+          "title": "Testing Defaults"
+        },
+        "ui_schema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Form hints (rjsf uiSchema)",
+          "title": "Ui Schema"
+        }
+      },
+      "required": [
+        "schema"
+      ],
+      "title": "ChannelParams",
+      "type": "object"
+    },
     "ChannelPriceData": {
       "additionalProperties": false,
       "description": "Channel-based pricing that selects a sub-price by the request's resolved channel.\n\nThe active channel is decided elsewhere — e.g. the gateway picks which keyed\n``upstream_access_config`` (upstream access channel) a request routes through\n(``\"managed\"``, ``\"byok\"``, ``\"byoe\"``, …) — and threads it into\n``calculate_cost(..., channel=...)``. The matching entry in ``channels`` is\nevaluated; when the channel is unknown or unset, the ``default`` channel is used.\n\nThere is no special-casing on the consumer side: every pricing type accepts\nan optional ``channel`` and a channel-independent price simply ignores it, so a\nplain price behaves identically for all channels. Channel-dependent pricing is\njust this one extra optional pricing type.\n\nEach ``channels`` value is itself any pricing object (flat, composite, tiered,\nor even nested channel-based), validated lazily — mirroring how tiered pricing\nholds per-tier prices.\n\nExample:\n    {\n        \"type\": \"channel\",\n        \"default\": \"managed\",\n        \"channels\": {\n            \"managed\": {\"type\": \"one_million_tokens\", \"input\": \"0.50\", \"output\": \"1.50\"},\n            \"byok\": {\"type\": \"constant\", \"price\": \"0\"}\n        }\n    }",
@@ -739,6 +784,873 @@
       "title": "GraduatedTier",
       "type": "object"
     },
+    "HttpChannel": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptable_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats this server accepts",
+          "title": "Acceptable Formats"
+        },
+        "access_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Access Key"
+        },
+        "access_method": {
+          "const": "http",
+          "default": "http",
+          "title": "Access Method",
+          "type": "string"
+        },
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A secret reference, or one of '', '__strip__', '__forward__', '__sigv4__'",
+          "title": "Api Key"
+        },
+        "applicable_interfaces": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The user access interfaces that reach this channel (display only)",
+          "title": "Applicable Interfaces"
+        },
+        "auth_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "forward, static, customer_token or none",
+          "title": "Auth Mode"
+        },
+        "auth_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Auth Token"
+        },
+        "base_url": {
+          "description": "Upstream base URL",
+          "title": "Base Url",
+          "type": "string"
+        },
+        "customer_access_requests": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the enrolling customer is asked to approve; see unitysvc_core.grants",
+          "title": "Customer Access Requests"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "headers": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Headers"
+        },
+        "is_active": {
+          "default": true,
+          "title": "Is Active",
+          "type": "boolean"
+        },
+        "mail_from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mail From"
+        },
+        "mail_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mail To"
+        },
+        "max_message_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Message Bytes"
+        },
+        "method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Method"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Server name, unique within the channel",
+          "title": "Name"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChannelParams"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "payload_format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Body format sent upstream, e.g. msg",
+          "title": "Payload Format"
+        },
+        "rate_limit_refs": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Names of the provider's rate limits this channel consumes",
+          "title": "Rate Limit Refs"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Region"
+        },
+        "request_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats the channel serves",
+          "title": "Request Formats"
+        },
+        "request_transformer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequestTransformer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "routing_key": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Values the gateway routes on, e.g. model",
+          "title": "Routing Key"
+        },
+        "secret_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Secret Key"
+        },
+        "servers": {
+          "items": {
+            "$ref": "#/$defs/HttpServer"
+          },
+          "title": "Servers",
+          "type": "array"
+        },
+        "session_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Token"
+        },
+        "sigv4_service": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sigv4 Service"
+        },
+        "smtp_host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Host"
+        },
+        "smtp_password": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Password"
+        },
+        "smtp_port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Port"
+        },
+        "smtp_target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Target"
+        },
+        "smtp_tls": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Tls"
+        },
+        "smtp_username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Username"
+        },
+        "sort_order": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Channel rank, lowest first",
+          "title": "Sort Order"
+        },
+        "tls_verify": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tls Verify"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "enum": [
+                "unbound",
+                "secret_bound",
+                "enrollable",
+                "me_bound",
+                "external"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Normally derived by the platform; declare 'external' (or 'enrollable') to state it",
+          "title": "Type"
+        },
+        "upstream_format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The request format the upstream speaks",
+          "title": "Upstream Format"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative share of traffic among the channel's servers",
+          "title": "Weight"
+        }
+      },
+      "title": "HttpChannel",
+      "type": "object"
+    },
+    "HttpServer": {
+      "additionalProperties": false,
+      "description": "An HTTP upstream, or a platform service named by a scheme such as ``notify://`` or ``me://``.",
+      "properties": {
+        "acceptable_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats this server accepts",
+          "title": "Acceptable Formats"
+        },
+        "access_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Access Key"
+        },
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A secret reference, or one of '', '__strip__', '__forward__', '__sigv4__'",
+          "title": "Api Key"
+        },
+        "auth_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "forward, static, customer_token or none",
+          "title": "Auth Mode"
+        },
+        "auth_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Auth Token"
+        },
+        "base_url": {
+          "description": "Upstream base URL",
+          "title": "Base Url",
+          "type": "string"
+        },
+        "headers": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Headers"
+        },
+        "mail_from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mail From"
+        },
+        "mail_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mail To"
+        },
+        "max_message_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Message Bytes"
+        },
+        "method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Method"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Server name, unique within the channel",
+          "title": "Name"
+        },
+        "payload_format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Body format sent upstream, e.g. msg",
+          "title": "Payload Format"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Region"
+        },
+        "request_transformer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequestTransformer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "routing_key": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Values the gateway routes on, e.g. model",
+          "title": "Routing Key"
+        },
+        "secret_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Secret Key"
+        },
+        "session_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Token"
+        },
+        "sigv4_service": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sigv4 Service"
+        },
+        "smtp_host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Host"
+        },
+        "smtp_password": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Password"
+        },
+        "smtp_port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Port"
+        },
+        "smtp_target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Target"
+        },
+        "smtp_tls": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Tls"
+        },
+        "smtp_username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Username"
+        },
+        "tls_verify": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tls Verify"
+        },
+        "upstream_format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The request format the upstream speaks",
+          "title": "Upstream Format"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative share of traffic among the channel's servers",
+          "title": "Weight"
+        }
+      },
+      "required": [
+        "base_url"
+      ],
+      "title": "HttpServer",
+      "type": "object"
+    },
     "ImagePriceData": {
       "additionalProperties": false,
       "description": "Price data for per-image pricing (image generation, processing).\n\nPrice values use Decimal for precision. In JSON/TOML, specify as strings\n(e.g., \"0.04\") to avoid floating-point precision issues.",
@@ -851,6 +1763,391 @@
         "prices"
       ],
       "title": "MaxPriceData",
+      "type": "object"
+    },
+    "McpChannel": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptable_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats this server accepts",
+          "title": "Acceptable Formats"
+        },
+        "access_method": {
+          "const": "mcp",
+          "title": "Access Method",
+          "type": "string"
+        },
+        "allowed_hosts": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Allowed Hosts"
+        },
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Key"
+        },
+        "applicable_interfaces": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The user access interfaces that reach this channel (display only)",
+          "title": "Applicable Interfaces"
+        },
+        "auth_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "customer_token, forward, static or none",
+          "title": "Auth Mode"
+        },
+        "base_url": {
+          "title": "Base Url",
+          "type": "string"
+        },
+        "credential": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Credential"
+        },
+        "customer_access_requests": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the enrolling customer is asked to approve; see unitysvc_core.grants",
+          "title": "Customer Access Requests"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "headers": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Headers"
+        },
+        "is_active": {
+          "default": true,
+          "title": "Is Active",
+          "type": "boolean"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Server name, unique within the channel",
+          "title": "Name"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChannelParams"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rate_limit_refs": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Names of the provider's rate limits this channel consumes",
+          "title": "Rate Limit Refs"
+        },
+        "request_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats the channel serves",
+          "title": "Request Formats"
+        },
+        "servers": {
+          "items": {
+            "$ref": "#/$defs/McpServer"
+          },
+          "title": "Servers",
+          "type": "array"
+        },
+        "sort_order": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Channel rank, lowest first",
+          "title": "Sort Order"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "enum": [
+                "unbound",
+                "secret_bound",
+                "enrollable",
+                "me_bound",
+                "external"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Normally derived by the platform; declare 'external' (or 'enrollable') to state it",
+          "title": "Type"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative share of traffic among the channel's servers",
+          "title": "Weight"
+        }
+      },
+      "required": [
+        "access_method"
+      ],
+      "title": "McpChannel",
+      "type": "object"
+    },
+    "McpServer": {
+      "additionalProperties": false,
+      "description": "A remote MCP server (streamable HTTP).",
+      "properties": {
+        "acceptable_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats this server accepts",
+          "title": "Acceptable Formats"
+        },
+        "allowed_hosts": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Allowed Hosts"
+        },
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Key"
+        },
+        "auth_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "customer_token, forward, static or none",
+          "title": "Auth Mode"
+        },
+        "base_url": {
+          "title": "Base Url",
+          "type": "string"
+        },
+        "credential": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Credential"
+        },
+        "headers": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Headers"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Server name, unique within the channel",
+          "title": "Name"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative share of traffic among the channel's servers",
+          "title": "Weight"
+        }
+      },
+      "required": [
+        "base_url"
+      ],
+      "title": "McpServer",
       "type": "object"
     },
     "MimeTypeEnum": {
@@ -1046,6 +2343,86 @@
       "title": "PriceTier",
       "type": "object"
     },
+    "RequestTransformer": {
+      "additionalProperties": false,
+      "description": "How the gateway rewrites a request before sending it upstream.",
+      "properties": {
+        "body_transformer": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Rewrite the request body",
+          "title": "Body Transformer"
+        },
+        "llm_translator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Translate between LLM request dialects (a preset name or its config)",
+          "title": "Llm Translator"
+        },
+        "msg_transformer": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Map the standard msg envelope",
+          "title": "Msg Transformer"
+        },
+        "proxy_rewrite": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Rewrite the upstream path and headers",
+          "title": "Proxy Rewrite"
+        },
+        "set_body": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Replace the request body with this template",
+          "title": "Set Body"
+        }
+      },
+      "title": "RequestTransformer",
+      "type": "object"
+    },
     "RevenueSharePriceData": {
       "additionalProperties": false,
       "description": "Price data for revenue share pricing (payout_price only).\n\nThis pricing type is used exclusively for payout_price when the seller\nreceives a percentage of what the customer pays. It cannot be used for\nlist_price since the list price must be a concrete amount.\n\nThe percentage represents the seller's share of the customer charge.\nFor example, if percentage is \"70\" and the customer pays $10, the seller\nreceives $7.\n\nPercentage values must be strings (e.g., \"70.00\") to avoid floating-point\nprecision issues.",
@@ -1107,6 +2484,467 @@
       "title": "RevenueSharePriceData",
       "type": "object"
     },
+    "S3Channel": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptable_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats this server accepts",
+          "title": "Acceptable Formats"
+        },
+        "access_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Access Key"
+        },
+        "access_method": {
+          "const": "s3",
+          "title": "Access Method",
+          "type": "string"
+        },
+        "addressing_style": {
+          "anyOf": [
+            {
+              "enum": [
+                "path",
+                "virtual"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Addressing Style"
+        },
+        "applicable_interfaces": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The user access interfaces that reach this channel (display only)",
+          "title": "Applicable Interfaces"
+        },
+        "base_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Key prefix inside the bucket",
+          "title": "Base Path"
+        },
+        "bucket": {
+          "title": "Bucket",
+          "type": "string"
+        },
+        "customer_access_requests": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the enrolling customer is asked to approve; see unitysvc_core.grants",
+          "title": "Customer Access Requests"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "is_active": {
+          "default": true,
+          "title": "Is Active",
+          "type": "boolean"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Server name, unique within the channel",
+          "title": "Name"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChannelParams"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proxy_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "proxy",
+                "redirect"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proxy Mode"
+        },
+        "rate_limit_refs": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Names of the provider's rate limits this channel consumes",
+          "title": "Rate Limit Refs"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Region"
+        },
+        "request_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats the channel serves",
+          "title": "Request Formats"
+        },
+        "s3_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "S3 Endpoint"
+        },
+        "secret_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Secret Key"
+        },
+        "servers": {
+          "items": {
+            "$ref": "#/$defs/S3Server"
+          },
+          "title": "Servers",
+          "type": "array"
+        },
+        "session_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Token"
+        },
+        "sort_order": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Channel rank, lowest first",
+          "title": "Sort Order"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "enum": [
+                "unbound",
+                "secret_bound",
+                "enrollable",
+                "me_bound",
+                "external"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Normally derived by the platform; declare 'external' (or 'enrollable') to state it",
+          "title": "Type"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative share of traffic among the channel's servers",
+          "title": "Weight"
+        }
+      },
+      "required": [
+        "access_method"
+      ],
+      "title": "S3Channel",
+      "type": "object"
+    },
+    "S3Server": {
+      "additionalProperties": false,
+      "description": "An S3-compatible bucket.",
+      "properties": {
+        "acceptable_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats this server accepts",
+          "title": "Acceptable Formats"
+        },
+        "access_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Access Key"
+        },
+        "addressing_style": {
+          "anyOf": [
+            {
+              "enum": [
+                "path",
+                "virtual"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Addressing Style"
+        },
+        "base_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Key prefix inside the bucket",
+          "title": "Base Path"
+        },
+        "bucket": {
+          "title": "Bucket",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Server name, unique within the channel",
+          "title": "Name"
+        },
+        "proxy_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "proxy",
+                "redirect"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proxy Mode"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Region"
+        },
+        "s3_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "S3 Endpoint"
+        },
+        "secret_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Secret Key"
+        },
+        "session_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Token"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative share of traffic among the channel's servers",
+          "title": "Weight"
+        }
+      },
+      "required": [
+        "bucket"
+      ],
+      "title": "S3Server",
+      "type": "object"
+    },
     "ServiceTypeEnum": {
       "description": "Broad service category — defines the access pattern and protocol.\n\nAI modalities (vision, tools, rerank, etc.) are tracked via the\n`capabilities` list on ServiceOffering, not service_type.",
       "enum": [
@@ -1127,6 +2965,391 @@
       ],
       "title": "ServiceTypeEnum",
       "type": "string"
+    },
+    "SmtpChannel": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptable_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats this server accepts",
+          "title": "Acceptable Formats"
+        },
+        "access_method": {
+          "const": "smtp",
+          "title": "Access Method",
+          "type": "string"
+        },
+        "applicable_interfaces": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The user access interfaces that reach this channel (display only)",
+          "title": "Applicable Interfaces"
+        },
+        "customer_access_requests": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the enrolling customer is asked to approve; see unitysvc_core.grants",
+          "title": "Customer Access Requests"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "host": {
+          "title": "Host",
+          "type": "string"
+        },
+        "is_active": {
+          "default": true,
+          "title": "Is Active",
+          "type": "boolean"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Server name, unique within the channel",
+          "title": "Name"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChannelParams"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "password": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Password"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Port"
+        },
+        "rate_limit_refs": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Names of the provider's rate limits this channel consumes",
+          "title": "Rate Limit Refs"
+        },
+        "request_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats the channel serves",
+          "title": "Request Formats"
+        },
+        "servers": {
+          "items": {
+            "$ref": "#/$defs/SmtpServer"
+          },
+          "title": "Servers",
+          "type": "array"
+        },
+        "sort_order": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Channel rank, lowest first",
+          "title": "Sort Order"
+        },
+        "tls": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tls"
+        },
+        "to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Recipient that replaces the message's own",
+          "title": "To"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "enum": [
+                "unbound",
+                "secret_bound",
+                "enrollable",
+                "me_bound",
+                "external"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Normally derived by the platform; declare 'external' (or 'enrollable') to state it",
+          "title": "Type"
+        },
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Username"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative share of traffic among the channel's servers",
+          "title": "Weight"
+        }
+      },
+      "required": [
+        "access_method"
+      ],
+      "title": "SmtpChannel",
+      "type": "object"
+    },
+    "SmtpServer": {
+      "additionalProperties": false,
+      "description": "An SMTP relay.",
+      "properties": {
+        "acceptable_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats this server accepts",
+          "title": "Acceptable Formats"
+        },
+        "host": {
+          "title": "Host",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Server name, unique within the channel",
+          "title": "Name"
+        },
+        "password": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Password"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Port"
+        },
+        "tls": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tls"
+        },
+        "to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Recipient that replaces the message's own",
+          "title": "To"
+        },
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Username"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative share of traffic among the channel's servers",
+          "title": "Weight"
+        }
+      },
+      "required": [
+        "host"
+      ],
+      "title": "SmtpServer",
+      "type": "object"
     },
     "StepPriceData": {
       "additionalProperties": false,
@@ -1396,6 +3619,27 @@
       },
       "title": "TokenPriceData",
       "type": "object"
+    },
+    "UpstreamAccessConfig": {
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/HttpChannel"
+          },
+          {
+            "$ref": "#/$defs/SmtpChannel"
+          },
+          {
+            "$ref": "#/$defs/S3Channel"
+          },
+          {
+            "$ref": "#/$defs/McpChannel"
+          }
+        ]
+      },
+      "description": "An offering's channels, keyed by channel name.",
+      "title": "UpstreamAccessConfig",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -1634,13 +3878,8 @@
       "type": "string"
     },
     "upstream_access_config": {
-      "additionalProperties": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "description": "Upstream access channels, keyed by channel name (opaque per-channel objects)",
-      "title": "Upstream Access Config",
-      "type": "object"
+      "$ref": "#/$defs/UpstreamAccessConfig",
+      "description": "Upstream access channels, keyed by channel name"
     }
   },
   "required": [

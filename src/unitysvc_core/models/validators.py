@@ -252,45 +252,6 @@ def validate_channel_name(name: str, entity_type: str = "channel") -> str:
     return name
 
 
-def validate_channel_config(name: str, config: dict[str, Any]) -> dict[str, Any]:
-    """Reject retired keys in an upstream access channel or its servers.
-
-    ``raw`` once marked fields the backend should not Jinja-expand. The backend
-    no longer renders channels at routing time — the gateway renders
-    ``{{ params.* }}`` / ``{{ enrollment.* }}`` at request time and refuses any
-    ``{{ }}`` it cannot resolve, ``raw`` contents included — so the block only
-    adds a second spelling of a field. Write its keys on the channel (or the
-    server) directly.
-
-    ``is_primary`` once ranked a channel ahead of the others. Channels now rank
-    by ``sort_order`` alone. (A listing's user access interface still has its
-    own, unrelated ``is_primary``.)
-
-    Raises:
-        ValueError: If the channel declares ``is_primary``, or the channel or
-            any entry of its ``servers`` list declares ``raw``.
-    """
-    if "is_primary" in config:
-        raise ValueError(
-            f"upstream_access_config.{name}.is_primary is not supported: channels rank by "
-            f"'sort_order' (lowest first); remove 'is_primary'."
-        )
-    if "raw" in config:
-        raise ValueError(
-            f"upstream_access_config.{name}.raw is not supported: move its keys "
-            f"(e.g. 'request_transformer') onto the channel itself."
-        )
-    servers = config.get("servers")
-    if isinstance(servers, list):
-        for index, server in enumerate(servers):
-            if isinstance(server, dict) and "raw" in server:
-                raise ValueError(
-                    f"upstream_access_config.{name}.servers[{index}].raw is not supported: "
-                    f"move its keys onto the server itself."
-                )
-    return config
-
-
 # An MCP service's namespace is the ``routing_key.namespace`` value on its user
 # access interface. It plays the same role ``routing_key.username`` plays for
 # SMTP: the sole selector against a shared gateway ``base_url``. It also
@@ -413,11 +374,16 @@ SUPPORTED_SERVICE_OPTIONS: dict[str, type | tuple[type, ...]] = {
     "default_visibility": str,  # Visibility applied by upload: public | unlisted | private
     "enrollment": dict,  # Per-enrollment config: {limit, limit_per_customer, limit_per_user, required}
     "routing_vars": dict,  # Seller-managed operational variables for template resolution at request time
-    "ops_testing_parameters": dict,
     "prompt_recurrence": bool,  # Prompt recurrence options during enrollment
     "recurrence_min_interval_seconds": int,
     "recurrence_max_interval_seconds": int,
     "recurrence_allow_cron": bool,
+}
+
+# Service options that moved, with where they went.
+RETIRED_SERVICE_OPTIONS: dict[str, str] = {
+    "ops_testing_parameters": "enrollment parameters are declared per channel; move the values to "
+    "upstream_access_config.<channel>.params.testing_defaults (unitysvc/unitysvc#2726)",
 }
 
 # Inner keys of the ``enrollment`` service option and their expected types.
@@ -474,6 +440,9 @@ def validate_service_options(service_options: dict[str, Any] | None) -> list[str
     supported_keys = sorted(SUPPORTED_SERVICE_OPTIONS.keys())
 
     for key, value in service_options.items():
+        if key in RETIRED_SERVICE_OPTIONS:
+            errors.append(f"service_options.{key} is not supported: {RETIRED_SERVICE_OPTIONS[key]}")
+            continue
         if key not in SUPPORTED_SERVICE_OPTIONS:
             errors.append(f"Unrecognized service_option '{key}'. Supported options: {', '.join(supported_keys)}")
             continue
@@ -1118,21 +1087,17 @@ def suggest_valid_name(display_name: str, *, allow_slash: bool = False) -> str:
     return suggested
 
 
-def build_jinja_var_context(
-    service_options: dict[str, Any] | None,
-    user_parameters_schema: dict[str, Any] | None,
-) -> dict[str, Any]:
+def build_jinja_var_context(service_options: dict[str, Any] | None) -> dict[str, Any]:
     """Build the ``{ service_name, params, routing_vars, enrollment }``
-    context used to render Jinja templates in listing/offering data.
+    context used to render Jinja templates in a listing.
 
     A name is "defined" for validation purposes if it appears in:
 
     - ``service_name``: always defined — the platform injects it (equal to
       ``listing.name``) at render time, so ``{{ service_name }}`` is the
       canonical way to route a gateway base_url (issue #1138).
-    - ``params``: ``user_parameters_schema.properties`` (declared parameters)
-      *or* ``service_options.ops_testing_parameters`` (test defaults). Either
-      means the runtime will have a value, so referencing it is safe.
+    - ``params``: never — a listing declares no parameters; they belong to
+      the channel that reads them (unitysvc/unitysvc#2726).
     - ``routing_vars``: keys of ``service_options.routing_vars``.
     - ``enrollment``: intrinsic per-enrollment fields ``code`` / ``id`` — always
       available at render time (#1202), so ``{{ enrollment.code }}`` is always
@@ -1141,23 +1106,11 @@ def build_jinja_var_context(
     Values are placeholder strings — only key presence matters for
     StrictUndefined checks.
     """
-    service_options = service_options or {}
-    user_parameters_schema = user_parameters_schema or {}
-
-    params_keys: set[str] = set()
-    props = user_parameters_schema.get("properties") if isinstance(user_parameters_schema, dict) else None
-    if isinstance(props, dict):
-        params_keys.update(k for k in props if isinstance(k, str))
-    ops_testing = service_options.get("ops_testing_parameters") if isinstance(service_options, dict) else None
-    if isinstance(ops_testing, dict):
-        params_keys.update(k for k in ops_testing if isinstance(k, str))
-
     routing_vars = service_options.get("routing_vars") if isinstance(service_options, dict) else None
-
     return {
         # Platform-injected at render time (= listing.name). Always defined.
         "service_name": "",
-        "params": {k: "" for k in params_keys},
+        "params": {},
         "routing_vars": {k: "" for k in routing_vars} if isinstance(routing_vars, dict) else {},
         # Intrinsic per-enrollment fields, always available at render time (#1202).
         "enrollment": {"code": "", "id": ""},
@@ -1251,13 +1204,11 @@ def validate_listing_jinja_var_references(data: dict[str, Any] | None) -> list[s
     """Validate that every ``{{ params.X }}`` / ``{{ routing_vars.X }}`` /
     ``{{ enrollment.X }}`` reference inside ``user_access_interfaces``
     resolves to a name declared in the listing's own
-    ``service_options`` / ``user_parameters_schema`` (or the intrinsic
-    ``enrollment`` namespace).
+    ``service_options`` (or the intrinsic ``enrollment`` namespace).
 
     A reference is undefined when:
 
-    - ``params.X``: ``X`` is not in ``user_parameters_schema.properties`` and
-      not in ``service_options.ops_testing_parameters``.
+    - ``params.X``: always; a listing declares no parameters.
     - ``routing_vars.X``: ``X`` is not in ``service_options.routing_vars``.
     - ``enrollment.X``: ``X`` is not an intrinsic field (``code`` / ``id``).
 
@@ -1269,7 +1220,7 @@ def validate_listing_jinja_var_references(data: dict[str, Any] | None) -> list[s
     if not isinstance(uai, dict) or not uai:
         return []
 
-    context = build_jinja_var_context(data.get("service_options"), data.get("user_parameters_schema"))
+    context = build_jinja_var_context(data.get("service_options"))
     jinja_env = Environment(undefined=StrictUndefined, autoescape=False)
     errors: list[str] = []
 
@@ -1285,8 +1236,7 @@ def validate_listing_jinja_var_references(data: dict[str, Any] | None) -> list[s
                 errors.append(
                     f"{field_path}: Jinja reference is undefined — {exc.message}. "
                     f"Define the variable in the listing's service_options "
-                    f"(routing_vars), user_parameters_schema.properties (for params), "
-                    f"or use the intrinsic enrollment.code / enrollment.id."
+                    f"(routing_vars), or use the intrinsic enrollment.code / enrollment.id."
                 )
             except TemplateSyntaxError as exc:
                 errors.append(f"{field_path}: Jinja syntax error in '{value}' — {exc.message}.")
