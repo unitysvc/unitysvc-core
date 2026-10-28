@@ -169,10 +169,11 @@ Three stages (unitysvc/unitysvc#2720): a target service's **`exports`** (what it
                 "limits": {"count_per_day": 1000}}]
 ```
 
-- `object` names one service (`service:<name>`, no wildcards). `enrollment:<CODE>` (one enrollment of an enrollable service) may be allowed later.
+- `object` names one service (`service:<name>`, no wildcards), or `apikey` for the leased key's lifespan (below). `enrollment:<CODE>` (one enrollment of an enrollable service) may be allowed later.
 - `options` is written in query-string syntax (`parse_options`; a notation, not how options are delivered): each name once, each value non-empty; with a catalog, each value is converted to its declared type and validated against the target's `options` schema.
 - **Enrollment is where options and limits are set.** In a request, `options` and `limits` only pre-fill the enrollment form for convenience. When enrolling, the customer confirms and sets the options (a form rendered from the target's `options` schema) and the limits, and adds their own limits; the result is the issued key's policy.
 - `limits` (`validate_limits`): `count_per_hour` / `count_per_day` / `count_per_month` / `count_total` (positive integer) and the same for `amount_` (finite positive decimal, as a number or a string). Limits are universal: the platform meters every call, so any service can be limited without exporting anything. The seller's limits are a pre-fill; the customer sets them at enrollment, and an enrollment's own limits (unitysvc/unitysvc#2687) use the same shape. They are counted per policy entry (the enrollment's calls to that service) from the usage stream (counters keyed by scope, metric and window bucket), and the gateway refuses calls once one is exceeded.
+- **A longer-lived leased key** is asked for with one `apikey` entry: `{"object": "apikey", "limits": {"api_key_lifespan": 14400}, "justification": "Batch runs take up to four hours"}`. It names the key itself, so it takes only `limits` (exactly `api_key_lifespan`, whole seconds from 1 to 86400) and a `justification`, needs no catalog lookup, and grants nothing. Without it, a key the seller leases for the enrollment lives `DEFAULT_API_KEY_LIFESPAN` (3600 s). `api_key_lifespan` is valid only on this entry.
 
 **3. How options reach the service.** Not through the upstream URL: the gateway never changes a target's `base_url` or query to carry policy. How an option is applied is up to the service's implementation:
 
@@ -188,6 +189,18 @@ Three stages (unitysvc/unitysvc#2720): a target service's **`exports`** (what it
 
 - `DataValidator(data_dir, schema_dir, exports_resolver=...)` runs both checks on every `offering_v1` (`exports` and each channel's `customer_access_requests`). The seller SDK passes a resolver that downloads the catalog bundle once and reads the target row's `exports`; offline it passes none and gets the shape checks.
 - Backend ingest calls the same function with a resolver over the published services, so an unknown target, permission or option fails at upload.
+
+**6. From approvals to a policy (`build_policy`).** When the customer enrolls, `build_policy(requests, approvals, resolve)` turns their approvals of the channel's requests into the policy the enrollment keeps and every key leased for it copies (unitysvc/unitysvc#2766):
+
+```json
+[{"object": "service:log", "permissions": ["invoke"], "options": "log_level=error", "limits": {"count_per_day": 200}},
+ {"object": "apikey", "limits": {"api_key_lifespan": 7200}}]
+```
+
+- Each approval names a requested object, at most once, with some of the permissions requested. Every `required` request must be approved; optional ones may be left out.
+- Options and limits are the customer's. They are checked against the target's `exports` (with `resolve`) and `validate_limits`, not against the request, whose values only pre-fill the form.
+- The `apikey` lifespan may be shortened, never lengthened beyond the request.
+- The result drops `required` / `justification` and empty `options` / `limits`. `api_key_lifespan(policy)` reads the lifespan back (the default when there is none).
 
 ### Enrollment parameters on channels
 
