@@ -173,7 +173,7 @@ Three stages (unitysvc/unitysvc#2720): a target service's **`exports`** (what it
                 "limits": {"count_per_day": 1000}}]
 ```
 
-- `object` names one service (`service:<name>`, no wildcards, no channel: `@` is refused), or `apikey` for the leased key's lifespan (below). A policy entry may also carry `enrollment` (a code) to select one instance of a service that requires enrollment; for now only the enrollment's own entry does (section 6).
+- `object` names one service (`service:<name>`, no wildcards), or `apikey` for the leased key's lifespan (below).
 - `options` is written in query-string syntax (`parse_options`; a notation, not how options are delivered): each name once, each value non-empty; with a catalog, each value is converted to its declared type and validated against the target's `options` schema.
 - **Enrollment is where options and limits are set.** In a request, `options` and `limits` only pre-fill the enrollment form for convenience. When enrolling, the customer confirms and sets the options (a form rendered from the target's `options` schema) and the limits, and adds their own limits; the result is the issued key's policy.
 - `limits` (`validate_limits`): `count_per_hour` / `count_per_day` / `count_per_month` / `count_total` (positive integer) and the same for `amount_` (finite positive decimal, as a number or a string). Limits are universal: the platform meters every call, so any service can be limited without exporting anything. The seller's limits are a pre-fill; the customer sets them at enrollment, and an enrollment's own limits (unitysvc/unitysvc#2687) use the same shape. They are counted per policy entry (the enrollment's calls to that service) from the usage stream (counters keyed by scope, metric and window bucket), and the gateway refuses calls once one is exceeded.
@@ -206,15 +206,13 @@ Three stages (unitysvc/unitysvc#2720): a target service's **`exports`** (what it
 - The `apikey` lifespan may be shortened, never lengthened beyond the request.
 - The result drops `required` / `justification` and empty `options` / `limits`. `api_key_lifespan(policy)` reads the lifespan back (the default when there is none).
 
-**The enrollment's own entry** caps what one enrollment costs: what is billed to it, through `/e/<CODE>` and the seller's `/bill` charges against it (unitysvc/unitysvc#2770). The customer adds it on the enrolling service; it needs no request. `build_policy(requests, approvals, resolve, service=<enrolling service>, enrollment=<code>)` accepts it:
+A policy has three kinds of entry (unitysvc/unitysvc#2770):
 
-```json
-{"object": "service:labs/trash-alerts", "enrollment": "JYY87Y", "limits": {"amount_per_day": "1.00"}}
-```
-
-- `service` names the enrolling service (without `service:`); without it, an unrequested object is refused as before. An approval on `service:<service>` that is not requested, or that carries `enrollment`, is the own entry; there is at most one.
-- It takes only `limits`, and at least one: `permissions` and `options` are refused (an enrollment's params are fixed), as is an empty cap.
-- `enrollment` is the enrollment's code, `None` for a draft of a new enrollment. A draft writes the entry without `enrollment`; once the code is passed, the returned entry carries it. An entry naming any other code is refused, and only this entry may carry `enrollment`.
+| Entry | Means |
+| --- | --- |
+| `{"object": "enrollment", "limits": {"amount_per_day": "1.00"}}` | This enrollment's own limits (total spending, say). The customer adds it without a request; it takes only `limits`, at least one, at most one entry. It grants nothing. |
+| `{"object": "service:ai", ...}` | A service the app calls for the customer. A seller may name a specific one (`service:labs/llm-premium` instead of `service:ai` with `options="service=labs/llm-premium"`), at the cost of the customer's choice of provider, which a customer may decline. |
+| `{"object": "service:<name>", "enrollment": "<CODE>", ...}` | One enrollment of a service that requires enrolling (a chain enrollment), called through `/e/<CODE>`. **Refused for now.** |
 
 ### Upstream access channels
 
