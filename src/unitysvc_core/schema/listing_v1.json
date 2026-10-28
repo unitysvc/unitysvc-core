@@ -1658,34 +1658,6 @@
       "default": null,
       "description": "User access interfaces for the listing, keyed by name",
       "title": "User Access Interfaces"
-    },
-    "user_parameters_schema": {
-      "anyOf": [
-        {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "JSON Schema for user parameters",
-      "title": "User Parameters Schema"
-    },
-    "user_parameters_ui_schema": {
-      "anyOf": [
-        {
-          "additionalProperties": true,
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "UI schema for user parameters form rendering",
-      "title": "User Parameters Ui Schema"
     }
   },
   "required": [

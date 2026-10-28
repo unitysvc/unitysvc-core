@@ -1,4 +1,4 @@
-"""User access interfaces are canonical: no per-enrollment values (unitysvc/unitysvc#2726)."""
+"""User access interfaces are canonical gateway addresses (unitysvc/unitysvc#2726)."""
 
 import pytest
 
@@ -7,6 +7,7 @@ from unitysvc_core.models.validators import validate_listing_interfaces_are_cano
 API = "${API_GATEWAY_BASE_URL}"
 SMTP = "${SMTP_GATEWAY_BASE_URL}"
 S3 = "${S3_GATEWAY_BASE_URL}"
+MCP = "${MCP_GATEWAY_BASE_URL}"
 
 
 def _check(**interfaces):
@@ -18,7 +19,10 @@ def _check(**interfaces):
     [
         {"base_url": f"{API}/openai", "routing_key": {"model": "gpt-4"}},
         {"base_url": f"{API}/{{{{ service_name }}}}"},
-        {"base_url": f"{API}/{{{{ routing_vars.region }}}}/chat"},
+        {"base_url": f"{API}/a/demo"},
+        {"base_url": f"{API}/p/llm"},
+        {"base_url": API},
+        {"base_url": MCP},
         {"base_url": SMTP, "routing_key": {"username": "smtp-relay"}},
         {"base_url": SMTP, "routing_key": {"username": "{{ enrollment.code }}"}},
         {"base_url": SMTP, "routing_key": {"username": "{{enrollment.code}}"}},
@@ -67,3 +71,28 @@ def test_every_offending_interface_is_reported():
 def test_nothing_to_check():
     assert validate_listing_interfaces_are_canonical(None) == []
     assert validate_listing_interfaces_are_canonical({}) == []
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://api.example.com/v1",
+        "${FOO_GATEWAY_BASE_URL}/x",
+        "${ secrets.URL }",
+        "${ customer_secrets.URL }",
+        f"{API}/${{ secrets.PATH }}",
+        f"{API}x/svc",
+    ],
+)
+def test_only_the_four_gateways_are_addresses(base_url):
+    errors = _check(main={"base_url": base_url})
+    assert len(errors) == 1
+    assert errors[0].startswith("user_access_interfaces.main.base_url:")
+    assert "is not a gateway address" in errors[0]
+
+
+def test_routing_vars_never_render_into_an_interface():
+    """Only service_name is filled in when an interface is stored."""
+    errors = _check(main={"base_url": f"{API}/{{{{ routing_vars.region }}}}/chat"})
+    assert len(errors) == 1
+    assert "the only template a user access interface may use is {{ service_name }}" in errors[0]

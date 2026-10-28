@@ -1,11 +1,15 @@
-"""Shared cross-file validation of required enrollment parameter usage.
+"""Enrollment parameters: each channel declares the parameters it reads.
 
-This checks that required parameters have consumers. It does not prove that
-an intended enrollment channel consumes them; interface/document use counts.
+A channel's ``params`` declares them (unitysvc/unitysvc#2726); a listing
+declares none. Checks shared by seller validation and backend ingest:
+
+- a channel reads only parameters it declares, and declares ``params`` if it
+  reads any;
+- every required parameter has a value in ``params.testing_defaults``;
+- every required parameter is read by its channel or by document content.
 
 Only the fields the platform renders with an enrollment's ``params`` are
-consumers: the offering's channels (``upstream_access_config``), the listing's
-interfaces (``user_access_interfaces``) and document content. Metadata such as
+consumers: the channel itself and document content. Metadata such as
 ``display_name`` or ``description`` is never rendered with ``params``, so a
 reference there does not count (unitysvc/unitysvc#2649).
 """
@@ -87,16 +91,6 @@ def _document_contents(documents: Any) -> list[str]:
     return out
 
 
-def consumer_sources(listing: dict[str, Any], offering: dict[str, Any]) -> list[Any]:
-    """The parts of a service the platform renders with enrollment ``params``."""
-    return [
-        offering.get("upstream_access_config"),
-        listing.get("user_access_interfaces"),
-        _document_contents(listing.get("documents")),
-        _document_contents(offering.get("documents")),
-    ]
-
-
 # A channel declares its own enrollment parameters in one object (unitysvc/unitysvc#2726):
 #   "params": {"schema": {...}, "ui_schema": {...}, "testing_defaults": {...}}
 CHANNEL_PARAMS_KEY = "params"
@@ -130,16 +124,12 @@ def validate_channel_parameters(offering: dict[str, Any]) -> list[str]:
 
     A channel declares ``params``: ``schema`` (a JSON Schema of the enrollment
     parameters), an optional ``ui_schema`` (form hints) and ``testing_defaults``
-    (the values the platform tests the channel with). Offering-only rules;
+    (the values the platform tests the channel with). A channel that reads
+    ``{{ params.* }}`` must declare them. Offering-only rules;
     :func:`validate_required_parameter_usage` adds the consumer check, which
-    needs the listing's documents too. When no channel declares ``params``, the
-    listing's ``user_parameters_schema`` applies to the whole service as before,
-    and nothing here applies. Once one channel declares them, every channel that
-    reads ``{{ params.* }}`` must declare its own.
+    needs the listing's documents too.
     """
     channels = _channels(offering)
-    if not any(CHANNEL_PARAMS_KEY in channel for channel in channels.values()):
-        return []
     errors: list[str] = []
     for name, channel in channels.items():
         where = f"upstream_access_config.{name}"
@@ -189,33 +179,18 @@ def validate_channel_parameters(offering: dict[str, Any]) -> list[str]:
 def validate_required_parameter_usage(listing: dict[str, Any], offering: dict[str, Any]) -> list[str]:
     """Return hard validation errors, shared by seller validation and backend ingest.
 
-    Deprecated content can still be retired. Referencing a parameter in a
-    document satisfies usage without guaranteeing correct channel attribution.
+    Parameters are declared on channels only. Each channel's required
+    parameters must be read by that channel or by document content; another
+    channel's use does not count. Deprecated content can still be retired.
     """
     if listing.get("status") == "deprecated" or offering.get("status") == "deprecated":
         return []
-    schema = listing.get("user_parameters_schema") or listing.get("parameters_schema")
-    channel_schemas = channel_parameter_schemas(offering)
-    if channel_schemas:
-        if schema:
-            return [
-                "Enrollment parameters are declared both on the listing (user_parameters_schema) and in "
-                f"the params of channel(s) {', '.join(sorted(channel_schemas))}; declare them on the channels only "
-                "(unitysvc/unitysvc#2726)."
-            ]
-        return _unused_channel_parameters(listing, offering, channel_schemas)
-    try:
-        unused = unused_required_params(schema, *consumer_sources(listing, offering))
-    except TemplateSyntaxError as exc:
-        return [f"Cannot validate required parameter usage: invalid Jinja template: {exc}"]
-    if not unused:
-        return []
-    return [
-        f"Required user parameter(s) {', '.join(unused)} are used by no channel (upstream_access_config), "
-        "interface (user_access_interfaces) or document content. "
-        "Reference each one as {{ params.NAME }} (for example ${ customer_secrets.{{ params.NAME }} }), "
-        "or drop it from the required list."
-    ]
+    if listing.get("user_parameters_schema") or listing.get("parameters_schema"):
+        return [
+            "Enrollment parameters are declared on the listing (user_parameters_schema); declare them in "
+            "the params of the channel that reads them instead (unitysvc/unitysvc#2726)."
+        ]
+    return _unused_channel_parameters(listing, offering, channel_parameter_schemas(offering))
 
 
 def _unused_channel_parameters(

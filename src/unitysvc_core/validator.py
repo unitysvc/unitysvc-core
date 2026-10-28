@@ -248,8 +248,8 @@ class DataValidator:
         - '${ customer_secrets.{{ param }} }' — customer secret via Jinja2 indirection (BYOE)
 
         This applies to:
-        - upstream_access_config.<name>.api_key
-        - service_options.ops_testing_parameters.api_key
+        - upstream_access_config.<name>.api_key (and each server's)
+        - upstream_access_config.<name>.params.testing_defaults.api_key
 
         Args:
             data: The data to validate
@@ -264,8 +264,8 @@ class DataValidator:
         # Customer secrets: ${ customer_secrets.VAR_NAME } or ${ customer_secrets.{{ jinja }} }
         customer_secrets_pattern = re.compile(r"^\$\{\s*customer_secrets\..+\s*\}$")
 
-        # Paths where api_key is a schema definition or UI config, not an actual key
-        skip_prefixes = ("user_parameters_schema.properties.", "user_parameters_ui_schema.")
+        # Paths where api_key is a parameter's schema definition or UI config, not an actual key
+        skip_pattern = re.compile(r"\.params\.(schema|ui_schema)\.")
 
         def check_api_key(obj: Any, path: str = "") -> None:
             if isinstance(obj, dict):
@@ -275,19 +275,23 @@ class DataValidator:
                     # Check if this is an api_key field with a non-null value
                     if key == "api_key" and value is not None:
                         # Skip schema definitions and UI configs
-                        if any(new_path.startswith(p) for p in skip_prefixes):
+                        if skip_pattern.search(new_path):
                             continue
 
                         if not isinstance(value, str):
                             errors.append(
                                 f"Invalid api_key at '{new_path}': expected string, got {type(value).__name__}"
                             )
-                        elif new_path.startswith("upstream_access_config.") and value in DISPOSITION_VALUES:
+                        elif (
+                            new_path.startswith("upstream_access_config.")
+                            and ".params." not in new_path
+                            and value in DISPOSITION_VALUES
+                        ):
                             # svcpass dispositions (#1198), not credentials:
                             # "" / "__strip__" => strip, "__forward__" => forward
                             # (host gate checked by validate_forward_disposition).
-                            # Reserved: a sentinel elsewhere (e.g. an actual
-                            # ops_testing api_key) still falls through to the
+                            # Reserved: a sentinel elsewhere (e.g. a channel's
+                            # params.testing_defaults api_key) still falls through to the
                             # secrets-format check below and is rejected.
                             pass
                         elif not seller_secrets_pattern.match(value) and not customer_secrets_pattern.match(value):
@@ -448,13 +452,12 @@ class DataValidator:
 
         1. A literal name (letters, digits, underscores only) such as
            ``${ customer_secrets.ECHO_API_KEY }``.
-        2. A Jinja substitution that references the listing's
-           ``service_options`` or the intrinsic enrollment, rendered with the
-           context ``{ params, routing_vars, enrollment }`` — where ``params``
-           maps to ``ops_testing_parameters``, ``routing_vars`` to
-           ``routing_vars``, and ``enrollment`` to the intrinsic per-enrollment
-           fields (``code`` / ``id``). After expansion, the result must also be
-           a plain identifier.
+        2. A Jinja substitution rendered with the context
+           ``{ params, routing_vars, enrollment }``, where ``params`` is the
+           channel's own ``params.testing_defaults``, ``routing_vars`` the
+           listing's ``service_options.routing_vars``, and ``enrollment`` the
+           intrinsic per-enrollment fields (``code`` / ``id``). After
+           expansion, the result must also be a plain identifier.
 
         Anything else — bracket lookup (``customer_secrets[X]``),
         undefined Jinja variables, expressions that don't resolve to a
@@ -476,37 +479,44 @@ class DataValidator:
         if not isinstance(upstream, dict) or not upstream:
             return []
 
-        # Build the Jinja context from the sibling listing's service_options.
+        # routing_vars come from the sibling listing's service_options.
         # Falling back to {} keeps the validator useful even for fixture
         # directories that only have an offering — references to undefined
         # variables will still surface as clear errors from StrictUndefined.
         listing_data = self._load_sibling_listing(file_path) or {}
         service_options = listing_data.get("service_options") or {}
-        # Offering-side rendering uses *actual* values (not just key presence)
-        # because the rendered text feeds the secret-reference regex check
-        # below — e.g. `${ customer_secrets.{{ params.X }} }` must render to a
-        # real identifier.  This is why the listing's user_parameters_schema is
-        # NOT merged in here: a param with no ops_testing_parameters default
-        # would render empty and produce a confusingly-malformed secret ref.
-        context = {
-            "params": service_options.get("ops_testing_parameters") or {},
-            "routing_vars": service_options.get("routing_vars") or {},
-            # Intrinsic per-enrollment fields, always available at render time
-            # (#1202); placeholder values so `{{ enrollment.code }}` renders to a
-            # non-empty identifier for the secret-reference regex below.
-            "enrollment": {"code": "code", "id": "id"},
-        }
+        routing_vars = service_options.get("routing_vars") or {}
 
         jinja_env = Environment(undefined=StrictUndefined, autoescape=False)
         errors: list[str] = []
 
-        for iface_name, iface in upstream.items():
-            if not isinstance(iface, dict):
+        for channel_name, channel in upstream.items():
+            if not isinstance(channel, dict):
                 continue
-            for field, value in iface.items():
+            # Rendering uses *actual* values (not just key presence) because the
+            # rendered text feeds the secret-reference regex below: e.g.
+            # `${ customer_secrets.{{ params.X }} }` must render to a real
+            # identifier, so params are the channel's testing_defaults.
+            params = channel.get("params")
+            defaults = params.get("testing_defaults") if isinstance(params, dict) else None
+            context = {
+                "params": defaults if isinstance(defaults, dict) else {},
+                "routing_vars": routing_vars,
+                # Intrinsic per-enrollment fields, always available at render time
+                # (#1202); placeholder values so `{{ enrollment.code }}` renders to a
+                # non-empty identifier for the secret-reference regex below.
+                "enrollment": {"code": "code", "id": "id"},
+            }
+            fields = [(f"upstream_access_config.{channel_name}.{key}", value) for key, value in channel.items()]
+            servers = channel.get("servers")
+            if isinstance(servers, list):
+                for index, server in enumerate(servers):
+                    if isinstance(server, dict):
+                        prefix = f"upstream_access_config.{channel_name}.servers[{index}]"
+                        fields.extend((f"{prefix}.{key}", value) for key, value in server.items())
+            for field_path, value in fields:
                 if not isinstance(value, str) or "${" not in value:
                     continue
-                field_path = f"upstream_access_config.{iface_name}.{field}"
 
                 # First, Jinja-expand so `{{ params.X }}` style substitutions
                 # land before we look at the secret references. Undefined
@@ -519,9 +529,8 @@ class DataValidator:
                 except UndefinedError as exc:
                     errors.append(
                         f"{field_path}: Jinja expansion failed — {exc.message}. "
-                        f"Check that the listing's service_options provides the "
-                        f"referenced namespace "
-                        f"(params / routing_vars / enrollment)."
+                        f"Give each parameter a value in the channel's params.testing_defaults, "
+                        f"and each routing var one in the listing's service_options.routing_vars."
                     )
                     continue
                 except TemplateSyntaxError as exc:
@@ -543,78 +552,11 @@ class DataValidator:
                             f"'${{ {namespace}.NAME ?? default }}' (optional "
                             f"with fallback), or "
                             f"'${{ {namespace}.{{{{ params.KEY }}}} }}' "
-                            f"(with KEY from "
-                            f"service_options.ops_testing_parameters). "
+                            f"(with KEY from the channel's "
+                            f"params.testing_defaults). "
                             f"Bracket lookup and composite expressions are "
                             f"not supported."
                         )
-
-        return errors
-
-    def validate_required_parameter_defaults(self, data: dict[str, Any], schema_name: str) -> list[str]:
-        """Validate that required user parameters have default values.
-
-        For listing_v1 data, if user_parameters_schema.required lists parameters,
-        each of those parameters must have a corresponding default value in
-        service_options.ops_testing_parameters.
-
-        Args:
-            data: The data to validate
-            schema_name: The schema name (e.g., 'listing_v1')
-
-        Returns:
-            List of validation error messages
-        """
-        errors: list[str] = []
-
-        # Only validate listing_v1 schema
-        if schema_name != "listing_v1":
-            return errors
-
-        # Get user_parameters_schema
-        user_parameters_schema = data.get("user_parameters_schema")
-        if not user_parameters_schema or not isinstance(user_parameters_schema, dict):
-            return errors
-
-        # Get required parameters from user_parameters_schema
-        required_params = user_parameters_schema.get("required")
-        if not required_params or not isinstance(required_params, list):
-            return errors
-
-        # No required parameters means nothing to validate
-        if len(required_params) == 0:
-            return errors
-
-        # Get service_options.ops_testing_parameters
-        service_options = data.get("service_options")
-        if not service_options or not isinstance(service_options, dict):
-            errors.append(
-                f"user_parameters_schema has required parameters {required_params}, "
-                f"but service_options is missing. "
-                f"Add service_options.ops_testing_parameters with defaults for required parameters."
-            )
-            return errors
-
-        ops_testing_parameters = service_options.get("ops_testing_parameters")
-        if not ops_testing_parameters or not isinstance(ops_testing_parameters, dict):
-            errors.append(
-                f"user_parameters_schema has required parameters {required_params}, "
-                f"but service_options.ops_testing_parameters is missing. "
-                f"Add default values for all required parameters."
-            )
-            return errors
-
-        # Check each required parameter has a default
-        missing_defaults = []
-        for param in required_params:
-            if param not in ops_testing_parameters:
-                missing_defaults.append(param)
-
-        if missing_defaults:
-            errors.append(
-                f"Required parameters missing default values in service_options.ops_testing_parameters: "
-                f"{missing_defaults}. Each required parameter must have a default value."
-            )
 
         return errors
 
@@ -939,10 +881,6 @@ class DataValidator:
         dup_title_errors = self.validate_duplicate_document_titles(data, file_path)
         errors.extend(dup_title_errors)
 
-        # Validate required parameters have defaults (listing_v1 only)
-        required_param_errors = self.validate_required_parameter_defaults(data, schema_name)
-        errors.extend(required_param_errors)
-
         # Validate api_key fields use secrets format
         api_key_errors = self.validate_api_key_secrets(data)
         errors.extend(api_key_errors)
@@ -1035,12 +973,11 @@ class DataValidator:
     def validate_required_parameter_usage(self, listing: dict[str, Any], file_path: Path) -> list[str]:
         """Check the listing against its paired offering, after overrides/presets.
 
-        Standalone listings without an offering cannot establish cross-file
-        usage; full service uploads are always checked by backend ingest too.
+        A channel's required parameters may be read by document content, which
+        lives partly on the listing, so the check needs both files. Standalone
+        listings without an offering cannot be checked; full service uploads are
+        always checked by backend ingest too.
         """
-        schema = listing.get("user_parameters_schema") or listing.get("parameters_schema")
-        if not isinstance(schema, dict) or not schema.get("required"):
-            return []
         for candidate in sorted(file_path.parent.glob("offering*.*")):
             if candidate.suffix not in (".json", ".toml") or ".override." in candidate.name:
                 continue

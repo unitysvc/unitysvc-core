@@ -26,6 +26,21 @@ from .base import (
     TimeWindow,
     UpstreamStatusEnum,  # Backwards compatibility alias for OfferingStatusEnum
 )
+from .channel import (
+    RETIRED_CHANNEL_KEYS,
+    ChannelConfig,
+    ChannelParams,
+    HttpChannel,
+    HttpServer,
+    McpChannel,
+    McpServer,
+    RequestTransformer,
+    S3Channel,
+    S3Server,
+    SmtpChannel,
+    SmtpServer,
+    UpstreamAccessConfig,
+)
 from .documents import DocumentData
 from .listing_data import ServiceListingData
 from .listing_v1 import ListingV1
@@ -104,6 +119,20 @@ __all__ = [
     "ListingV1",
     "PromotionV1",
     "ServiceGroupV1",
+    # Upstream access channels
+    "UpstreamAccessConfig",
+    "ChannelConfig",
+    "ChannelParams",
+    "HttpChannel",
+    "SmtpChannel",
+    "S3Channel",
+    "McpChannel",
+    "HttpServer",
+    "SmtpServer",
+    "S3Server",
+    "McpServer",
+    "RequestTransformer",
+    "RETIRED_CHANNEL_KEYS",
     # Data models (for API/backend use)
     "ProviderAccountRateLimit",
     "ProviderData",

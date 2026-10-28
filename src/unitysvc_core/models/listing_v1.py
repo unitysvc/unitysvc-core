@@ -40,7 +40,6 @@ class ListingV1(ServiceListingData):
     )
 
     # Override with typed models instead of dicts for file validation
-    # (status, user_parameters_schema, user_parameters_ui_schema are inherited from ServiceListingData)
     user_access_interfaces: dict[str, AccessInterfaceData] | None = Field(  # type: ignore[assignment]
         default=None,
         description="User access interfaces for the listing, keyed by name",

@@ -97,17 +97,6 @@ class ServiceListingData(BaseModel):
         description="Documents associated with the listing, keyed by title (e.g., service level agreements)",
     )
 
-    # User parameters
-    user_parameters_schema: dict[str, Any] | None = Field(
-        default=None,
-        description="JSON Schema for user parameters",
-    )
-
-    user_parameters_ui_schema: dict[str, Any] | None = Field(
-        default=None,
-        description="UI schema for user parameters form rendering",
-    )
-
     # Who the service is for (unitysvc/unitysvc#2717)
     audience: list[str] | None = Field(
         default=None,
