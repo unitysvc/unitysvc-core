@@ -266,6 +266,7 @@ def test_an_empty_list_requests_nothing() -> None:
         ([_dep("service:bill", options="max_charge=nan")], "max_charge 'nan' is not of type 'number'"),
         ([_dep("service:me", permissions=["read"], options="profile=a,*")], "profile.1"),
         ([_dep(limits={"calls_per_day": 5})], "count_/amount_"),
+        ([_dep("service:log@byok")], r"'service:log@byok' cannot be requested: .*never a channel"),
     ],
 )
 def test_an_invalid_request_is_refused(entries: Any, error: str) -> None:
@@ -498,6 +499,81 @@ def test_without_a_resolver_only_the_shape_is_checked() -> None:
         [{"object": "service:not-yet-published", "permissions": ["invoke"], "options": "anything=1"}],
     )
     assert policy[0]["options"] == "anything=1"
+
+
+# The enrollment's own entry (unitysvc/unitysvc#2770) ---------------------------
+
+_OWN = "service:labs/trash-alerts"
+_OWN_LIMITS: dict[str, Any] = {"amount_per_day": "1.00"}
+
+
+def _own(approval: dict[str, Any], enrollment: str | None = "JYY87Y") -> list[dict[str, Any]]:
+    return build_policy(
+        _REQUESTS, [_LOG_APPROVAL, approval], _resolve, service="labs/trash-alerts", enrollment=enrollment
+    )
+
+
+def test_the_enrollment_s_own_entry_needs_no_request() -> None:
+    policy = _own({"object": _OWN, "enrollment": "JYY87Y", "limits": _OWN_LIMITS})
+    assert policy == [_LOG_APPROVAL, {"object": _OWN, "enrollment": "JYY87Y", "limits": _OWN_LIMITS}]
+    assert api_key_lifespan(policy) == DEFAULT_API_KEY_LIFESPAN
+
+
+def test_a_draft_own_entry_gets_the_code_once_it_exists() -> None:
+    draft = {"object": _OWN, "limits": _OWN_LIMITS}
+    assert _own(draft, enrollment=None)[1] == {"object": _OWN, "limits": _OWN_LIMITS}
+    assert _own(draft)[1] == {"object": _OWN, "enrollment": "JYY87Y", "limits": _OWN_LIMITS}
+
+
+@pytest.mark.parametrize(
+    ("approval", "enrollment", "error"),
+    [
+        ({"object": _OWN, "enrollment": "OTHER1", "limits": _OWN_LIMITS}, "JYY87Y", "own code, JYY87Y"),
+        ({"object": _OWN, "enrollment": "OTHER1", "limits": _OWN_LIMITS}, None, "has no code yet"),
+        (
+            {"object": _OWN, "enrollment": "JYY87Y", "permissions": ["invoke"], "limits": _OWN_LIMITS},
+            "JYY87Y",
+            r"approvals\[1\]\.permissions: this enrollment's own entry takes only limits",
+        ),
+        (
+            {"object": _OWN, "options": "lead_hours=8", "limits": _OWN_LIMITS},
+            "JYY87Y",
+            r"approvals\[1\]\.options: this enrollment's own entry takes only limits",
+        ),
+        ({"object": _OWN, "required": True, "limits": _OWN_LIMITS}, "JYY87Y", r"unknown keys \['required'\]"),
+        ({"object": _OWN}, "JYY87Y", r"approvals\[1\]\.limits: this enrollment's own entry must set at least one"),
+        ({"object": _OWN, "limits": {}}, "JYY87Y", "must set at least one limit"),
+        ({"object": _OWN, "limits": {"count_per_week": 1}}, "JYY87Y", "count_/amount_"),
+        (
+            {"object": "service:me", "enrollment": "JYY87Y", "limits": _OWN_LIMITS},
+            "JYY87Y",
+            r"approvals\[1\]\.enrollment: only this enrollment's own entry",
+        ),
+    ],
+)
+def test_a_malformed_own_entry_is_refused(approval: dict[str, Any], enrollment: str | None, error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        _own(approval, enrollment)
+
+
+def test_the_own_entry_is_listed_once() -> None:
+    entry = {"object": _OWN, "limits": _OWN_LIMITS}
+    with pytest.raises(ValueError, match=r"approvals\[2\]: this enrollment's own entry .* is listed twice"):
+        build_policy(_REQUESTS, [_LOG_APPROVAL, entry, entry], _resolve, service="labs/trash-alerts")
+
+
+def test_without_the_enrolling_service_an_own_entry_is_not_requested() -> None:
+    with pytest.raises(ValueError, match=f"approvals\\[1\\]: {_OWN} is not requested"):
+        build_policy(_REQUESTS, [_LOG_APPROVAL, {"object": _OWN, "limits": _OWN_LIMITS}], _resolve)
+
+
+def test_a_channel_qualified_own_entry_is_refused() -> None:
+    with pytest.raises(ValueError, match="never a channel"):
+        build_policy(
+            _REQUESTS,
+            [_LOG_APPROVAL, {"object": "service:alerts@byok", "limits": _OWN_LIMITS}],
+            service="alerts@byok",
+        )
 
 
 def test_malformed_requests_build_no_policy() -> None:
