@@ -252,6 +252,45 @@ def validate_channel_name(name: str, entity_type: str = "channel") -> str:
     return name
 
 
+def validate_channel_config(name: str, config: dict[str, Any]) -> dict[str, Any]:
+    """Reject retired keys in an upstream access channel or its servers.
+
+    ``raw`` once marked fields the backend should not Jinja-expand. The backend
+    no longer renders channels at routing time — the gateway renders
+    ``{{ params.* }}`` / ``{{ enrollment.* }}`` at request time and refuses any
+    ``{{ }}`` it cannot resolve, ``raw`` contents included — so the block only
+    adds a second spelling of a field. Write its keys on the channel (or the
+    server) directly.
+
+    ``is_primary`` once ranked a channel ahead of the others. Channels now rank
+    by ``sort_order`` alone. (A listing's user access interface still has its
+    own, unrelated ``is_primary``.)
+
+    Raises:
+        ValueError: If the channel declares ``is_primary``, or the channel or
+            any entry of its ``servers`` list declares ``raw``.
+    """
+    if "is_primary" in config:
+        raise ValueError(
+            f"upstream_access_config.{name}.is_primary is not supported: channels rank by "
+            f"'sort_order' (lowest first); remove 'is_primary'."
+        )
+    if "raw" in config:
+        raise ValueError(
+            f"upstream_access_config.{name}.raw is not supported: move its keys "
+            f"(e.g. 'request_transformer') onto the channel itself."
+        )
+    servers = config.get("servers")
+    if isinstance(servers, list):
+        for index, server in enumerate(servers):
+            if isinstance(server, dict) and "raw" in server:
+                raise ValueError(
+                    f"upstream_access_config.{name}.servers[{index}].raw is not supported: "
+                    f"move its keys onto the server itself."
+                )
+    return config
+
+
 # An MCP service's namespace is the ``routing_key.namespace`` value on its user
 # access interface. It plays the same role ``routing_key.username`` plays for
 # SMTP: the sole selector against a shared gateway ``base_url``. It also
