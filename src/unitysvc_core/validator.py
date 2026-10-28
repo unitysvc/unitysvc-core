@@ -76,6 +76,10 @@ class DataValidator:
         # shape of each customer access request is checked (see unitysvc_core.grants).
         self.exports_resolver = exports_resolver
         self.schemas: dict[str, dict[str, Any]] = {}
+        # Built once per schema in load_schemas: compiling a validator and
+        # checking the schema itself costs far more than validating one file.
+        self._schema_validators: dict[str, Draft7Validator] = {}
+        self._union_fields: dict[str, set[str]] = {}
         self.load_schemas()
 
     def load_schemas(self) -> None:
@@ -100,9 +104,15 @@ class DataValidator:
             try:
                 with open(schema_file, encoding="utf-8") as f:
                     schema = json.load(f)
-                    self.schemas[schema_name] = schema
+                Draft7Validator.check_schema(schema)
             except Exception as e:
                 print(f"Error loading schema {schema_file}: {e}")
+                continue
+            self.schemas[schema_name] = schema
+            self._schema_validators[schema_name] = Draft7Validator(
+                schema, format_checker=Draft7Validator.FORMAT_CHECKER
+            )
+            self._union_fields[schema_name] = self.find_union_fields(schema)
 
     def is_url(self, value: str) -> bool:
         """Check if a string is a valid URL."""
@@ -158,6 +168,14 @@ class DataValidator:
 
         Also validates that all file_path fields use relative paths.
         """
+        return self._file_reference_errors(data, file_path.parent, union_fields)
+
+    def _file_reference_errors(self, data: dict[str, Any], base_dir: Path | None, union_fields: set[str]) -> list[str]:
+        """File-reference checks, resolving relative paths against ``base_dir``.
+
+        Without a ``base_dir`` (data validated in memory) a relative reference
+        cannot be resolved, so only its form is checked.
+        """
         errors: list[str] = []
 
         def check_field(obj: Any, field_path: str, current_path: str = "") -> None:
@@ -181,8 +199,8 @@ class DataValidator:
                                 f"File reference '{value}' in field '{new_path}' "
                                 f"must be a relative path, not an absolute path"
                             )
-                        else:
-                            referenced_file = file_path.parent / value
+                        elif base_dir is not None:
+                            referenced_file = base_dir / value
                             if not referenced_file.exists():
                                 errors.append(
                                     f"File reference '{value}' in field '{new_path}' "
@@ -209,8 +227,8 @@ class DataValidator:
                                     f"must be a relative path, not an absolute path"
                                 )
                         # Check that a relative file reference exists
-                        else:
-                            referenced_file = file_path.parent / value
+                        elif base_dir is not None:
+                            referenced_file = base_dir / value
                             if not referenced_file.exists():
                                 errors.append(
                                     f"File reference '{value}' in field '{new_path}' "
@@ -226,7 +244,7 @@ class DataValidator:
                     if isinstance(item, dict | list):
                         check_field(item, field_path, f"{current_path}[{i}]")
 
-        check_field(data, str(file_path))
+        check_field(data, "")
         return errors
 
     def validate_duplicate_document_titles(self, data: dict[str, Any], file_path: Path) -> list[str]:
@@ -474,16 +492,19 @@ class DataValidator:
         """
         if schema_name != "offering_v1":
             return []
+        return self._secret_reference_errors(data, self._load_sibling_listing(file_path))
 
+    def _secret_reference_errors(self, data: dict[str, Any], listing_data: dict[str, Any] | None) -> list[str]:
+        """:meth:`validate_secret_references` for an offering and its listing in memory."""
         upstream = data.get("upstream_access_config") or {}
         if not isinstance(upstream, dict) or not upstream:
             return []
 
-        # routing_vars come from the sibling listing's service_options.
-        # Falling back to {} keeps the validator useful even for fixture
-        # directories that only have an offering — references to undefined
-        # variables will still surface as clear errors from StrictUndefined.
-        listing_data = self._load_sibling_listing(file_path) or {}
+        # routing_vars come from the listing's service_options. Falling back
+        # to {} keeps the validator useful even for an offering without a
+        # listing — references to undefined variables will still surface as
+        # clear errors from StrictUndefined.
+        listing_data = listing_data or {}
         service_options = listing_data.get("service_options") or {}
         routing_vars = service_options.get("routing_vars") or {}
 
@@ -814,6 +835,9 @@ class DataValidator:
     ) -> tuple[bool, list[str]]:
         """Validate a single data file (JSON or TOML).
 
+        Loads the file, and the sibling files its cross-file checks need, then
+        runs the same checks :meth:`validate_service` runs in memory.
+
         Args:
             file_path: File to validate.
             schema_name: Schema to validate against. When ``None`` (the legacy
@@ -826,8 +850,6 @@ class DataValidator:
                 where ``provider.json`` lives inside the per-service folder
                 rather than a provider-named directory.
         """
-        errors: list[str] = []
-
         data, load_errors = self.load_data_file(file_path)
         if load_errors:
             return False, load_errors
@@ -845,18 +867,111 @@ class DataValidator:
                     f"{', '.join(sorted(SCHEMA_TO_STEM.values()))} (.json/.toml)"
                 ]
 
+        listing: dict[str, Any] | None = None
+        offering: dict[str, Any] | None = None
+        provider_name: str | None = None
+        platform_service = False
+        if schema_name == "offering_v1":
+            listing = self._load_sibling_listing(file_path)
+        elif schema_name == "listing_v1":
+            offering = self._load_sibling_offering(file_path)
+            provider_name = self._resolve_provider_name(file_path)
+            from .models.validators import PLATFORM_SERVICES_DIRNAME
+
+            # A listing under platform-services/ is a platform service: its
+            # address is /p, which every other listing is refused.
+            try:
+                parts = file_path.resolve().relative_to(self.data_dir.resolve()).parts
+            except ValueError:
+                parts = file_path.parts
+            platform_service = PLATFORM_SERVICES_DIRNAME in parts[:-1]
+
+        errors = self._validate_data(
+            data,
+            schema_name,
+            service_dir=file_path.parent,
+            listing=listing,
+            offering=offering,
+            provider_name=provider_name,
+            platform_service=platform_service,
+            check_name_consistency=check_name_consistency,
+        )
+        return len(errors) == 0, errors
+
+    def validate_service(
+        self,
+        *,
+        provider: dict[str, Any] | None = None,
+        offering: dict[str, Any] | None = None,
+        listing: dict[str, Any] | None = None,
+        service_dir: Path | None = None,
+        platform_service: bool = False,
+    ) -> dict[str, list[str]]:
+        """Validate one service's files, already loaded, without reading them again.
+
+        Each given file is validated against its schema with the others as its
+        context: the listing supplies the offering's ``routing_vars``, the
+        offering and both files' documents decide required-parameter usage, and
+        the provider's ``name`` the listing's namespace. Load the files with
+        :func:`unitysvc_core.utils.load_data_file` (overrides and presets
+        applied) first.
+
+        No state is shared between calls, so services can be validated in
+        parallel with one validator.
+
+        Args:
+            provider, offering, listing: The service's files as dicts (``None``
+                to skip one).
+            service_dir: The folder holding the files, used to resolve relative
+                file references and read ``.j2`` document sources. Without it,
+                relative references are checked only for their form, and only
+                documents already carrying ``file_content`` count as content.
+            platform_service: The listing is a platform service (addressed at
+                ``/p``), as a listing under ``platform-services/`` is.
+
+        Returns:
+            ``{"provider": [...], "offering": [...], "listing": [...]}`` errors
+            for each file given (empty lists when valid).
+        """
+        provider_name = provider.get("name") if isinstance(provider, dict) else None
+        results: dict[str, list[str]] = {}
+        for kind, data in (("provider", provider), ("offering", offering), ("listing", listing)):
+            if data is None:
+                continue
+            results[kind] = self._validate_data(
+                data,
+                f"{kind}_v1",
+                service_dir=service_dir,
+                listing=listing,
+                offering=offering,
+                provider_name=provider_name if isinstance(provider_name, str) else None,
+                platform_service=platform_service,
+                check_name_consistency=False,
+            )
+        return results
+
+    def _validate_data(
+        self,
+        data: dict[str, Any],
+        schema_name: str,
+        *,
+        service_dir: Path | None,
+        listing: dict[str, Any] | None,
+        offering: dict[str, Any] | None,
+        provider_name: str | None,
+        platform_service: bool,
+        check_name_consistency: bool,
+    ) -> list[str]:
+        """Every check for one file's data, given its service as context."""
+        errors: list[str] = []
+
         # Check if schema exists
         if schema_name not in self.schemas:
-            return False, [f"Schema '{schema_name}' not found in schema directory"]
-
-        schema = self.schemas[schema_name]
+            return [f"Schema '{schema_name}' not found in schema directory"]
 
         # Validate against schema with format checking enabled
         try:
-            validator = Draft7Validator(schema, format_checker=Draft7Validator.FORMAT_CHECKER)
-            validator.check_schema(schema)  # Validate the schema itself
-            validation_errors = list(validator.iter_errors(data))
-            for error in validation_errors:
+            for error in self._schema_validators[schema_name].iter_errors(data):
                 errors.append(f"Schema validation error: {error.message}")
                 if error.absolute_path:
                     errors.append(f"  Path: {'.'.join(str(p) for p in error.absolute_path)}")
@@ -867,19 +982,12 @@ class DataValidator:
         pydantic_errors = self.validate_with_pydantic_model(data, schema_name)
         errors.extend(pydantic_errors)
 
-        # Find Union[str, HttpUrl] fields and validate file references
-        union_fields = self.find_union_fields(schema)
-        file_ref_errors = self.validate_file_references(data, file_path, union_fields)
-        errors.extend(file_ref_errors)
+        # Validate file references in Union[str, HttpUrl] fields and file_path fields
+        errors.extend(self._file_reference_errors(data, service_dir, self._union_fields[schema_name]))
 
         # Validate name consistency with directory name (legacy layout only)
-        if check_name_consistency:
-            name_errors = self.validate_name_consistency(data, file_path, schema_name)
-            errors.extend(name_errors)
-
-        # Validate duplicate document titles
-        dup_title_errors = self.validate_duplicate_document_titles(data, file_path)
-        errors.extend(dup_title_errors)
+        if check_name_consistency and service_dir is not None:
+            errors.extend(self.validate_name_consistency(data, service_dir / "_", schema_name))
 
         # Validate api_key fields use secrets format
         api_key_errors = self.validate_api_key_secrets(data)
@@ -893,8 +1001,8 @@ class DataValidator:
 
         # Validate every ${ secrets.X } / ${ customer_secrets.X } in an
         # offering's upstream_access_config resolves to a plain identifier.
-        secret_ref_errors = self.validate_secret_references(data, schema_name, file_path)
-        errors.extend(secret_ref_errors)
+        if schema_name == "offering_v1":
+            errors.extend(self._secret_reference_errors(data, listing))
 
         # Validate LLM offerings declare context_length and parameter_count
         # (mirrors the backend's ingest-time check).
@@ -939,7 +1047,6 @@ class DataValidator:
         # Validate S3, SMTP, MCP, and API-gateway interfaces (listing_v1 only)
         if schema_name == "listing_v1":
             from .models.validators import (
-                PLATFORM_SERVICES_DIRNAME,
                 validate_access_interface_names,
                 validate_listing_gateway_base_urls,
                 validate_listing_interfaces_are_canonical,
@@ -951,24 +1058,39 @@ class DataValidator:
 
             uai = data.get("user_access_interfaces")
             errors.extend(validate_access_interface_names(uai))
-            # A listing under platform-services/ is a platform service: its
-            # address is /p, which every other listing is refused.
-            try:
-                parts = file_path.resolve().relative_to(self.data_dir.resolve()).parts
-            except ValueError:
-                parts = file_path.parts
-            errors.extend(
-                validate_listing_gateway_base_urls(uai, platform_service=PLATFORM_SERVICES_DIRNAME in parts[:-1])
-            )
+            errors.extend(validate_listing_gateway_base_urls(uai, platform_service=platform_service))
             errors.extend(validate_listing_s3_base_urls(uai))
             errors.extend(validate_listing_smtp_base_urls(uai))
             errors.extend(validate_listing_mcp_base_urls(uai))
             errors.extend(validate_listing_jinja_var_references(data))
             errors.extend(validate_listing_interfaces_are_canonical(uai))
-            errors.extend(self.validate_required_parameter_usage(data, file_path))
-            errors.extend(self.validate_listing_name_namespace(data, file_path))
+            if offering is not None:
+                errors.extend(
+                    validate_required_parameter_usage(
+                        self._with_template_documents(data, service_dir),
+                        self._with_template_documents(offering, service_dir),
+                    )
+                )
+            errors.extend(self._namespace_errors(data, provider_name))
 
-        return len(errors) == 0, errors
+        return errors
+
+    def _load_sibling_offering(self, listing_file: Path) -> dict[str, Any] | None:
+        """Load the paired offering from the same directory as the listing.
+
+        Read after overrides/presets, as ``load_data_file`` applies them.
+        Returns ``None`` when there is none (a standalone listing).
+        """
+        for candidate in sorted(listing_file.parent.glob("offering*.*")):
+            if candidate.suffix not in (".json", ".toml") or ".override." in candidate.name:
+                continue
+            try:
+                offering, _ = load_data_file(candidate)
+            except Exception:
+                return None
+            if isinstance(offering, dict) and (offering.get("schema") == "offering_v1" or candidate.stem == "offering"):
+                return offering
+        return None
 
     def validate_required_parameter_usage(self, listing: dict[str, Any], file_path: Path) -> list[str]:
         """Check the listing against its paired offering, after overrides/presets.
@@ -978,27 +1100,22 @@ class DataValidator:
         listings without an offering cannot be checked; full service uploads are
         always checked by backend ingest too.
         """
-        for candidate in sorted(file_path.parent.glob("offering*.*")):
-            if candidate.suffix not in (".json", ".toml") or ".override." in candidate.name:
-                continue
-            try:
-                offering, _ = load_data_file(candidate)
-            except Exception as exc:
-                return [f"Cannot check required parameter usage: {exc}"]
-            if isinstance(offering, dict) and (offering.get("schema") == "offering_v1" or candidate.stem == "offering"):
-                return validate_required_parameter_usage(
-                    self._with_template_documents(listing, file_path.parent),
-                    self._with_template_documents(offering, candidate.parent),
-                )
-        return []
+        offering = self._load_sibling_offering(file_path)
+        if offering is None:
+            return []
+        return validate_required_parameter_usage(
+            self._with_template_documents(listing, file_path.parent),
+            self._with_template_documents(offering, file_path.parent),
+        )
 
     @staticmethod
-    def _with_template_documents(data: dict[str, Any], base_dir: Path) -> dict[str, Any]:
+    def _with_template_documents(data: dict[str, Any], base_dir: Path | None) -> dict[str, Any]:
         """``data`` with each ``.j2`` document's template source inlined as
         ``file_content``, as the seller SDK uploads it — so the seller check
-        sees the same document content backend ingest does."""
+        sees the same document content backend ingest does. Without a
+        ``base_dir`` only documents already carrying ``file_content`` count."""
         documents = data.get("documents")
-        if not isinstance(documents, dict):
+        if not isinstance(documents, dict) or base_dir is None:
             return data
         inlined: dict[str, Any] = {}
         for title, doc in documents.items():
@@ -1051,6 +1168,11 @@ class DataValidator:
         Per-segment grammar of the name itself is validated by the Pydantic
         model (``validate_service_identifier``).
         """
+        return self._namespace_errors(data, self._resolve_provider_name(file_path))
+
+    @staticmethod
+    def _namespace_errors(data: dict[str, Any], provider_name: str | None) -> list[str]:
+        """:meth:`validate_listing_name_namespace` given the governing provider's name."""
         errors: list[str] = []
 
         name = data.get("name")
@@ -1063,7 +1185,6 @@ class DataValidator:
             return errors
 
         first_segment = name_part.split("/", 1)[0]
-        provider_name = self._resolve_provider_name(file_path)
         if provider_name is not None and first_segment != provider_name:
             errors.append(
                 f"Listing name '{name}' is namespaced, so its first segment must be the provider "
