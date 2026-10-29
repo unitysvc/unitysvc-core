@@ -589,6 +589,25 @@ def test_a_request_never_names_an_enrollment() -> None:
         validate_access_requests(_WHERE, [_dep("service:me", enrollment="JYY87Y")])
 
 
+@pytest.mark.parametrize(
+    "entry",
+    [
+        _dep("service:*"),
+        {"object": "service:*", "permissions": ["deny"], "justification": "x"},
+        {"object": "service:*", "permissions": ["invoke"], "justification": "x", "limits": {"count_per_day": 1}},
+    ],
+)
+def test_service_wildcard_is_refused_by_rule(entry: dict[str, Any]) -> None:
+    """unitysvc/unitysvc#2783: service:* in any form is for manually created keys."""
+    with pytest.raises(ValueError, match=r"'service:\*' cannot be requested: every service at once is only for keys"):
+        validate_access_requests(_WHERE, [entry])
+
+
+def test_service_wildcard_is_never_approved() -> None:
+    with pytest.raises(ValueError, match=r"'service:\*' cannot be approved: every service at once"):
+        build_policy(_REQUESTS, [{"object": "service:*", "permissions": ["invoke"]}], _resolve)
+
+
 def test_a_seller_cannot_request_the_enrollment_entry() -> None:
     with pytest.raises(ValueError, match="cannot be requested"):
         validate_access_requests(_WHERE, [{"object": "enrollment", "justification": "x", "limits": {"count_total": 1}}])

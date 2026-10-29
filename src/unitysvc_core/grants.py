@@ -123,6 +123,10 @@ INVOKE = "invoke"
 # The key itself: a request for a longer-lived leased key, and the approved
 # lifespan in a policy. It grants nothing.
 APIKEY_OBJECT = "apikey"
+# Every service at once. It belongs to keys a customer creates by hand: a
+# policy derived from an enrollment names each service it calls
+# (unitysvc/unitysvc#2783), so no request or approval may hold it.
+SERVICE_WILDCARD = "service:*"
 API_KEY_LIFESPAN = "api_key_lifespan"
 # Seconds a leased key lives unless the policy says otherwise, and at most.
 DEFAULT_API_KEY_LIFESPAN = 3600
@@ -406,6 +410,8 @@ def validate_access_requests(where: str, requests: Any, resolve: ExportsResolver
             seen.add(obj)
             _check_apikey_request(at, entry)
             continue
+        if obj == SERVICE_WILDCARD:
+            raise ValueError(_service_wildcard_refusal(at, "requested"))
         if not obj.startswith(SERVICE_PREFIX):
             raise ValueError(f"{at}: {obj!r} cannot be requested; name one service as 'service:<name>'")
         name = obj.removeprefix(SERVICE_PREFIX)
@@ -436,6 +442,13 @@ def validate_access_requests(where: str, requests: Any, resolve: ExportsResolver
         if declared is None:
             raise ValueError(f"{at}: {obj} is not a published service")
         check_claim(at, obj, permissions, options, parse_exports(f"{obj} exports", declared))
+
+
+def _service_wildcard_refusal(at: str, verb: str) -> str:
+    return (
+        f"{at}: {SERVICE_WILDCARD!r} cannot be {verb}: every service at once is only for keys "
+        "a customer creates by hand; name each service as 'service:<name>'"
+    )
 
 
 def _check_apikey_request(at: str, entry: dict[str, Any]) -> None:
@@ -509,6 +522,8 @@ def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None 
         if not isinstance(approval, dict) or not isinstance(approval.get("object"), str):
             raise ValueError(f'{at} must be {{"object": ..., "permissions": [...]}}')
         obj = approval["object"]
+        if obj == SERVICE_WILDCARD:
+            raise ValueError(_service_wildcard_refusal(at, "approved"))
         if obj == ENROLLMENT_OBJECT:
             if any(entry["object"] == obj for entry in policy):
                 raise ValueError(f"{at}: {obj} is listed twice")
