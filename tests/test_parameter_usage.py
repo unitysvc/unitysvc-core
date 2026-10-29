@@ -271,6 +271,90 @@ def test_malformed_channel_declarations_are_refused(fields, error):
     assert any(error in e for e in validate_channel_parameters(_offering(plus=_plus(**fields))))
 
 
+@pytest.mark.parametrize(
+    ("schema", "error"),
+    [
+        (
+            {"type": "nope"},
+            "upstream_access_config.plus.params.schema is not a valid JSON Schema: 'nope' is not valid",
+        ),
+        (
+            {"type": "object", "properties": {"folder": {"type": "string"}}, "required": "folder"},
+            "upstream_access_config.plus.params.schema is not a valid JSON Schema: 'folder' is not of type 'array'",
+        ),
+        (
+            {"type": "object", "properties": {"folder": {"$ref": "https://example.com/s.json"}}},
+            "upstream_access_config.plus.params.schema: '$ref' is not allowed; a params schema is self-contained",
+        ),
+    ],
+)
+def test_an_invalid_params_schema_is_refused(schema, error):
+    errors = validate_channel_parameters(_offering(plus=_plus(schema=schema)))
+    assert any(e.startswith(error) for e in errors), errors
+
+
+_TYPED_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "folder": {"type": "string"},
+        "count": {"type": "integer"},
+        "tier": {"type": "string", "enum": ["basic", "plus"]},
+        "contact": {"type": "string", "format": "email"},
+    },
+    "required": ["folder"],
+}
+
+
+@pytest.mark.parametrize(
+    ("defaults", "error"),
+    [
+        (
+            {"count": "three"},
+            "upstream_access_config.plus.params.testing_defaults.count: 'three' is not of type 'integer'",
+        ),
+        ({"tier": "gold"}, "upstream_access_config.plus.params.testing_defaults.tier: 'gold' is not one of"),
+        (
+            {"contact": "nobody"},
+            "upstream_access_config.plus.params.testing_defaults.contact: 'nobody' is not a 'email'",
+        ),
+    ],
+)
+def test_testing_defaults_must_validate_against_the_schema(defaults, error):
+    params = {"schema": _TYPED_SCHEMA, "testing_defaults": {"folder": "ops", **defaults}}
+    errors = validate_channel_parameters(
+        _offering(plus={"base_url": "https://u/{{ params.folder }}", "params": params})
+    )
+    assert len(errors) == 1, errors
+    assert errors[0].startswith(error), errors
+
+
+def test_testing_defaults_report_one_error_per_problem():
+    defaults = {"folder": "ops", "count": "three", "tier": "gold", "contact": "nobody"}
+    params = {"schema": _TYPED_SCHEMA, "testing_defaults": defaults}
+    errors = validate_channel_parameters(
+        _offering(plus={"base_url": "https://u/{{ params.folder }}", "params": params})
+    )
+    assert [e.split(":")[0] for e in errors] == [
+        "upstream_access_config.plus.params.testing_defaults.contact",
+        "upstream_access_config.plus.params.testing_defaults.count",
+        "upstream_access_config.plus.params.testing_defaults.tier",
+    ]
+
+
+def test_valid_testing_defaults_pass():
+    defaults = {"folder": "ops", "count": 3, "tier": "plus", "contact": "ops@example.com"}
+    params = {"schema": _TYPED_SCHEMA, "testing_defaults": defaults}
+    assert (
+        validate_channel_parameters(_offering(plus={"base_url": "https://u/{{ params.folder }}", "params": params}))
+        == []
+    )
+
+
+def test_a_channel_without_params_is_unaffected():
+    offering = _offering(byok={"base_url": "https://u", "api_key": "${ customer_secrets.KEY }"})
+    assert validate_channel_parameters(offering) == []
+
+
 def test_params_must_be_an_object():
     errors = validate_channel_parameters(_offering(plus={"base_url": "https://u", "params": ["folder"]}))
     assert any('params must be {"schema"' in e for e in errors), errors

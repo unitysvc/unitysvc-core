@@ -253,5 +253,6 @@ A channel declares the enrollment parameters it reads, so each plan of a service
 `params.schema` is a JSON Schema of the parameters (a property's own `default` pre-fills the customer's form), `params.ui_schema` holds form hints, and `params.testing_defaults` holds the values the platform tests the channel with. Rules:
 
 - a channel reads only the parameters its `params.schema` declares, and a channel that reads `{{ params.* }}` must declare `params` (`validate_channel_parameters`, on every `offering_v1`);
+- `params.schema` is a valid, self-contained JSON Schema (draft 7, no `$ref`), and `params.testing_defaults` validates against it with format checking (an `email` property needs an email address), so a malformed schema is refused at ingest rather than when a customer enrolls;
 - each required parameter has a value in that channel's `params.testing_defaults`, which is also what `${ customer_secrets.{{ params.X }} }` renders with when secret references are checked;
 - each required parameter is read by its own channel or by document content (`validate_required_parameter_usage`, which backend ingest also calls).
