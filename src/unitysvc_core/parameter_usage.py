@@ -5,6 +5,8 @@ declares none. Checks shared by seller validation and backend ingest:
 
 - a channel reads only parameters it declares, and declares ``params`` if it
   reads any;
+- ``params.schema`` is a self-contained JSON Schema (draft 7), and
+  ``params.testing_defaults`` validates against it;
 - every required parameter has a value in ``params.testing_defaults``;
 - every required parameter is read by its channel or by document content.
 
@@ -17,6 +19,10 @@ reference there does not count (unitysvc/unitysvc#2649).
 from typing import Any
 
 from jinja2 import Environment, TemplateSyntaxError, nodes
+from jsonschema import Draft7Validator
+from jsonschema.exceptions import SchemaError
+
+from .grants import _find_reference
 
 _ENV = Environment()
 
@@ -156,6 +162,16 @@ def validate_channel_parameters(offering: dict[str, Any]) -> list[str]:
         if not isinstance(schema, dict):
             errors.append(f"{at}.schema must be a JSON Schema object")
             continue
+        schema_ok = True
+        if ref := _find_reference(schema):
+            errors.append(f"{at}.schema: {ref!r} is not allowed; a params schema is self-contained")
+            schema_ok = False
+        else:
+            try:
+                Draft7Validator.check_schema(schema)
+            except SchemaError as exc:
+                errors.append(f"{at}.schema is not a valid JSON Schema: {exc.message}")
+                schema_ok = False
         ui_schema = params.get("ui_schema")
         if ui_schema is not None and not isinstance(ui_schema, dict):
             errors.append(f"{at}.ui_schema must be an object")
@@ -173,6 +189,11 @@ def validate_channel_parameters(offering: dict[str, Any]) -> list[str]:
                 f"{where}: required parameter(s) {', '.join(missing)} need a value in "
                 f"{at}.testing_defaults, used to test the channel"
             )
+        elif schema_ok:
+            validator = Draft7Validator(schema, format_checker=Draft7Validator.FORMAT_CHECKER)
+            for error in sorted(validator.iter_errors(defaults or {}), key=lambda e: [str(p) for p in e.path]):
+                path = "".join(f".{p}" for p in error.path)
+                errors.append(f"{at}.testing_defaults{path}: {error.message}")
     return errors
 
 
