@@ -2961,7 +2961,8 @@
         "mcp",
         "database",
         "monitoring",
-        "analytics"
+        "analytics",
+        "communication"
       ],
       "title": "ServiceTypeEnum",
       "type": "string"

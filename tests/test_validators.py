@@ -441,6 +441,14 @@ class TestMcpEnumMembers:
         assert ServiceTypeEnum.mcp == "mcp"
 
 
+def test_communication_is_an_application_service_type() -> None:
+    """Commons rooms (unitysvc/unitysvc#2823): an application whose value is
+    conversation among several parties."""
+    from unitysvc_core.models.base import ServiceTypeEnum
+
+    assert ServiceTypeEnum("communication") == ServiceTypeEnum.communication
+
+
 class TestValidateMcpNamespace:
     """The ``routing_key.namespace`` namespace on an MCP user access interface.
 

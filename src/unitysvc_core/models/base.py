@@ -334,6 +334,12 @@ class ServiceTypeEnum(StrEnum):
     monitoring = "monitoring"  # Uptime checks, health monitoring
     analytics = "analytics"  # Recommendation, anomaly detection, forecasting
 
+    # === Applications ===
+    # Services that carry two-way or many-way communication between the
+    # customer and others, rather than answering calls. The value names the
+    # kind of application.
+    communication = "communication"  # Conversations among several parties (Commons rooms)
+
 
 class ServiceVisibilityEnum(StrEnum):
     """Visibility of a service in the catalog.
