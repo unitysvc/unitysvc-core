@@ -915,11 +915,11 @@ def validate_mcp_offering(data: dict[str, Any] | None) -> list[str]:
         if mcp_channels:
             declarations.append("MCP upstream channel(s) " + ", ".join(repr(name) for name in mcp_channels))
         if declarations:
-            return [
-                f"service_type {service_type!r} may not declare "
-                + "; ".join(declarations)
-                + "; use service_type 'mcp' instead"
-            ]
+            # service_type is optional (unitysvc/unitysvc#2833): name what is there.
+            declared = (
+                f"service_type {service_type!r}" if service_type is not None else "an offering without service_type"
+            )
+            return [f"{declared} may not declare " + "; ".join(declarations) + "; use service_type 'mcp' instead"]
         return []
 
     if not channels or not isinstance(channels, dict):
