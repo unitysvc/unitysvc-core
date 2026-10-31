@@ -42,13 +42,19 @@ Three stages (unitysvc/unitysvc#2720):
        "options": "log_level=warn",
        "limits": {"count_per_day": 1000}}
 
-  A request grants nothing by itself. Its ``options`` and ``limits`` only
-  pre-fill the enrollment form.
+  A request grants nothing by itself. ``required`` says whether the customer
+  may decline it. Its ``object`` and ``permissions`` are fixed, and so are
+  its ``options``: the values the seller declares are the values the policy
+  holds (unitysvc/unitysvc#2831). An option it does not declare is the
+  customer's to set. Its ``limits`` only pre-fill the enrollment form.
+  Several requests may name one object (two kinds of room) if each fixes an
+  option to a different value, so an approval says which one it is.
 
 * **The key's policy** — what the customer actually approves when enrolling:
-  they confirm or decline each request, set its options and limits, and may
-  add limits of their own. Each approved request becomes an entry (a grant) in
-  the policy of the key issued for that enrollment, in the same shape.
+  they keep every required request, keep or decline each optional one, add
+  options the request leaves open, and set limits, their own included. Each
+  approved request becomes an entry (a grant) in the policy of the key issued
+  for that enrollment, in the same shape, with the request's fixed options.
 
 **Invariant.** Calls made under an approved request run under the enrolling
 customer's delegated identity, within the approved permissions, options and
@@ -110,7 +116,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlencode
 
 from jsonschema import Draft7Validator
 from jsonschema.exceptions import SchemaError
@@ -174,7 +180,7 @@ DEFAULT_PERMISSIONS: dict[str, tuple[str, ...]] = {INVOKE: (ALL_ROUTES,)}
 DEFAULT_EXPORTS = Exports(DEFAULT_PERMISSIONS, {})
 
 _REQUEST_KEYS = frozenset({"object", "permissions", "required", "justification", "options", "limits"})
-_APIKEY_REQUEST_KEYS = frozenset({"object", "justification", "limits"})
+_APIKEY_REQUEST_KEYS = frozenset({"object", "required", "justification", "limits"})
 # What a policy entry (an approved request) holds.
 _POLICY_KEYS = frozenset({"object", "permissions", "options", "limits"})
 # This enrollment itself: an entry capping what it may cost. It grants nothing.
@@ -384,7 +390,9 @@ def validate_limits(where: str, limits: Any, *, apikey: bool = False) -> None:
             raise ValueError(f"{at} must be a positive amount")
 
 
-def validate_access_requests(where: str, requests: Any, resolve: ExportsResolver | None = None) -> None:
+def validate_access_requests(
+    where: str, requests: Any, resolve: ExportsResolver | None = None, *, explicit_required: bool = True
+) -> None:
     """Refuse a channel's ``customer_access_requests`` unless every entry is a
     valid request.
 
@@ -395,20 +403,25 @@ def validate_access_requests(where: str, requests: Any, resolve: ExportsResolver
     declares permissions may not export it), and an unknown target is
     refused. Limits need no lookup. Without ``resolve``, only the shape is
     checked.
+
+    Every entry says whether it is ``required``. :func:`build_policy` passes
+    ``explicit_required=False``: a declaration stored before that rule reads
+    as optional, as it always did.
     """
     if not isinstance(requests, list):
         raise ValueError(f"{where} must be a list of access request objects")
-    seen: set[str] = set()
+    seen: list[tuple[str, dict[str, str], Exports | None]] = []
     for index, entry in enumerate(requests):
         at = f"{where}[{index}]"
         if not isinstance(entry, dict) or not isinstance(entry.get("object"), str):
             raise ValueError(f'{at} must be {{"object": "service:<name>", ...}}')
         obj = entry["object"]
         if obj == APIKEY_OBJECT:
-            if obj in seen:
+            if any(other == obj for other, _, _ in seen):
                 raise ValueError(f"{at}: {obj} is listed twice")
-            seen.add(obj)
+            seen.append((obj, {}, None))
             _check_apikey_request(at, entry)
+            _check_required(at, entry, explicit_required)
             continue
         if obj == SERVICE_WILDCARD:
             raise ValueError(_service_wildcard_refusal(at, "requested"))
@@ -419,9 +432,6 @@ def validate_access_requests(where: str, requests: Any, resolve: ExportsResolver
             validate_service_identifier(name, "requested service")
         except ValueError as exc:
             raise ValueError(f"{at}: {obj!r} cannot be requested: {exc}") from None
-        if obj in seen:
-            raise ValueError(f"{at}: {obj} is listed twice")
-        seen.add(obj)
         if extra := set(entry) - _REQUEST_KEYS:
             raise ValueError(f"{at}: unknown keys {sorted(extra)}")
         justification = entry.get("justification")
@@ -429,19 +439,89 @@ def validate_access_requests(where: str, requests: Any, resolve: ExportsResolver
             raise ValueError(
                 f"{at}.justification must say why the service needs {obj}; the customer reads it before approving"
             )
-        if not isinstance(entry.get("required", False), bool):
-            raise ValueError(f"{at}.required must be true or false")
+        _check_required(at, entry, explicit_required)
         permissions: list[str] = entry.get("permissions") or []
-        if not _strings(permissions):
-            raise ValueError(f"{at}.permissions must be a non-empty list of distinct names")
+        if not _strings(permissions) or not all(_PERMISSION_NAME.match(p) for p in permissions):
+            raise ValueError(
+                f"{at}.permissions must be a non-empty list of distinct permission names "
+                "(lowercase letters, digits and '_'; no wildcards)"
+            )
         options = parse_options(f"{at}.options", entry.get("options", ""))
         validate_limits(f"{at}.limits", entry.get("limits", {}))
-        if resolve is None:
-            continue
-        declared = resolve(name)
-        if declared is None:
-            raise ValueError(f"{at}: {obj} is not a published service")
-        check_claim(at, obj, permissions, options, parse_exports(f"{obj} exports", declared))
+        exports = None
+        if resolve is not None:
+            declared = resolve(name)
+            if declared is None:
+                raise ValueError(f"{at}: {obj} is not a published service")
+            exports = parse_exports(f"{obj} exports", declared)
+            check_claim(at, obj, permissions, options, exports)
+        for other_index, (other, other_options, _) in enumerate(seen):
+            if other == obj and _conflict(exports, options, other_options) is None:
+                raise ValueError(
+                    f"{at}: {obj} is listed twice; requests of one object must each fix an option "
+                    f"to a different value (kind=chat, kind=feed), or the customer can't say which "
+                    f"one they approve (see [{other_index}])"
+                )
+        seen.append((obj, options, exports))
+
+
+def _check_required(at: str, entry: dict[str, Any], explicit: bool) -> None:
+    if "required" in entry:
+        if not isinstance(entry["required"], bool):
+            raise ValueError(f"{at}.required must be true or false")
+    elif explicit:
+        raise ValueError(f"{at}.required must be true or false: say whether the customer may decline it")
+
+
+def _conflict(exports: Exports | None, a: dict[str, str], b: dict[str, str]) -> str | None:
+    """The first option ``a`` and ``b`` both set, to different values, or
+    ``None``. Values are compared as the target's ``exports`` type them
+    (``100`` and ``0100`` are one integer); without exports, as written."""
+    properties = exports.options.get("properties", {}) if exports else {}
+    for name in sorted(set(a) & set(b)):
+        prop = properties.get(name, {})
+        if _typed(prop, a[name]) != _typed(prop, b[name]):
+            return name
+    return None
+
+
+def _label(request: dict[str, Any]) -> str:
+    """A request as the customer tells it apart: its object, and its fixed options."""
+    return f"{request['object']} ({request['options']})" if request.get("options") else str(request["object"])
+
+
+def match_request(
+    where: str, requests: list[dict[str, Any]], entry: dict[str, Any], exports: Exports | None = None
+) -> int:
+    """The index of the request in ``requests`` (already valid) that ``entry``,
+    an approval or a stored policy entry, approves.
+
+    It is the request of the same object whose fixed options the entry does
+    not contradict: one the entry repeats, or leaves out. Requests of one
+    object each fix an option to a different value, so only an entry that
+    leaves all of those out can fit more than one; it is refused, naming the
+    option that tells them apart. Raises ``ValueError``.
+    """
+    obj = entry.get("object")
+    options = parse_options(f"{where}.options", entry.get("options", ""))
+    same = [i for i, request in enumerate(requests) if request["object"] == obj]
+    if not same:
+        raise ValueError(f"{where}: {obj} is not requested")
+    fixed = {i: parse_options("options", requests[i].get("options", "")) for i in same}
+    fitting = [i for i in same if _conflict(exports, fixed[i], options) is None]
+    if not fitting:
+        if len(same) == 1:
+            name = _conflict(exports, fixed[same[0]], options)
+            assert name is not None
+            raise ValueError(f"{where}.options.{name}: the service fixes it to {fixed[same[0]][name]!r}")
+        raise ValueError(
+            f"{where}: no request of {obj} has these options; the service requests "
+            + ", ".join(_label(requests[i]) for i in same)
+        )
+    if len(fitting) > 1:
+        name = _conflict(exports, fixed[fitting[0]], fixed[fitting[1]])
+        raise ValueError(f"{where}.options: {obj} is requested {len(fitting)} times; set {name} to say which")
+    return fitting[0]
 
 
 def _service_wildcard_refusal(at: str, verb: str) -> str:
@@ -492,31 +572,35 @@ def validate_channel_access_requests(config: Any, resolve: ExportsResolver | Non
 
 def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None = None) -> list[dict[str, Any]]:
     """The key policy a customer's ``approvals`` of a channel's ``requests``
-    make (unitysvc/unitysvc#2766).
+    make (unitysvc/unitysvc#2766, #2831).
 
     ``requests`` is the channel's ``customer_access_requests``; ``approvals``
     lists the requests the customer approves, each ``{"object", "permissions",
     "options", "limits"}`` (the ``apikey`` entry only ``{"object", "limits"}``).
-    Each approval names a requested object, at most once; its permissions are
-    some of those requested; every ``required`` request is approved. The
-    customer sets options and limits: a request's own only pre-fill them, so
-    they are checked against the target's ``exports`` (with ``resolve``) and
-    :func:`validate_limits`, not against the request. A key lifespan may only
-    be shortened. Returns the approvals as policy entries, without empty
+    Each approval matches one request (:func:`match_request`), at most once,
+    and every ``required`` request is approved. An approved request keeps
+    exactly its permissions and its fixed options: the approval may repeat
+    them, or leave the options out, but not change them. Beside them the
+    customer sets the options the request leaves open and the limits, checked
+    against the target's ``exports`` (with ``resolve``) and
+    :func:`validate_limits`; a request's limits only pre-fill the form. A key
+    lifespan may only be shortened. Returns the approvals as policy entries,
+    their options in one canonical query string (names sorted), without empty
     ``options`` / ``limits``. Raises ``ValueError``.
 
     The customer may also add, at most once and without a request, this
     enrollment's own limits: ``{"object": "enrollment", "limits": {...}}``,
     with at least one limit and nothing else (unitysvc/unitysvc#2770). And an
-    approval of a service may select one of the customer's enrollments of it
-    (``"enrollment": "<CODE>"``, a chain enrollment): a canonical code, and no
-    ``options``. The caller checks the enrollment is the customer's.
+    approval of a request that fixes no options may select one of the
+    customer's enrollments of its service (``"enrollment": "<CODE>"``, a chain
+    enrollment): a canonical code, and no ``options``. The caller checks the
+    enrollment is the customer's.
     """
-    validate_access_requests("requests", requests)
-    requested = {entry["object"]: entry for entry in requests}
+    validate_access_requests("requests", requests, explicit_required=False)
     if not isinstance(approvals, list):
         raise ValueError("approvals must be a list of approved requests")
     policy: list[dict[str, Any]] = []
+    approved: set[int] = set()
     for index, approval in enumerate(approvals):
         at = f"approvals[{index}]"
         if not isinstance(approval, dict) or not isinstance(approval.get("object"), str):
@@ -529,54 +613,68 @@ def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None 
                 raise ValueError(f"{at}: {obj} is listed twice")
             policy.append(_enrollment_entry(at, approval))
             continue
-        request = requested.get(obj)
-        if request is None:
-            raise ValueError(f"{at}: {obj} is not requested")
-        if any(entry["object"] == obj for entry in policy):
-            raise ValueError(f"{at}: {obj} is approved twice")
         if obj == APIKEY_OBJECT:
             if extra := set(approval) - {"object", "limits"}:
                 raise ValueError(f"{at}: unknown keys {sorted(extra)} (the {APIKEY_OBJECT} entry takes only limits)")
+        elif extra := set(approval) - _POLICY_KEYS - {ENROLLMENT_KEY}:
+            raise ValueError(f"{at}: unknown keys {sorted(extra)}")
+        exports = None
+        if resolve is not None and obj.startswith(SERVICE_PREFIX) and any(r["object"] == obj for r in requests):
+            declared = resolve(obj.removeprefix(SERVICE_PREFIX))
+            if declared is None:
+                raise ValueError(f"{at}: {obj} is not a published service")
+            exports = parse_exports(f"{obj} exports", declared)
+        matched = match_request(at, requests, approval, exports)
+        if matched in approved:
+            raise ValueError(f"{at}: {_label(requests[matched])} is approved twice")
+        approved.add(matched)
+        request = requests[matched]
+        if obj == APIKEY_OBJECT:
             validate_limits(f"{at}.limits", approval.get("limits"), apikey=True)
             asked = request["limits"][API_KEY_LIFESPAN]
             if approval["limits"][API_KEY_LIFESPAN] > asked:
                 raise ValueError(f"{at}.limits.{API_KEY_LIFESPAN}: the service asks for at most {asked} seconds")
             policy.append({"object": obj, "limits": dict(approval["limits"])})
             continue
-        if extra := set(approval) - _POLICY_KEYS - {ENROLLMENT_KEY}:
-            raise ValueError(f"{at}: unknown keys {sorted(extra)}")
+        fixed = parse_options("options", request.get("options", ""))
         code = approval.get(ENROLLMENT_KEY)
         if ENROLLMENT_KEY in approval:
             if not isinstance(code, str) or not _ENROLLMENT_CODE.match(code):
                 raise ValueError(f"{at}.{ENROLLMENT_KEY} must be an enrollment code, like JYY87Y")
             if approval.get("options"):
                 raise ValueError(f"{at}.options: an enrollment's params are fixed; it takes no options")
+            if fixed:
+                raise ValueError(
+                    f"{at}.{ENROLLMENT_KEY}: the service fixes options of {obj} ({request['options']}), "
+                    "which an enrollment cannot carry; approve it without one"
+                )
         permissions: list[str] = approval.get("permissions") or []
-        if not _strings(permissions):
-            raise ValueError(f"{at}.permissions must be a non-empty list of distinct names")
-        if not set(permissions) <= set(request["permissions"]):
-            raise ValueError(f"{at}.permissions: the service requests only {request['permissions']}")
-        options_text = approval.get("options", "")
-        options = parse_options(f"{at}.options", options_text)
+        if not _strings(permissions) or set(permissions) != set(request["permissions"]):
+            raise ValueError(f"{at}.permissions: the service requests exactly {request['permissions']}")
+        # The request's values win over an equal value written another way.
+        options = {**parse_options(f"{at}.options", approval.get("options", "")), **fixed}
         limits = approval.get("limits", {})
         validate_limits(f"{at}.limits", limits)
-        if resolve is not None:
-            declared = resolve(obj.removeprefix(SERVICE_PREFIX))
-            if declared is None:
-                raise ValueError(f"{at}: {obj} is not a published service")
-            check_claim(at, obj, permissions, options, parse_exports(f"{obj} exports", declared))
+        if exports is not None:
+            check_claim(at, obj, permissions, options, exports)
         entry: dict[str, Any] = {"object": obj, "permissions": list(permissions)}
         if code is not None:
             entry[ENROLLMENT_KEY] = code
         if options:
-            entry["options"] = options_text
+            entry["options"] = options_text(options)
         if limits:
             entry["limits"] = dict(limits)
         policy.append(entry)
-    approved = {entry["object"] for entry in policy}
-    if missing := sorted(obj for obj, request in requested.items() if request.get("required") and obj not in approved):
+    if missing := [_label(r) for i, r in enumerate(requests) if r.get("required") and i not in approved]:
         raise ValueError(f"approvals: the service requires {', '.join(missing)}")
     return policy
+
+
+def options_text(options: dict[str, str]) -> str:
+    """``options`` as the one query string a policy stores: names sorted, and
+    only what must be escaped escaped (``service=labs/llm-fast``,
+    ``profile=a,b``), so equal options are equal text."""
+    return urlencode(sorted(options.items()), safe=",/")
 
 
 def _enrollment_entry(at: str, approval: dict[str, Any]) -> dict[str, Any]:
