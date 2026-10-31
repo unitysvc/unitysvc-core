@@ -159,7 +159,7 @@ def test_validate_service_json_checks_access_requests_against_the_resolver(schem
     offering_file, offering = _offering_with(tmp_path, example_data_dir)
     channel = next(iter(offering["upstream_access_config"]))
     offering["upstream_access_config"][channel]["customer_access_requests"] = [
-        {"object": "service:no-such-svc", "permissions": ["read"], "justification": "x"}
+        {"object": "service:no-such-svc", "permissions": ["read"], "justification": "x", "required": False}
     ]
     offering_file.write_text(json.dumps(offering))
 

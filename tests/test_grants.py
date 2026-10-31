@@ -12,6 +12,8 @@ from unitysvc_core.grants import (
     api_key_lifespan,
     build_policy,
     check_claim,
+    match_request,
+    options_text,
     parse_exports,
     parse_options,
     validate_access_requests,
@@ -44,6 +46,15 @@ _CATALOG: dict[str, dict[str, Any]] = {
     "ai": {"options": _options(model={"type": "string", "minLength": 1})},
     "bill": {"options": _options(max_charge={"type": "number", "exclusiveMinimum": 0})},
     "resp200": {},  # declares nothing: invoke only
+    # Stands in for a resource with kinds (unitysvc/unitysvc#2830).
+    "rooms": {
+        "permissions": {"create": ["POST /rooms"]},
+        "options": _options(
+            kind={"type": "string", "enum": ["chat", "feed"]},
+            max_members={"type": "integer", "minimum": 1},
+            topic={"type": "string"},
+        ),
+    },
 }
 
 
@@ -56,6 +67,7 @@ def _dep(obj: str = "service:log", **fields: Any) -> dict[str, Any]:
         "object": obj,
         "permissions": ["invoke"],
         "justification": "Records each check you run",
+        "required": False,
         **fields,
     }
 
@@ -370,6 +382,7 @@ def _lifespan(seconds: Any = 14400, **fields: Any) -> dict[str, Any]:
         "object": "apikey",
         "limits": {"api_key_lifespan": seconds},
         "justification": "Batch runs take up to four hours",
+        "required": False,
         **fields,
     }
 
@@ -389,7 +402,7 @@ def test_a_key_lifespan_may_be_requested_without_a_lookup() -> None:
         (_lifespan("3600"), "from 1 to 86400"),
         (_lifespan(True), "from 1 to 86400"),
         (_lifespan(permissions=["invoke"]), "takes only limits"),
-        (_lifespan(required=True), "takes only limits"),
+        (_lifespan(required="yes"), "required must be true or false"),
         ({**_lifespan(), "limits": {"api_key_lifespan": 7200, "count_per_day": 2}}, "must be"),
         ({**_lifespan(), "limits": {}}, "must be"),
     ],
@@ -410,7 +423,7 @@ def test_the_lifespan_is_requested_once_and_only_on_the_apikey_entry() -> None:
 
 _REQUESTS: list[dict[str, Any]] = [
     _dep("service:log", required=True, options="log_level=warn", limits={"count_per_day": 1000}),
-    _dep("service:me", permissions=["read", "write"], options="profile=address.state"),
+    _dep("service:me", permissions=["read", "write"]),
     _lifespan(),
 ]
 
@@ -422,22 +435,23 @@ def _approve(*approvals: dict[str, Any]) -> list[dict[str, Any]]:
     return build_policy(_REQUESTS, list(approvals), _resolve)
 
 
-def test_approvals_become_a_policy_with_the_customers_options_and_limits() -> None:
+def test_approvals_become_a_policy_with_the_fixed_options_and_the_customers_choices() -> None:
     policy = _approve(
-        {"object": "service:log", "permissions": ["invoke"], "options": "log_level=error"},
+        {"object": "service:log", "permissions": ["invoke"], "options": "include_attributes=true"},
         {
             "object": "service:me",
-            "permissions": ["read"],
+            "permissions": ["write", "read"],
             "options": "profile=address",
             "limits": {"count_per_hour": 10, "amount_total": "5.00"},
         },
         {"object": "apikey", "limits": {"api_key_lifespan": 7200}},
     )
     assert policy == [
-        {"object": "service:log", "permissions": ["invoke"], "options": "log_level=error"},
+        # The request's log_level=warn is fixed: it is in the policy though the approval leaves it out.
+        {"object": "service:log", "permissions": ["invoke"], "options": "include_attributes=true&log_level=warn"},
         {
             "object": "service:me",
-            "permissions": ["read"],
+            "permissions": ["write", "read"],
             "options": "profile=address",
             "limits": {"count_per_hour": 10, "amount_total": "5.00"},
         },
@@ -446,9 +460,9 @@ def test_approvals_become_a_policy_with_the_customers_options_and_limits() -> No
     assert api_key_lifespan(policy) == 7200
 
 
-def test_optional_requests_may_be_declined_and_empty_options_are_dropped() -> None:
+def test_optional_requests_may_be_declined_and_empty_limits_are_dropped() -> None:
     policy = _approve({"object": "service:log", "permissions": ["invoke"], "options": "", "limits": {}})
-    assert policy == [{"object": "service:log", "permissions": ["invoke"]}]
+    assert policy == [{"object": "service:log", "permissions": ["invoke"], "options": "log_level=warn"}]
     assert api_key_lifespan(policy) == DEFAULT_API_KEY_LIFESPAN
 
 
@@ -456,12 +470,16 @@ def test_optional_requests_may_be_declined_and_empty_options_are_dropped() -> No
     ("approvals", "error"),
     [
         ([], "requires service:log"),
-        ([{"object": "service:me", "permissions": ["read"]}], "requires service:log"),
+        ([{"object": "service:me", "permissions": ["read", "write"]}], "requires service:log"),
         ([{"object": "service:ai", "permissions": ["invoke"]}], "service:ai is not requested"),
         ([_LOG_APPROVAL, _LOG_APPROVAL], "approved twice"),
-        ([{"object": "service:log", "permissions": []}], "permissions must be"),
-        ([{"object": "service:log", "permissions": ["invoke", "admin"]}], "requests only"),
-        ([{"object": "service:log", "permissions": ["invoke"], "options": "log_level=trace"}], "log_level 'trace'"),
+        ([{"object": "service:log", "permissions": []}], "requests exactly"),
+        ([{"object": "service:log", "permissions": ["invoke", "admin"]}], "requests exactly"),
+        ([{"object": "service:log", "permissions": ["invoke"], "options": "log_level=error"}], "fixes it to 'warn'"),
+        (
+            [{"object": "service:log", "permissions": ["invoke"], "options": "include_attributes=yes"}],
+            "include_attributes 'yes'",
+        ),
         ([{"object": "service:log", "permissions": ["invoke"], "options": "cap=1"}], "accepts no option 'cap'"),
         ([{"object": "service:log", "permissions": ["invoke"], "limits": {"count_per_week": 1}}], "count_/amount_"),
         ([{"object": "service:log", "permissions": ["invoke"], "required": True}], "unknown keys"),
@@ -485,6 +503,177 @@ def test_optional_requests_may_be_declined_and_empty_options_are_dropped() -> No
 def test_an_approval_outside_the_requests_or_exports_is_refused(approvals: Any, error: str) -> None:
     with pytest.raises(ValueError, match=error):
         build_policy(_REQUESTS, approvals, _resolve)
+
+
+# Every included request keeps exactly its permissions (unitysvc/unitysvc#2831) -----
+
+
+@pytest.mark.parametrize("required", [True, False])
+@pytest.mark.parametrize(
+    "permissions",
+    [["read"], ["write"], ["read", "write", "admin"], ["read", "admin"]],
+    ids=lambda p: "+".join(p),
+)
+def test_permissions_cannot_be_removed_added_or_replaced(required: bool, permissions: list[str]) -> None:
+    requests = [_dep("service:me", permissions=["read", "write"], required=required)]
+    with pytest.raises(ValueError, match=r"requests exactly \['read', 'write'\]"):
+        build_policy(requests, [{"object": "service:me", "permissions": permissions}], _resolve)
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_permissions_may_be_listed_in_any_order(required: bool) -> None:
+    requests = [_dep("service:me", permissions=["read", "write"], required=required)]
+    policy = build_policy(requests, [{"object": "service:me", "permissions": ["write", "read"]}], _resolve)
+    assert policy == [{"object": "service:me", "permissions": ["write", "read"]}]
+
+
+# A request's options are fixed; options it leaves open are the customer's ---------
+
+
+def test_an_open_option_is_the_customers_choice() -> None:
+    """service:ai with no model fixed: the customer picks one, or none."""
+    requests = [_dep("service:ai", required=True)]
+    assert build_policy(requests, [{"object": "service:ai", "permissions": ["invoke"]}], _resolve) == [
+        {"object": "service:ai", "permissions": ["invoke"]}
+    ]
+    assert build_policy(
+        requests, [{"object": "service:ai", "permissions": ["invoke"], "options": "model=labs/llm-premium"}], _resolve
+    ) == [{"object": "service:ai", "permissions": ["invoke"], "options": "model=labs/llm-premium"}]
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_a_declared_option_is_fixed(required: bool) -> None:
+    requests = [_dep("service:ai", required=required, options="model=labs%2Fllm-balanced")]
+    expected = [{"object": "service:ai", "permissions": ["invoke"], "options": "model=labs/llm-balanced"}]
+    for options in ["", "model=labs/llm-balanced", "model=labs%2Fllm-balanced"]:
+        approval = {"object": "service:ai", "permissions": ["invoke"], "options": options}
+        assert build_policy(requests, [approval], _resolve) == expected
+    with pytest.raises(
+        ValueError, match=r"approvals\[0\]\.options\.model: the service fixes it to 'labs/llm-balanced'"
+    ):
+        build_policy(
+            requests,
+            [{"object": "service:ai", "permissions": ["invoke"], "options": "model=labs/llm-premium"}],
+            _resolve,
+        )
+
+
+def test_an_optional_request_with_fixed_options_may_still_be_declined() -> None:
+    assert build_policy([_dep("service:ai", options="model=labs/llm-balanced")], [], _resolve) == []
+
+
+def test_fixed_values_compare_as_their_type() -> None:
+    """02000 is the integer 2000, so repeating it does not change the fixed value."""
+    requests = [_dep("service:notify", options="max_size=2000")]
+    approval = {"object": "service:notify", "permissions": ["invoke"], "options": "max_size=02000"}
+    assert build_policy(requests, [approval], _resolve) == [
+        {"object": "service:notify", "permissions": ["invoke"], "options": "max_size=2000"}
+    ]
+    with pytest.raises(ValueError, match="fixes it to '2000'"):
+        build_policy(requests, [{**approval, "options": "max_size=2001"}], _resolve)
+
+
+def test_without_a_resolver_fixed_values_compare_as_written() -> None:
+    requests = [_dep("service:notify", options="max_size=2000")]
+    with pytest.raises(ValueError, match="fixes it to '2000'"):
+        build_policy(requests, [{"object": "service:notify", "permissions": ["invoke"], "options": "max_size=02000"}])
+
+
+def test_policy_options_are_one_canonical_query_string() -> None:
+    assert options_text({"topic": "a&b", "kind": "chat", "profile": "x,y", "service": "labs/llm"}) == (
+        "kind=chat&profile=x,y&service=labs/llm&topic=a%26b"
+    )
+
+
+# Several requests of one object, told apart by a fixed option ---------------------
+
+_ROOMS: list[dict[str, Any]] = [
+    _dep("service:rooms", permissions=["create"], required=True, options="kind=chat&max_members=100"),
+    _dep("service:rooms", permissions=["create"], options="kind=feed"),
+]
+
+
+def _room(options: str = "", **fields: Any) -> dict[str, Any]:
+    return {"object": "service:rooms", "permissions": ["create"], "options": options, **fields}
+
+
+def test_requests_of_one_object_are_approved_separately() -> None:
+    policy = build_policy(_ROOMS, [_room("kind=feed&topic=news"), _room("kind=chat")], _resolve)
+    assert policy == [
+        {"object": "service:rooms", "permissions": ["create"], "options": "kind=feed&topic=news"},
+        {"object": "service:rooms", "permissions": ["create"], "options": "kind=chat&max_members=100"},
+    ]
+    # A stored entry finds its request again, by its fixed options.
+    assert [match_request("policy", _ROOMS, entry) for entry in policy] == [1, 0]
+
+
+def test_declining_one_kind_leaves_the_other() -> None:
+    assert build_policy(_ROOMS, [_room("kind=chat")], _resolve) == [
+        {"object": "service:rooms", "permissions": ["create"], "options": "kind=chat&max_members=100"}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("approvals", "error"),
+    [
+        ([_room()], r"service:rooms is requested 2 times; set kind to say which"),
+        ([_room("topic=news")], "set kind to say which"),
+        ([_room("kind=feed")], r"requires service:rooms \(kind=chat&max_members=100\)"),
+        ([_room("kind=chat"), _room("kind=chat&max_members=100")], "approved twice"),
+        ([_room("kind=chat&max_members=50")], "no request of service:rooms has these options"),
+    ],
+)
+def test_an_approval_must_say_which_request_it_approves(approvals: list[dict[str, Any]], error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        build_policy(_ROOMS, approvals, _resolve)
+
+
+@pytest.mark.parametrize(
+    "second",
+    [
+        _dep("service:rooms", permissions=["create"], options="kind=chat"),
+        _dep("service:rooms", permissions=["create"], options="topic=news"),
+        _dep("service:rooms", permissions=["create"]),
+        _dep("service:rooms", permissions=["create"], options="kind=chat&max_members=0100"),
+    ],
+    ids=["same-kind", "other-key", "no-options", "same-typed-value"],
+)
+def test_requests_of_one_object_must_fix_an_option_differently(second: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="listed twice; requests of one object must each fix an option"):
+        _check(_ROOMS[0], second)
+
+
+# Whether the customer may decline a request ----------------------------------------
+
+
+def test_every_request_says_whether_it_is_required() -> None:
+    unstated = {k: v for k, v in _dep().items() if k != "required"}
+    with pytest.raises(ValueError, match=r"\[0\]\.required must be true or false: say whether"):
+        _check(unstated)
+    lifespan = {k: v for k, v in _lifespan().items() if k != "required"}
+    with pytest.raises(ValueError, match=r"\[0\]\.required must be true or false: say whether"):
+        _check(lifespan)
+
+
+def test_a_stored_request_without_required_reads_as_optional() -> None:
+    """Declarations stored before the rule still build policies."""
+    unstated = {k: v for k, v in _dep().items() if k != "required"}
+    assert build_policy([unstated], [], _resolve) == []
+
+
+def test_a_key_lifespan_may_be_required() -> None:
+    requests = [_lifespan(required=True)]
+    with pytest.raises(ValueError, match="requires apikey"):
+        build_policy(requests, [])
+    assert build_policy(requests, [{"object": "apikey", "limits": {"api_key_lifespan": 600}}]) == [
+        {"object": "apikey", "limits": {"api_key_lifespan": 600}}
+    ]
+
+
+@pytest.mark.parametrize("permission", ["*", "read*", "Read", "read-all", ""])
+def test_a_permission_is_a_plain_name_even_without_a_resolver(permission: str) -> None:
+    with pytest.raises(ValueError, match="permission names"):
+        validate_access_requests(_WHERE, [_dep(permissions=[permission])])
 
 
 def test_an_approval_of_an_unpublished_target_is_refused() -> None:
@@ -551,11 +740,16 @@ def test_the_enrollment_entry_appears_once() -> None:
 def test_an_approval_may_select_one_of_the_customers_enrollments() -> None:
     policy = _approve(
         _LOG_APPROVAL,
-        {"object": "service:me", "permissions": ["read"], "enrollment": "JYY87Y", "limits": {"count_per_day": 3}},
+        {
+            "object": "service:me",
+            "permissions": ["read", "write"],
+            "enrollment": "JYY87Y",
+            "limits": {"count_per_day": 3},
+        },
     )
     assert policy[-1] == {
         "object": "service:me",
-        "permissions": ["read"],
+        "permissions": ["read", "write"],
         "enrollment": "JYY87Y",
         "limits": {"count_per_day": 3},
     }
@@ -574,14 +768,20 @@ def test_an_approval_may_select_one_of_the_customers_enrollments() -> None:
 )
 def test_a_chain_enrollment_names_a_code_and_takes_no_options(extra: dict[str, Any], error: str) -> None:
     with pytest.raises(ValueError, match=error):
-        _approve(_LOG_APPROVAL, {"object": "service:me", "permissions": ["read"], **extra})
+        _approve(_LOG_APPROVAL, {"object": "service:me", "permissions": ["read", "write"], **extra})
 
 
 def test_a_chain_enrollment_is_still_an_approval_of_a_request() -> None:
     with pytest.raises(ValueError, match="is not requested"):
         _approve(_LOG_APPROVAL, {"object": "service:notify", "permissions": ["invoke"], "enrollment": "JYY87Y"})
-    with pytest.raises(ValueError, match="requests only"):
+    with pytest.raises(ValueError, match="requests exactly"):
         _approve(_LOG_APPROVAL, {"object": "service:me", "permissions": ["delete"], "enrollment": "JYY87Y"})
+
+
+def test_a_chain_enrollment_cannot_bypass_fixed_options() -> None:
+    """An enrollment carries no options, so it can't carry the fixed ones either."""
+    with pytest.raises(ValueError, match=r"fixes options of service:log \(log_level=warn\)"):
+        _approve({**_LOG_APPROVAL, "enrollment": "JYY87Y"})
 
 
 def test_a_request_never_names_an_enrollment() -> None:
