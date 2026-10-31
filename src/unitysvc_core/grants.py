@@ -78,10 +78,14 @@ customer consent and key issuance establish its *authority*.
   be limited by ``count`` or ``amount`` per hour, day or month, or in total,
   without exporting anything (``{"count_per_day": 2, "amount_per_month": "2.00"}``).
 
-Today a request's ``object`` is ``service:<name>``, or ``apikey``: how long a
-key leased for the enrollment lives (``limits.api_key_lifespan``, up to a day,
-with a justification), which grants nothing. :func:`build_policy` turns a
-customer's approvals into the policy an enrollment keeps.
+A request's ``object`` is ``service:<name>``; or ``resource:room``, a room the
+platform provisions for the enrollment (unitysvc/unitysvc#2830), whose
+``kind`` (``chat``, ``support``, ``announcement``, ``discussion``) the
+request fixes and whose permissions the kind bounds (:data:`ROOM_KINDS`); or
+``apikey``: how long a key leased for the enrollment lives
+(``limits.api_key_lifespan``, up to a day, with a justification), which grants
+nothing. :func:`build_policy` turns a customer's approvals into the policy an
+enrollment keeps.
 
 A policy has three kinds of entry (unitysvc/unitysvc#2770):
 
@@ -178,6 +182,36 @@ class Exports:
 ALL_ROUTES = "* /*"
 DEFAULT_PERMISSIONS: dict[str, tuple[str, ...]] = {INVOKE: (ALL_ROUTES,)}
 DEFAULT_EXPORTS = Exports(DEFAULT_PERMISSIONS, {})
+
+# What a request may ask the platform to provision for the enrolling customer,
+# rather than a service to call (unitysvc/unitysvc#2830): ``resource:<name>``.
+# Core knows each resource, so its claims need no catalog lookup.
+RESOURCE_PREFIX = "resource:"
+# A room's kind is its identity: a request fixes it, and each kind allows the
+# permissions its provisioning grants. The customer creates and owns a chat
+# room; the others are the seller's rooms the customer is admitted to (a
+# private support room, a read-only announcement room, a discussion room).
+ROOM_KINDS: dict[str, frozenset[str]] = {
+    "chat": frozenset({"create"}),
+    "support": frozenset({"join", "read", "post"}),
+    "announcement": frozenset({"join", "read"}),
+    "discussion": frozenset({"join", "read", "post"}),
+}
+ROOM_KIND = "kind"
+ROOM_MAX_MEMBERS = "max_members"
+RESOURCES: dict[str, Exports] = {
+    "room": Exports(
+        {name: () for name in ("create", "join", "read", "post")},
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                ROOM_KIND: {"type": "string", "enum": list(ROOM_KINDS)},
+                ROOM_MAX_MEMBERS: {"type": "integer", "minimum": 1},
+            },
+        },
+    ),
+}
 
 _REQUEST_KEYS = frozenset({"object", "permissions", "required", "justification", "options", "limits"})
 _APIKEY_REQUEST_KEYS = frozenset({"object", "required", "justification", "limits"})
@@ -425,13 +459,24 @@ def validate_access_requests(
             continue
         if obj == SERVICE_WILDCARD:
             raise ValueError(_service_wildcard_refusal(at, "requested"))
-        if not obj.startswith(SERVICE_PREFIX):
-            raise ValueError(f"{at}: {obj!r} cannot be requested; name one service as 'service:<name>'")
-        name = obj.removeprefix(SERVICE_PREFIX)
-        try:
-            validate_service_identifier(name, "requested service")
-        except ValueError as exc:
-            raise ValueError(f"{at}: {obj!r} cannot be requested: {exc}") from None
+        resource = obj.startswith(RESOURCE_PREFIX)
+        name = obj.removeprefix(RESOURCE_PREFIX if resource else SERVICE_PREFIX)
+        if resource:
+            if name not in RESOURCES:
+                raise ValueError(
+                    f"{at}: {obj!r} cannot be requested; the resources are "
+                    + ", ".join(f"'{RESOURCE_PREFIX}{r}'" for r in RESOURCES)
+                )
+        elif not obj.startswith(SERVICE_PREFIX):
+            raise ValueError(
+                f"{at}: {obj!r} cannot be requested; name one service as 'service:<name>' "
+                f"or a resource as '{RESOURCE_PREFIX}<name>'"
+            )
+        else:
+            try:
+                validate_service_identifier(name, "requested service")
+            except ValueError as exc:
+                raise ValueError(f"{at}: {obj!r} cannot be requested: {exc}") from None
         if extra := set(entry) - _REQUEST_KEYS:
             raise ValueError(f"{at}: unknown keys {sorted(extra)}")
         justification = entry.get("justification")
@@ -449,7 +494,14 @@ def validate_access_requests(
         options = parse_options(f"{at}.options", entry.get("options", ""))
         validate_limits(f"{at}.limits", entry.get("limits", {}))
         exports = None
-        if resolve is not None:
+        if resource:
+            exports = RESOURCES[name]
+            check_resource(at, obj, permissions, options, entry.get("limits"))
+            if kind := next(
+                (o[ROOM_KIND] for other, o, _ in seen if other == obj and o[ROOM_KIND] == options[ROOM_KIND]), None
+            ):
+                raise ValueError(f"{at}: {obj} with {ROOM_KIND}={kind} is listed twice; a kind is requested once")
+        elif resolve is not None:
             declared = resolve(name)
             if declared is None:
                 raise ValueError(f"{at}: {obj} is not a published service")
@@ -560,6 +612,29 @@ def check_claim(where: str, obj: str, permissions: list[str], options: dict[str,
         raise ValueError(f"{where}.options: {error}")
 
 
+def check_resource(where: str, obj: str, permissions: list[str], options: dict[str, str], limits: Any = None) -> None:
+    """Refuse a claim on ``obj`` (``resource:<name>``) that the resource does
+    not allow, for a request and for a policy entry alike.
+
+    A room claim names its ``kind`` in its options; its permissions are some
+    of those the kind allows, and ``max_members`` (a positive integer) only
+    caps a room the customer creates. A resource is provisioned, not called,
+    so it takes no limits.
+    """
+    check_claim(where, obj, permissions, options, RESOURCES[obj.removeprefix(RESOURCE_PREFIX)])
+    if limits:
+        raise ValueError(f"{where}.limits: {obj} is provisioned, not called; it takes no limits")
+    kind = options.get(ROOM_KIND)
+    if kind is None:
+        raise ValueError(
+            f"{where}.options must set {ROOM_KIND} (one of {list(ROOM_KINDS)}): a room's kind is its identity"
+        )
+    if not set(permissions) <= ROOM_KINDS[kind]:
+        raise ValueError(f"{where}.permissions: a {kind} room allows only {sorted(ROOM_KINDS[kind])}")
+    if ROOM_MAX_MEMBERS in options and "create" not in ROOM_KINDS[kind]:
+        raise ValueError(f"{where}.options.{ROOM_MAX_MEMBERS}: only a room the customer creates takes a member cap")
+
+
 def validate_channel_access_requests(config: Any, resolve: ExportsResolver | None = None) -> None:
     """Refuse the ``customer_access_requests`` of any channel of an ``upstream_access_config``
     unless valid. Each channel declares its own (unitysvc/unitysvc#2726)."""
@@ -619,7 +694,10 @@ def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None 
         elif extra := set(approval) - _POLICY_KEYS - {ENROLLMENT_KEY}:
             raise ValueError(f"{at}: unknown keys {sorted(extra)}")
         exports = None
-        if resolve is not None and obj.startswith(SERVICE_PREFIX) and any(r["object"] == obj for r in requests):
+        resource = obj.startswith(RESOURCE_PREFIX) and obj.removeprefix(RESOURCE_PREFIX) in RESOURCES
+        if resource:
+            exports = RESOURCES[obj.removeprefix(RESOURCE_PREFIX)]
+        elif resolve is not None and obj.startswith(SERVICE_PREFIX) and any(r["object"] == obj for r in requests):
             declared = resolve(obj.removeprefix(SERVICE_PREFIX))
             if declared is None:
                 raise ValueError(f"{at}: {obj} is not a published service")
@@ -655,7 +733,9 @@ def build_policy(requests: Any, approvals: Any, resolve: ExportsResolver | None 
         options = {**parse_options(f"{at}.options", approval.get("options", "")), **fixed}
         limits = approval.get("limits", {})
         validate_limits(f"{at}.limits", limits)
-        if exports is not None:
+        if resource:
+            check_resource(at, obj, permissions, options, limits)
+        elif exports is not None:
             check_claim(at, obj, permissions, options, exports)
         entry: dict[str, Any] = {"object": obj, "permissions": list(permissions)}
         if code is not None:

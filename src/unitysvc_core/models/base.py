@@ -291,6 +291,9 @@ class RequestTransformEnum(StrEnum):
 class ServiceTypeEnum(StrEnum):
     """Broad service category — defines the access pattern and protocol.
 
+    Optional on an offering: a service that fits none leaves it out, and
+    describes what it does with capabilities and tags.
+
     AI modalities (vision, tools, rerank, etc.) are tracked via the
     `capabilities` list on ServiceOffering, not service_type.
     """
@@ -333,6 +336,12 @@ class ServiceTypeEnum(StrEnum):
     database = "database"  # Managed DB/cache access (SSH tunnel)
     monitoring = "monitoring"  # Uptime checks, health monitoring
     analytics = "analytics"  # Recommendation, anomaly detection, forecasting
+
+    # === Applications ===
+    # Two-way or many-way exchanges between the customer and others, rather
+    # than answering calls; having an endpoint or not is not what makes one.
+    communication = "communication"  # Conversations among several parties (Commons rooms, unitysvc/unitysvc#2823)
+    buy_and_sell = "buy_and_sell"  # Buyers and sellers dealing with each other (AIMM)
 
 
 class ServiceVisibilityEnum(StrEnum):

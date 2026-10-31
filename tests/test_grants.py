@@ -811,3 +811,140 @@ def test_service_wildcard_is_never_approved() -> None:
 def test_a_seller_cannot_request_the_enrollment_entry() -> None:
     with pytest.raises(ValueError, match="cannot be requested"):
         validate_access_requests(_WHERE, [{"object": "enrollment", "justification": "x", "limits": {"count_total": 1}}])
+
+
+# Resources the platform provisions on enrollment (unitysvc/unitysvc#2830) ---------
+
+
+def _resource(kind: str = "chat", permissions: list[str] | None = None, **fields: Any) -> dict[str, Any]:
+    return {
+        "object": "resource:room",
+        "permissions": permissions or ["create"],
+        "justification": "Creates your chat room",
+        "required": True,
+        "options": f"kind={kind}",
+        **fields,
+    }
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        _resource(options="kind=chat&max_members=100"),
+        _resource(),
+        _resource("support", ["join", "read", "post"]),
+        _resource("announcement", ["join", "read"]),
+        _resource("discussion", ["join", "read", "post"]),
+        _resource("support", ["read"]),
+    ],
+    ids=lambda e: e["options"] + ":" + "+".join(e["permissions"]),
+)
+def test_a_room_resource_may_be_requested_without_a_lookup(entry: dict[str, Any]) -> None:
+    """Core knows its resources: no catalog is consulted."""
+    validate_access_requests(_WHERE, [entry], _never_resolve)
+
+
+def test_one_channel_may_request_several_kinds_of_room() -> None:
+    _check(
+        _resource(options="kind=chat&max_members=100"),
+        _resource("support", ["join", "read", "post"]),
+        _resource("announcement", ["join", "read"], required=False),
+        _dep(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("entries", "error"),
+    [
+        (
+            [_resource(object="resource:bucket")],
+            r"'resource:bucket' cannot be requested; the resources are 'resource:room'",
+        ),
+        ([_resource(object="resource:")], r"'resource:' cannot be requested"),
+        ([_resource(object="room")], r"or a resource as 'resource:<name>'"),
+        ([_resource(options="")], "must set kind"),
+        ([_resource(options="max_members=5")], "must set kind"),
+        ([_resource("lounge")], "kind 'lounge' is not one of"),
+        ([_resource("chat", ["join"])], r"a chat room allows only \['create'\]"),
+        (
+            [_resource("announcement", ["join", "read", "post"])],
+            r"an? announcement room allows only \['join', 'read'\]",
+        ),
+        ([_resource("chat", ["delete"])], r"resource:room exports only"),
+        ([_resource(options="kind=chat&max_members=0")], "max_members 0 is less than the minimum of 1"),
+        ([_resource(options="kind=chat&max_members=many")], "max_members 'many' is not of type 'integer'"),
+        ([_resource("support", ["join"], options="kind=support&max_members=5")], "only a room the customer creates"),
+        ([_resource(options="kind=chat&topic=x")], "accepts no option 'topic'"),
+        ([_resource(limits={"count_per_day": 1})], "provisioned, not called; it takes no limits"),
+        ([_resource(), _resource(options="kind=chat&max_members=5")], "kind=chat is listed twice"),
+    ],
+)
+def test_an_invalid_resource_request_is_refused(entries: list[dict[str, Any]], error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        validate_access_requests(_WHERE, entries)
+
+
+_RESOURCE_REQUESTS: list[dict[str, Any]] = [
+    _resource(options="kind=chat&max_members=100"),
+    _resource("announcement", ["join", "read"], required=False),
+]
+
+
+def test_a_room_approval_keeps_its_fixed_kind_and_cap() -> None:
+    policy = build_policy(
+        _RESOURCE_REQUESTS,
+        [
+            # With two kinds requested, an approval names its kind; the cap is filled in.
+            {"object": "resource:room", "permissions": ["create"], "options": "kind=chat"},
+            {"object": "resource:room", "permissions": ["read", "join"], "options": "kind=announcement"},
+        ],
+    )
+    assert policy == [
+        {"object": "resource:room", "permissions": ["create"], "options": "kind=chat&max_members=100"},
+        {"object": "resource:room", "permissions": ["read", "join"], "options": "kind=announcement"},
+    ]
+    assert [match_request("policy", _RESOURCE_REQUESTS, entry) for entry in policy] == [0, 1]
+
+
+@pytest.mark.parametrize(
+    ("approvals", "error"),
+    [
+        ([], r"requires resource:room \(kind=chat&max_members=100\)"),
+        (
+            [{"object": "resource:room", "permissions": ["create"], "options": "kind=chat&max_members=500"}],
+            "no request",
+        ),
+        ([{"object": "resource:room", "permissions": ["create"], "options": "kind=discussion"}], "no request"),
+        (
+            [{"object": "resource:room", "permissions": ["create"], "limits": {"count_total": 1}}],
+            "set kind to say which",
+        ),
+        (
+            [
+                {
+                    "object": "resource:room",
+                    "permissions": ["create"],
+                    "options": "kind=chat",
+                    "limits": {"count_total": 1},
+                }
+            ],
+            "takes no limits",
+        ),
+        (
+            [{"object": "resource:room", "permissions": ["create"], "options": "kind=chat", "enrollment": "JYY87Y"}],
+            "takes no options",
+        ),
+        ([{"object": "resource:room", "permissions": ["create", "join"], "options": "kind=chat"}], "requests exactly"),
+        ([{"object": "resource:bucket", "permissions": ["create"]}], "resource:bucket is not requested"),
+    ],
+)
+def test_a_room_approval_cannot_change_or_add_a_resource(approvals: list[dict[str, Any]], error: str) -> None:
+    with pytest.raises(ValueError, match=error):
+        build_policy(_RESOURCE_REQUESTS, approvals)
+
+
+def test_a_customer_may_cap_their_own_room_when_the_request_leaves_it_open() -> None:
+    policy = build_policy(
+        [_resource()], [{"object": "resource:room", "permissions": ["create"], "options": "max_members=8"}]
+    )
+    assert policy == [{"object": "resource:room", "permissions": ["create"], "options": "kind=chat&max_members=8"}]

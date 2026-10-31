@@ -2946,7 +2946,7 @@
       "type": "object"
     },
     "ServiceTypeEnum": {
-      "description": "Broad service category — defines the access pattern and protocol.\n\nAI modalities (vision, tools, rerank, etc.) are tracked via the\n`capabilities` list on ServiceOffering, not service_type.",
+      "description": "Broad service category — defines the access pattern and protocol.\n\nOptional on an offering: a service that fits none leaves it out, and\ndescribes what it does with capabilities and tags.\n\nAI modalities (vision, tools, rerank, etc.) are tracked via the\n`capabilities` list on ServiceOffering, not service_type.",
       "enum": [
         "llm",
         "embedding",
@@ -2961,7 +2961,9 @@
         "mcp",
         "database",
         "monitoring",
-        "analytics"
+        "analytics",
+        "communication",
+        "buy_and_sell"
       ],
       "title": "ServiceTypeEnum",
       "type": "string"
@@ -3841,9 +3843,16 @@
       "title": "Payout Price"
     },
     "service_type": {
-      "$ref": "#/$defs/ServiceTypeEnum",
-      "default": "llm",
-      "description": "Category for grouping/comparison"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ServiceTypeEnum"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Category for grouping/comparison; omit it when none fits, and describe the service with capabilities and tags"
     },
     "status": {
       "$ref": "#/$defs/OfferingStatusEnum",
