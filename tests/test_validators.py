@@ -593,6 +593,15 @@ class TestValidateMcpOffering:
         assert "mcp-delegation" in errors[0]
         assert "service_type 'mcp'" in errors[0]
 
+    def test_an_offering_without_service_type_cannot_declare_an_mcp_channel(self) -> None:
+        errors = validate_mcp_offering(
+            {"upstream_access_config": {"upstream": {"access_method": "mcp", "base_url": "https://mcp.example.test"}}}
+        )
+        assert errors == [
+            "an offering without service_type may not declare MCP upstream channel(s) 'upstream'; "
+            "use service_type 'mcp' instead"
+        ]
+
     def test_non_mcp_offering_cannot_declare_an_mcp_channel(self) -> None:
         errors = validate_mcp_offering(
             {
