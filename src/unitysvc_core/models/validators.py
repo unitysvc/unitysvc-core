@@ -1316,8 +1316,9 @@ def validate_details_links(details: dict[str, Any] | None, *, channel_less: bool
     of ``details`` stays free-form. An offering with no channel (an app reached
     at its own site) must provide it: its homepage is how customers reach it.
     """
-    from urllib.parse import urlsplit
+    from pydantic import HttpUrl, TypeAdapter, ValidationError
 
+    url_adapter = TypeAdapter(HttpUrl)
     links = (details or {}).get("links")
     if links is None:
         if channel_less:
@@ -1341,10 +1342,14 @@ def validate_details_links(details: dict[str, Any] | None, *, channel_less: bool
         if not isinstance(url, str) or not url.strip():
             errors.append(f"{where} must be a nonempty https:// URL")
             continue
-        parts = urlsplit(url.strip())
-        if parts.scheme != "https" or not parts.hostname:
+        try:
+            parsed = url_adapter.validate_python(url.strip())
+        except ValidationError:
             errors.append(f"{where} must be an https:// URL, got {url!r}")
-        elif parts.username is not None or parts.password is not None:
+            continue
+        if parsed.scheme != "https" or not parsed.host:
+            errors.append(f"{where} must be an https:// URL, got {url!r}")
+        elif parsed.username is not None or parsed.password is not None:
             errors.append(f"{where} must not embed credentials")
     if HOMEPAGE_LINK not in links:
         errors.append(f"details.links must include '{HOMEPAGE_LINK}', the primary product link")
