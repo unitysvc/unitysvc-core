@@ -1297,3 +1297,55 @@ def validate_listing_jinja_var_references(data: dict[str, Any] | None) -> list[s
                 errors.append(f"{field_path}: Jinja syntax error in '{value}' — {exc.message}.")
 
     return errors
+
+
+HOMEPAGE_LINK = "homepage"
+MAX_LINKS = 10
+MAX_LINK_LABEL_LENGTH = 40
+
+
+def validate_details_links(details: dict[str, Any] | None, *, channel_less: bool) -> list[str]:
+    """Check an offering's product links, ``details.links`` (unitysvc/unitysvc#2873).
+
+    Product links (homepage, documentation, support, …) describe the product,
+    whether or not it is delivered through the gateway, and are kept apart from
+    the operational ``upstream_access_config``. When present, ``details.links``
+    maps up to ``MAX_LINKS`` nonempty display labels (at most
+    ``MAX_LINK_LABEL_LENGTH`` characters) to ``https://`` URLs without embedded
+    credentials, and includes ``homepage``, the primary product link; the rest
+    of ``details`` stays free-form. An offering with no channel (an app reached
+    at its own site) must provide it: its homepage is how customers reach it.
+    """
+    from urllib.parse import urlsplit
+
+    links = (details or {}).get("links")
+    if links is None:
+        if channel_less:
+            return [
+                "An offering with no upstream_access_config channel is an external app: "
+                f"details.links.{HOMEPAGE_LINK} must give its https:// homepage"
+            ]
+        return []
+    if not isinstance(links, dict):
+        return ["details.links must be an object of link label -> https:// URL"]
+    errors: list[str] = []
+    if len(links) > MAX_LINKS:
+        errors.append(f"details.links may hold at most {MAX_LINKS} links, got {len(links)}")
+    for label, url in links.items():
+        where = f"details.links.{label}"
+        if not isinstance(label, str) or not label.strip():
+            errors.append("details.links: a link label must be a nonempty string")
+            continue
+        if len(label) > MAX_LINK_LABEL_LENGTH:
+            errors.append(f"details.links: the label {label!r} is longer than {MAX_LINK_LABEL_LENGTH} characters")
+        if not isinstance(url, str) or not url.strip():
+            errors.append(f"{where} must be a nonempty https:// URL")
+            continue
+        parts = urlsplit(url.strip())
+        if parts.scheme != "https" or not parts.hostname:
+            errors.append(f"{where} must be an https:// URL, got {url!r}")
+        elif parts.username is not None or parts.password is not None:
+            errors.append(f"{where} must not embed credentials")
+    if HOMEPAGE_LINK not in links:
+        errors.append(f"details.links must include '{HOMEPAGE_LINK}', the primary product link")
+    return errors

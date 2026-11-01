@@ -1,13 +1,13 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import ConfigDict, Field, HttpUrl, field_validator
+from pydantic import ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from .channel import UpstreamAccessConfig
 from .documents import DocumentData
 from .offering_data import ServiceOfferingData
 from .pricing import Pricing
-from .validators import validate_service_identifier
+from .validators import validate_details_links, validate_service_identifier
 
 
 class OfferingV1(ServiceOfferingData):
@@ -33,16 +33,22 @@ class OfferingV1(ServiceOfferingData):
     # Static information (optional — not all service types have meaningful details)
     details: dict[str, Any] = Field(  # type: ignore[assignment]
         default_factory=dict,
-        description="Dictionary of static features and information",
+        description=(
+            "Dictionary of static features and information. Its 'links' key holds the product "
+            "links (label -> https:// URL, including 'homepage'), required when the offering "
+            "declares no channel"
+        ),
     )
 
     # Convenience field for logo (converted to documents during import)
     logo: str | HttpUrl | None = None
 
-    # Required in file validation (the base allows None and keeps channels as
-    # plain dicts, for stored data the platform has annotated).
+    # The base allows None and keeps channels as plain dicts, for stored data
+    # the platform has annotated. Omitted and empty are the same: an offering
+    # with no channel, an external app reached at its own site (#2873).
     upstream_access_config: UpstreamAccessConfig = Field(  # type: ignore[assignment]
-        description="Upstream access channels, keyed by channel name",
+        default_factory=lambda: UpstreamAccessConfig({}),
+        description="Upstream access channels, keyed by channel name; omit for an external app",
     )
 
     documents: dict[str, DocumentData] | None = Field(  # type: ignore[assignment]
@@ -54,6 +60,15 @@ class OfferingV1(ServiceOfferingData):
         default=None,
         description="Payout pricing: How to calculate seller payout",
     )
+
+    @model_validator(mode="after")
+    def _validate_links(self) -> "OfferingV1":
+        """Product links are well formed, and an offering with no channel has
+        its homepage (unitysvc/unitysvc#2873)."""
+        channel_less = not self.upstream_access_config.root
+        if errors := validate_details_links(self.details, channel_less=channel_less):
+            raise ValueError("; ".join(errors))
+        return self
 
     @field_validator("name")
     @classmethod

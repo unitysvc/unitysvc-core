@@ -670,12 +670,39 @@ class DataValidator:
             f"digits and '.', '_', ':', '-', with no 'org/' prefix (e.g. 'glm-5.2'), got {value!r}."
         ]
 
-    def validate_connectivity_test_exists(self, data: dict[str, Any], schema_name: str) -> list[str]:
+    @staticmethod
+    def _is_channel_less(offering: dict[str, Any] | None) -> bool:
+        """Whether an offering declares no channel: an external app (#2873)."""
+        return isinstance(offering, dict) and not offering.get("upstream_access_config")
+
+    def validate_external_app_listing(self, data: dict[str, Any], offering: dict[str, Any] | None) -> list[str]:
+        """A listing whose offering declares no channel is an external app
+        (unitysvc/unitysvc#2873): reached at its homepage, so it has nothing to
+        route to and no price (signup and payment happen at the seller's site)."""
+        if not self._is_channel_less(offering):
+            return []
+        errors: list[str] = []
+        if data.get("user_access_interfaces"):
+            errors.append(
+                "An external app (its offering declares no channel) has nothing to route to: "
+                "remove user_access_interfaces"
+            )
+        if data.get("list_price"):
+            errors.append(
+                "An external app (its offering declares no channel) is paid for at the seller's site: remove list_price"
+            )
+        return errors
+
+    def validate_connectivity_test_exists(
+        self, data: dict[str, Any], schema_name: str, *, offering: dict[str, Any] | None = None
+    ) -> list[str]:
         """Validate that at least one connectivity_test document exists.
 
         For listing_v1 data, the documents section must contain at least one
         document with category "connectivity_test". This is required for
-        automated service testing during the publish workflow.
+        automated service testing during the publish workflow. An external
+        app (its offering declares no channel) needs none: the platform checks
+        its product links instead (unitysvc/unitysvc#2873).
 
         Args:
             data: The data to validate
@@ -687,7 +714,7 @@ class DataValidator:
         errors: list[str] = []
 
         # Only validate listing_v1 schema
-        if schema_name != "listing_v1":
+        if schema_name != "listing_v1" or self._is_channel_less(offering):
             return errors
 
         documents = data.get("documents")
@@ -1041,7 +1068,7 @@ class DataValidator:
         errors.extend(service_options_errors)
 
         # Validate at least one connectivity_test document exists (listing_v1 only)
-        connectivity_errors = self.validate_connectivity_test_exists(data, schema_name)
+        connectivity_errors = self.validate_connectivity_test_exists(data, schema_name, offering=offering)
         errors.extend(connectivity_errors)
 
         # Validate S3, SMTP, MCP, and API-gateway interfaces (listing_v1 only)
@@ -1064,6 +1091,7 @@ class DataValidator:
             errors.extend(validate_listing_mcp_base_urls(uai))
             errors.extend(validate_listing_jinja_var_references(data))
             errors.extend(validate_listing_interfaces_are_canonical(uai))
+            errors.extend(self.validate_external_app_listing(data, offering))
             if offering is not None:
                 errors.extend(
                     validate_required_parameter_usage(

@@ -165,7 +165,9 @@ class McpServer(_Server):
     allowed_hosts: list[str] | None = None
 
 
-ChannelType = Literal["unbound", "secret_bound", "enrollable", "me_bound", "external"]
+# Derived by the platform. An app with no channel at all (an external app,
+# unitysvc/unitysvc#2873) is not a channel type: it declares no channel.
+ChannelType = Literal["unbound", "secret_bound", "enrollable", "me_bound"]
 
 # Keys a channel no longer takes, with what to do instead.
 RETIRED_CHANNEL_KEYS: dict[str, str] = {
@@ -193,7 +195,7 @@ class _ChannelBase(BaseModel):
 
     type: ChannelType | None = Field(
         default=None,
-        description="Normally derived by the platform; declare 'external' (or 'enrollable') to state it",
+        description="Normally derived by the platform; declare 'enrollable' to state it",
     )
     description: str | None = None
     is_active: bool = True
