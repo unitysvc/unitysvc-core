@@ -225,7 +225,7 @@ A policy has three kinds of entry (unitysvc/unitysvc#2770):
 | Channel key | What it is |
 | --- | --- |
 | `access_method` | `http` (default), `smtp`, `s3` or `mcp`; selects the server type |
-| `type` | normally derived by the platform; declare `external` (or `enrollable`) to state it |
+| `type` | normally derived by the platform; declare `enrollable` to state it |
 | `description`, `is_active`, `sort_order` | display text; inactive channels are skipped; rank, lowest first |
 | `request_formats`, `applicable_interfaces` | the formats the channel serves; the interfaces that reach it (display only) |
 | `rate_limit_refs` | the provider rate limits it consumes |
@@ -236,6 +236,27 @@ A policy has three kinds of entry (unitysvc/unitysvc#2770):
 The common one-server case writes the connection fields directly on the channel; they are read as `servers[0]`. When a channel has both, each server inherits the direct fields it does not set. Any string may be a template (`{{ params.X }}`, `${ secrets.X }`, `${ customer_secrets.X ?? default }`), so numeric and boolean connection fields also accept strings.
 
 Unknown keys are refused. Retired keys are refused with what to do instead (`RETIRED_CHANNEL_KEYS`): `raw`, `is_primary`, the listing-style parameter trio, `grants`, `rate_limits` (nothing reads it; use `rate_limit_refs`), `storage_type` (use `access_method: s3`), `response_rules`, `timeout_ms`, `transport`, and the platform-derived `customer_secrets_required` / `customer_secrets_optional`.
+
+### External apps and product links
+
+An offering that declares no channel (`upstream_access_config` omitted or `{}`) is an **external app**: customers reach it at its own site, not through the gateway (unitysvc/unitysvc#2873). `external` is not a channel type. An external app:
+
+- gives its homepage in `details.links.homepage` (required; the provider's homepage is not substituted);
+- has no `user_access_interfaces` and no `list_price` (signup and payment happen at its site);
+- needs no connectivity-test document.
+
+`details.links` holds an offering's product links, for any service: up to 10 free display labels (at most 40 characters each) mapped to `https://` URLs without embedded credentials. When present it must include `homepage`, the primary product link. The rest of `details` stays free-form. `validate_details_links` checks it on every `offering_v1`.
+
+```json
+{
+  "details": {
+    "links": {
+      "homepage": "https://app.example",
+      "documentation": "https://app.example/docs"
+    }
+  }
+}
+```
 
 ### Enrollment parameters on channels
 
