@@ -1342,9 +1342,18 @@ def validate_details_links(details: dict[str, Any] | None, *, channel_less: bool
         if not isinstance(url, str) or not url.strip():
             errors.append(f"{where} must be a nonempty https:// URL")
             continue
+        # HttpUrl repairs some malformed input (``https:app.example`` becomes
+        # ``https://app.example/``), but the original string is what is stored
+        # and rendered as an href, where it would resolve relative to the
+        # page. So the string itself must be an absolute ``https://`` URL with
+        # an authority; HttpUrl then checks the host, port and the rest.
+        authority = url[len("https://") :]
+        if url != url.strip() or not url.lower().startswith("https://") or authority[:1] in ("", "/", "\\"):
+            errors.append(f"{where} must be an https:// URL, got {url!r}")
+            continue
         try:
-            parsed = url_adapter.validate_python(url.strip())
-        except ValidationError:
+            parsed = url_adapter.validate_python(url)
+        except (ValidationError, ValueError):
             errors.append(f"{where} must be an https:// URL, got {url!r}")
             continue
         if parsed.scheme != "https" or not parsed.host:
