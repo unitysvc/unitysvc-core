@@ -831,8 +831,11 @@ def _resource(kind: str = "chat", permissions: list[str] | None = None, **fields
     "entry",
     [
         _resource(options="kind=chat&max_members=100"),
+        _resource(options="kind=chat&max_retention=3600"),
+        _resource(options="kind=chat&max_retention=0"),
         _resource(),
         _resource("support", ["join", "read", "post"]),
+        _resource("support", ["join", "read", "post"], options="kind=support&max_retention=86400"),
         _resource("announcement", ["join", "read"]),
         _resource("discussion", ["join", "read", "post"]),
         _resource("support", ["read"]),
@@ -874,6 +877,8 @@ def test_one_channel_may_request_several_kinds_of_room() -> None:
         ([_resource(options="kind=chat&max_members=0")], "max_members 0 is less than the minimum of 1"),
         ([_resource(options="kind=chat&max_members=many")], "max_members 'many' is not of type 'integer'"),
         ([_resource("support", ["join"], options="kind=support&max_members=5")], "only a room the customer creates"),
+        ([_resource(options="kind=chat&max_retention=-1")], "max_retention -1 is less than the minimum of 0"),
+        ([_resource(options="kind=chat&max_retention=soon")], "max_retention 'soon' is not of type 'integer'"),
         ([_resource(options="kind=chat&topic=x")], "accepts no option 'topic'"),
         ([_resource(limits={"count_per_day": 1})], "provisioned, not called; it takes no limits"),
         ([_resource(), _resource(options="kind=chat&max_members=5")], "kind=chat is listed twice"),
@@ -948,3 +953,23 @@ def test_a_customer_may_cap_their_own_room_when_the_request_leaves_it_open() -> 
         [_resource()], [{"object": "resource:room", "permissions": ["create"], "options": "max_members=8"}]
     )
     assert policy == [{"object": "resource:room", "permissions": ["create"], "options": "kind=chat&max_members=8"}]
+
+
+def test_a_room_approval_keeps_the_requested_retention_cap() -> None:
+    """The seller's ``max_retention`` (seconds) is the room's cap; an approval
+    carries it, and may not raise it (unitysvc/unitysvc#2907)."""
+    requested = [_resource(options="kind=chat&max_retention=3600")]
+    policy = build_policy(requested, [{"object": "resource:room", "permissions": ["create"], "options": "kind=chat"}])
+    assert policy == [{"object": "resource:room", "permissions": ["create"], "options": "kind=chat&max_retention=3600"}]
+    with pytest.raises(ValueError, match="max_retention: the service fixes it to '3600'"):
+        build_policy(
+            requested,
+            [{"object": "resource:room", "permissions": ["create"], "options": "kind=chat&max_retention=86400"}],
+        )
+
+
+def test_a_customer_may_cap_their_own_rooms_retention_when_the_request_leaves_it_open() -> None:
+    policy = build_policy(
+        [_resource()], [{"object": "resource:room", "permissions": ["create"], "options": "max_retention=600"}]
+    )
+    assert policy == [{"object": "resource:room", "permissions": ["create"], "options": "kind=chat&max_retention=600"}]

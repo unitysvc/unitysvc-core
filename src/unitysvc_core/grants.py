@@ -81,7 +81,9 @@ customer consent and key issuance establish its *authority*.
 A request's ``object`` is ``service:<name>``; or ``resource:room``, a room the
 platform provisions for the enrollment (unitysvc/unitysvc#2830), whose
 ``kind`` (``chat``, ``support``, ``announcement``, ``discussion``) the
-request fixes and whose permissions the kind bounds (:data:`ROOM_KINDS`); or
+request fixes and whose permissions the kind bounds (:data:`ROOM_KINDS`),
+with optional caps on its members (``max_members``) and on how long it keeps
+messages (``max_retention``, seconds); or
 ``apikey``: how long a key leased for the enrollment lives
 (``limits.api_key_lifespan``, up to a day, with a justification), which grants
 nothing. :func:`build_policy` turns a customer's approvals into the policy an
@@ -199,6 +201,10 @@ ROOM_KINDS: dict[str, frozenset[str]] = {
 }
 ROOM_KIND = "kind"
 ROOM_MAX_MEMBERS = "max_members"
+# The longest the provisioned room keeps messages, in seconds (0: never
+# stored); the platform's own ceiling for the kind still applies, and the
+# room's owner may keep less (unitysvc/unitysvc#2907).
+ROOM_MAX_RETENTION = "max_retention"
 RESOURCES: dict[str, Exports] = {
     "room": Exports(
         {name: () for name in ("create", "join", "read", "post")},
@@ -208,6 +214,7 @@ RESOURCES: dict[str, Exports] = {
             "properties": {
                 ROOM_KIND: {"type": "string", "enum": list(ROOM_KINDS)},
                 ROOM_MAX_MEMBERS: {"type": "integer", "minimum": 1},
+                ROOM_MAX_RETENTION: {"type": "integer", "minimum": 0},
             },
         },
     ),
@@ -617,9 +624,10 @@ def check_resource(where: str, obj: str, permissions: list[str], options: dict[s
     not allow, for a request and for a policy entry alike.
 
     A room claim names its ``kind`` in its options; its permissions are some
-    of those the kind allows, and ``max_members`` (a positive integer) only
-    caps a room the customer creates. A resource is provisioned, not called,
-    so it takes no limits.
+    of those the kind allows, ``max_members`` (a positive integer) only caps
+    a room the customer creates, and ``max_retention`` (seconds, 0 or more)
+    caps how long any provisioned room keeps messages. A resource is
+    provisioned, not called, so it takes no limits.
     """
     check_claim(where, obj, permissions, options, RESOURCES[obj.removeprefix(RESOURCE_PREFIX)])
     if limits:
