@@ -2361,7 +2361,7 @@
     },
     "RequestRule": {
       "additionalProperties": false,
-      "description": "A condition the gateway checks before dispatch, and the response it answers with when it holds.\n\n``when`` is a Lua expression the gateway compiles and evaluates against the\nrequest (unitysvc/apisix-gateways#94, #96); its language, the values it can\nread and its limits are the gateway's, and core does not parse it. Template\nreferences (``${ customer_secrets.NAME ?? }``, ``${ secrets.NAME }``,\n``{{ params.NAME }}``, ``{{ enrollment.code }}``) are bound by the gateway as\ninvocation arguments, never spliced into the source; a secret may only be\ncompared whole (``==`` / ``~=``).",
+      "description": "A condition the gateway checks before dispatch, and the response it answers with when it holds.\n\n``when`` is a Lua expression the gateway compiles and evaluates against the\nrequest (unitysvc/apisix-gateways#94, #96, #98); its language, the values it\ncan read and its limits are the gateway's, and core does not parse it.\nTemplate references (``${ customer_secrets.NAME ?? }``, ``${ secrets.NAME }``,\n``{{ params.NAME }}``, ``{{ enrollment.code }}``) are bound by the gateway as\ninvocation arguments, never spliced into the source; a resolved secret is an\nordinary value the approved functions may inspect, so anchor a substring\ntest on a secret so that only a whole value can match.",
       "properties": {
         "name": {
           "anyOf": [
