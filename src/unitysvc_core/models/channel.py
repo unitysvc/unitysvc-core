@@ -104,7 +104,7 @@ _REFUSED_RULE_HEADERS = frozenset(
     }
 )
 _HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
-_CONTENT_TYPE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*(\s*;[ -~]*)?$")
+_CONTENT_TYPE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*([ \t]*;[ -~]*)?$")
 _MAX_RULE_BODY_BYTES = 8192
 _MAX_RULE_HEADERS = 16
 
@@ -136,14 +136,14 @@ class RuleResponse(BaseModel):
             size = len(json.dumps(self.body, ensure_ascii=False).encode()) if self.body is not None else 0
         if size > _MAX_RULE_BODY_BYTES:
             raise ValueError(f"the body is larger than {_MAX_RULE_BODY_BYTES} bytes")
-        if self.content_type is not None and not _CONTENT_TYPE_RE.match(self.content_type):
+        if self.content_type is not None and not _CONTENT_TYPE_RE.fullmatch(self.content_type):
             raise ValueError(f"content_type {self.content_type!r} is not a media type")
         headers = self.headers or {}
         if len(headers) > _MAX_RULE_HEADERS:
             raise ValueError(f"at most {_MAX_RULE_HEADERS} headers")
         for name, value in headers.items():
             lower = name.lower()
-            if not _HEADER_NAME_RE.match(name):
+            if not _HEADER_NAME_RE.fullmatch(name):
                 raise ValueError(f"header name {name!r} is not valid")
             if lower in _REFUSED_RULE_HEADERS or lower.startswith(("proxy-", "x-unitysvc-")):
                 raise ValueError(f"header {name!r} is managed by the gateway and cannot be set by a rule")

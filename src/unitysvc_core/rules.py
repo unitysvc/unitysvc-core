@@ -52,12 +52,14 @@ MAX_LITERAL_LENGTH = 1024
 MAX_REF_DEPTH = 16
 
 _SECRET_NAMESPACES = ("secrets", "customer_secrets")
+# Match Lua's %s, including when stripping a suffix with no next token.
+_WHITESPACE = " \t\n\r\f\v"
 _SECRET_SLOT_RE = re.compile(
-    r"^\$\{\s*(secrets|customer_secrets)\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\?\?\s*(.*?))?\s*\}$", re.DOTALL
+    r"^\$\{\s*(secrets|customer_secrets)\.([A-Za-z_][A-Za-z0-9_]*)\s*(?:\?\?\s*(.*?))?\s*\}$", re.DOTALL | re.ASCII
 )
-_PARAM_SLOT_RE = re.compile(r"^\{\{\s*(params\.[A-Za-z_][A-Za-z0-9_]*|enrollment\.code)\s*\}\}$")
+_PARAM_SLOT_RE = re.compile(r"^\{\{\s*(params\.[A-Za-z_][A-Za-z0-9_]*|enrollment\.code)\s*\}\}$", re.ASCII)
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_TOKEN_RE = re.compile(r"\s*(?:(==)|(\[)|(\])|(\.)|('|\")|([A-Za-z_][A-Za-z0-9_]*))")
+_TOKEN_RE = re.compile(r"\s*(?:(==)|(\[)|(\])|(\.)|('|\")|([A-Za-z_][A-Za-z0-9_]*))", re.ASCII)
 
 
 class RuleSyntaxError(ValueError):
@@ -102,9 +104,9 @@ class Condition:
 
 def _literal(content: str) -> str | Slot:
     """A literal's value, or the slot it names. A reference mixed with other text is an error."""
-    if match := _SECRET_SLOT_RE.match(content):
+    if match := _SECRET_SLOT_RE.fullmatch(content):
         return Slot(match.group(1), match.group(2), match.group(3))
-    if match := _PARAM_SLOT_RE.match(content):
+    if match := _PARAM_SLOT_RE.fullmatch(content):
         namespace, name = match.group(1).split(".", 1)
         return Slot(namespace, name)
     if "${" in content or "{{" in content:
@@ -130,7 +132,7 @@ class _Parser:
         """The next token as (kind, text) without consuming it; None at the end."""
         match = _TOKEN_RE.match(self.text, self.pos)
         if not match:
-            if self.text[self.pos :].strip():
+            if self.text[self.pos :].strip(_WHITESPACE):
                 raise self.fail("unexpected character")
             return None
         kinds = ("op", "lbracket", "rbracket", "dot", "quote", "ident")
@@ -177,7 +179,7 @@ class _Parser:
                     raise self.fail("expected a name after '.'")
                 keys.append(ident[1])
             else:
-                if self.text[self.pos :].lstrip()[:1] not in ("'", '"'):
+                if self.text[self.pos :].lstrip(_WHITESPACE)[:1] not in ("'", '"'):
                     raise self.fail("expected a quoted key inside [ ]")
                 keys.append(self.string())
                 if (self.take() or ("", ""))[0] != "rbracket":
@@ -220,7 +222,7 @@ def parse_condition(text: str) -> Condition:
         RuleSyntaxError: anything outside the language, a secret slot under
             ``in``, or a condition longer than :data:`MAX_CONDITION_LENGTH` bytes.
     """
-    if not isinstance(text, str) or not text.strip():
+    if not isinstance(text, str) or not text.strip(_WHITESPACE):
         raise RuleSyntaxError("a condition must be a non-empty string")
     if len(text.encode()) > MAX_CONDITION_LENGTH:
         raise RuleSyntaxError(f"a condition is longer than {MAX_CONDITION_LENGTH} bytes (UTF-8)")

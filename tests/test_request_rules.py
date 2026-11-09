@@ -170,9 +170,24 @@ class TestResponse:
         with pytest.raises(ValidationError, match="only for a string body"):
             self._respond({"status": 200, "body": {"a": 1}, "content_type": "application/json"})
 
-    def test_bad_content_type(self) -> None:
+    @pytest.mark.parametrize(
+        "content_type",
+        [
+            "text/plain\r\nx-a: b",
+            "text/plain\n",
+            "text/plain\r\n; charset=utf-8",
+            "text/plain\v; charset=utf-8",
+            "text/plain\u00a0; charset=utf-8",
+        ],
+    )
+    def test_bad_content_type(self, content_type: str) -> None:
         with pytest.raises(ValidationError, match="not a media type"):
-            self._respond({"status": 200, "body": "ok", "content_type": "text/plain\r\nx-a: b"})
+            self._respond({"status": 200, "body": "ok", "content_type": content_type})
+
+    @pytest.mark.parametrize("content_type", ["text/plain; charset=utf-8", "text/plain\t; charset=utf-8"])
+    def test_content_type_horizontal_whitespace(self, content_type: str) -> None:
+        rule = self._respond({"status": 200, "body": "ok", "content_type": content_type})
+        assert rule.respond.content_type == content_type
 
     @pytest.mark.parametrize("body", [1, True])
     def test_scalar_body_is_refused(self, body: object) -> None:
@@ -194,9 +209,10 @@ class TestResponse:
         with pytest.raises(ValidationError, match="one line"):
             self._respond({"status": 200, "headers": {"X-Note": "a\r\nSet-Cookie: b"}})
 
-    def test_header_name_must_be_a_token(self) -> None:
+    @pytest.mark.parametrize("name", ["X Note", "X-Note\n", "Content-Length\n"])
+    def test_header_name_must_be_a_token(self, name: str) -> None:
         with pytest.raises(ValidationError, match="not valid"):
-            self._respond({"status": 200, "headers": {"X Note": "a"}})
+            self._respond({"status": 200, "headers": {name: "a"}})
 
     def test_allowed_header(self) -> None:
         assert self._respond({"status": 200, "headers": {"Cache-Control": "no-store"}}).respond.headers == {

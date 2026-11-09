@@ -126,3 +126,21 @@ def test_a_request_rule_condition_is_checked(validator: DataValidator) -> None:
     channel["request_rules"] = [{"when": "body.id in '${ customer_secrets.HOOK_URL ?? }'", "respond": {"status": 204}}]
     errors = validator.validate_service(offering=offering)["offering"]
     assert any("request_rules" in e and "may only be compared with '=='" in e for e in errors)
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {"respond": {"status": 200, "headers": {"Content-Length\n": "100"}}},
+        {"respond": {"status": 200, "body": "ok", "content_type": "text/plain\r\n; charset=utf-8"}},
+        {"when": "method\u00a0== 'GET'", "respond": {"status": 200}},
+        {"when": "method == 'GET'\u00a0", "respond": {"status": 200}},
+        {"when": "body.id == '${ customer_secrets.HOOK ?? }\n'", "respond": {"status": 204}},
+    ],
+)
+def test_request_rule_boundary_errors_reach_service_validation(validator: DataValidator, rule: dict) -> None:
+    offering = _files(SERVICES[0])["offering"]
+    channel = next(iter(offering["upstream_access_config"].values()))
+    channel["request_rules"] = [rule]
+    errors = validator.validate_service(offering=offering)["offering"]
+    assert any("request_rules" in error for error in errors)

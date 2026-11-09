@@ -75,6 +75,17 @@
     {"name": "missing operand", "when": "body.a ==", "error": "expected a request value or a quoted literal"},
     {"name": "missing operator", "when": "body.a 'b'", "error": "expected '==' or 'in'"},
     {"name": "length is measured in UTF-8 bytes", "when": "body.a == '测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测'", "error": "longer than"},
+    {"name": "ASCII whitespace is accepted", "when": "\tmethod \r\n== \u000b'GET'\f", "request": {"method": "GET"}, "match": true},
+    {"name": "Unicode whitespace in a literal is preserved", "when": "body.value == 'a\u00a0b'", "request": {"body": {"value": "a\u00a0b"}}, "match": true},
+    {"name": "leading Unicode whitespace is refused", "when": "\u2003method == 'GET'", "error": "unexpected character"},
+    {"name": "Unicode whitespace between tokens is refused", "when": "method\u00a0== 'GET'", "error": "unexpected character"},
+    {"name": "Unicode whitespace before a literal is refused", "when": "method ==\u2003'GET'", "error": "unexpected character"},
+    {"name": "trailing Unicode whitespace is refused", "when": "method == 'GET'\u00a0", "error": "unexpected character"},
+    {"name": "Unicode whitespace in a secret slot is refused", "when": "body.id == '${\u00a0customer_secrets.HOOK ?? }'", "error": "must be the whole literal"},
+    {"name": "Unicode whitespace in a param slot is refused", "when": "body.id == '{{\u00a0params.VAR }}'", "error": "must be the whole literal"},
+    {"name": "a newline after a secret reference is refused", "when": "body.id == '${ customer_secrets.HOOK ?? }\n'", "error": "must be the whole literal"},
+    {"name": "a newline after a param reference is refused", "when": "body.id == '{{ params.VAR }}\n'", "error": "must be the whole literal"},
+    {"name": "a newline after an enrollment reference is refused", "when": "body.id == '{{ enrollment.code }}\n'", "error": "must be the whole literal"},
     {"name": "empty condition", "when": "   ", "error": "non-empty string"}
   ]
 }
