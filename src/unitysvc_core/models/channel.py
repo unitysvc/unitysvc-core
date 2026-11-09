@@ -46,7 +46,6 @@ from pydantic import (
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
 
-from ..rules import MAX_RULES, parse_condition
 from .validators import validate_channel_name
 
 # A string field that is a value or a template rendering to one.
@@ -106,6 +105,10 @@ _REFUSED_RULE_HEADERS = frozenset(
 _HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 _CONTENT_TYPE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*([ \t]*;[ -~]*)?$")
 _MAX_RULE_BODY_BYTES = 8192
+MAX_RULES = 32
+MAX_CONDITION_BYTES = 1024
+_MAX_RULE_SECRETS = 8
+_SECRET_NAME_RE = re.compile(r"[A-Z_][A-Z0-9_]*")
 _MAX_RULE_HEADERS = 16
 
 
@@ -155,7 +158,15 @@ class RuleResponse(BaseModel):
 class RequestRule(BaseModel):
     """A condition the gateway checks before dispatch, and the response it answers with when it holds.
 
-    See :mod:`unitysvc_core.rules` for the condition language.
+    ``when`` is a Lua expression the gateway compiles and evaluates against the
+    request (unitysvc/apisix-gateways#94); its language, the values it can read
+    and its limits are the gateway's. Core does not parse it: it checks only
+    that it is a bounded string carrying no template syntax, since values
+    reach a condition as arguments, never by substitution into its source.
+
+    A condition reads a customer secret only through the gateway's
+    ``secret_equals(NAME, value)`` helper, and only a secret it declares in
+    ``customer_secrets``; the platform resolves exactly those names for the rule.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -167,16 +178,44 @@ class RequestRule(BaseModel):
     )
     when: str | None = Field(
         default=None,
-        description="The condition, e.g. header['x-github-event'] == 'ping'; absent means every request",
+        description='A Lua expression evaluated by the gateway, e.g. header["x-github-event"] == "ping"; '
+        "absent means every request",
+    )
+    customer_secrets: list[str] | None = Field(
+        default=None,
+        description="Customer secrets the condition compares with secret_equals(NAME, value); "
+        "a rule's secret is always optional for the customer",
     )
     respond: RuleResponse
 
     @field_validator("when")
     @classmethod
     def _check_condition(cls, value: str | None) -> str | None:
-        if value is not None:
-            parse_condition(value)
+        if value is None:
+            return value
+        if not value.strip():
+            raise ValueError("a condition must not be empty; omit `when` to answer every request")
+        if len(value.encode()) > MAX_CONDITION_BYTES:
+            raise ValueError(f"a condition is longer than {MAX_CONDITION_BYTES} bytes (UTF-8)")
+        if "${" in value or "{{" in value:
+            raise ValueError(
+                "a condition takes no template references: read params as params.NAME, and compare a "
+                'customer secret with secret_equals("NAME", value) after declaring it in customer_secrets'
+            )
         return value
+
+    @field_validator("customer_secrets")
+    @classmethod
+    def _check_secret_names(cls, names: list[str] | None) -> list[str] | None:
+        if names is None:
+            return names
+        if not names or len(names) > _MAX_RULE_SECRETS:
+            raise ValueError(f"customer_secrets lists 1 to {_MAX_RULE_SECRETS} names; omit it when there are none")
+        if bad := [name for name in names if not _SECRET_NAME_RE.fullmatch(name)]:
+            raise ValueError(f"customer secret names are UPPER_SNAKE_CASE: {', '.join(bad)}")
+        if len(set(names)) != len(names):
+            raise ValueError("customer_secrets lists a name twice")
+        return names
 
 
 class _Server(BaseModel):

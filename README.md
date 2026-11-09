@@ -240,19 +240,21 @@ Unknown keys are refused. Retired keys are refused with what to do instead (`RET
 
 ### Request rules
 
-An `http` channel may list up to 32 `request_rules` (unitysvc/unitysvc#2947). The gateway checks them in order after authentication, channel selection and rate limiting and before anything is dispatched. The first rule whose `when` holds answers with its static `respond`, and the request goes no further; when none holds, the request continues unchanged. A rule without `when` answers every request.
+An `http` channel may list up to 32 `request_rules` (unitysvc/unitysvc#2947, unitysvc/apisix-gateways#94). The gateway checks them in order after authentication, channel selection and rate limiting and before anything is dispatched. The first rule whose `when` holds answers with its static `respond`, and the request goes no further; when none holds, the request continues unchanged. A rule without `when` answers every request.
 
 ```json
 "request_rules": [
-  {"name": "github-ping", "when": "header['x-github-event'] == 'ping'", "respond": {"status": 200}},
-  {"name": "own-echo", "when": "body.user_id == '${ customer_secrets.DISCORD_WEBHOOK_ID ?? }'", "respond": {"status": 204}},
-  {"when": "'[bot]' in body.sender.login", "respond": {"status": 204}}
+  {"name": "github-ping", "when": "header[\"x-github-event\"] == \"ping\"", "respond": {"status": 200}},
+  {"name": "own-echo", "when": "secret_equals(\"DISCORD_WEBHOOK_ID\", body.user_id)",
+   "customer_secrets": ["DISCORD_WEBHOOK_ID"], "respond": {"status": 204}}
 ]
 ```
 
-A condition is one string comparison: `ref == 'lit'`, `ref in 'lit'` (the request value is a non-empty substring of the literal) or `'lit' in ref` (the literal is a non-empty substring of the request value). `ref` is `body.<key>…` (the JSON body), `header['name']`, `query['name']` or `method`; a request value that is not a string never matches. A literal whose whole content is one reference (`'${ customer_secrets.X ?? }'`, `'${ secrets.X }'`, `'{{ params.X }}'`, `'{{ enrollment.code }}'`) is filled with the resolved value at evaluation, never spliced into the text; unset or empty, it never matches. A secret may only be compared with `==`, since a substring test would reveal it one character at a time.
+`when` is a Lua expression that the gateway compiles and evaluates against the request; its environment (the request's `body`, `header`, `query`, `method`, the enrollment's `params`, the approved helpers) and its limits are the gateway's, documented there. Core does not parse it. It checks only that it is non-empty, at most 1024 bytes, and free of template references (`${ … }`, `{{ … }}`): values reach a condition as arguments, never by substitution into its source. A condition reads a customer secret only through `secret_equals(NAME, value)`, and only a secret the rule declares in `customer_secrets` (1–8 `UPPER_SNAKE_CASE` names); a rule's secret is always optional for the customer. A Lua syntax error is reported by the gateway (the channel answers 503) and by a gateway-run test (`services run-tests`), not by `specs validate`.
 
-`respond` takes a `status` (200–599), an optional `body` (an object or array is sent as JSON; a string needs `content_type`), and optional `headers` (not the gateway-managed or hop-by-hop ones). `unitysvc_core.rules` parses conditions; `rules_conformance.json`, shipped in the package, holds the cases the gateway's evaluator must also pass.
+`respond` takes a `status` (200–599), an optional `body` (an object or array is sent as JSON; a string needs `content_type`), and optional `headers` (not the gateway-managed or hop-by-hop ones).
+
+0.3.7 accepted a different, two-operator condition grammar; 0.3.8 replaces it. No published service used it.
 
 ### External apps and product links
 

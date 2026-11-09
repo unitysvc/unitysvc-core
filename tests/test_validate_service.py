@@ -116,16 +116,24 @@ def test_services_validate_in_parallel_with_one_validator(validator: DataValidat
 
 
 def test_a_request_rule_condition_is_checked(validator: DataValidator) -> None:
-    """``specs validate`` reports a bad condition with the rule it is in (unitysvc/unitysvc#2947)."""
+    """``specs validate`` accepts a Lua condition unparsed and reports a template
+    reference with the rule it is in (unitysvc/unitysvc#2947, apisix-gateways#94)."""
     files = _files(SERVICES[0])
     offering = files["offering"]
     channel = next(iter(offering["upstream_access_config"].values()))
-    channel["request_rules"] = [{"when": "header['x-github-event'] == 'ping'", "respond": {"status": 200}}]
+    channel["request_rules"] = [
+        {"when": 'header["x-github-event"] == "ping" or (body.n or 0) > 3', "respond": {"status": 200}},
+        {
+            "when": 'secret_equals("HOOK_ID", body.user_id)',
+            "customer_secrets": ["HOOK_ID"],
+            "respond": {"status": 204},
+        },
+    ]
     assert validator.validate_service(offering=offering)["offering"] == []
 
-    channel["request_rules"] = [{"when": "body.id in '${ customer_secrets.HOOK_URL ?? }'", "respond": {"status": 204}}]
+    channel["request_rules"] = [{"when": "body.id == '${ customer_secrets.HOOK ?? }'", "respond": {"status": 204}}]
     errors = validator.validate_service(offering=offering)["offering"]
-    assert any("request_rules" in e and "may only be compared with '=='" in e for e in errors)
+    assert any("request_rules" in e and "takes no template references" in e for e in errors)
 
 
 @pytest.mark.parametrize(
@@ -133,9 +141,9 @@ def test_a_request_rule_condition_is_checked(validator: DataValidator) -> None:
     [
         {"respond": {"status": 200, "headers": {"Content-Length\n": "100"}}},
         {"respond": {"status": 200, "body": "ok", "content_type": "text/plain\r\n; charset=utf-8"}},
-        {"when": "method\u00a0== 'GET'", "respond": {"status": 200}},
-        {"when": "method == 'GET'\u00a0", "respond": {"status": 200}},
-        {"when": "body.id == '${ customer_secrets.HOOK ?? }\n'", "respond": {"status": 204}},
+        {"when": "body.id == '{{ params.HOOK }}'", "respond": {"status": 204}},
+        {"when": "   ", "respond": {"status": 204}},
+        {"when": "x", "customer_secrets": ["lower_case"], "respond": {"status": 204}},
     ],
 )
 def test_request_rule_boundary_errors_reach_service_validation(validator: DataValidator, rule: dict) -> None:
