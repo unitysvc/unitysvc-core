@@ -113,8 +113,8 @@ def _literal(content: str) -> str | Slot:
             "'${ customer_secrets.NAME }', '${ customer_secrets.NAME ?? default }', '${ secrets.NAME }', "
             "'{{ params.NAME }}' or '{{ enrollment.code }}'"
         )
-    if len(content) > MAX_LITERAL_LENGTH:
-        raise RuleSyntaxError(f"a literal is longer than {MAX_LITERAL_LENGTH} characters")
+    if len(content.encode()) > MAX_LITERAL_LENGTH:
+        raise RuleSyntaxError(f"a literal is longer than {MAX_LITERAL_LENGTH} bytes")
     return content
 
 
@@ -218,12 +218,12 @@ def parse_condition(text: str) -> Condition:
 
     Raises:
         RuleSyntaxError: anything outside the language, a secret slot under
-            ``in``, or a condition longer than :data:`MAX_CONDITION_LENGTH`.
+            ``in``, or a condition longer than :data:`MAX_CONDITION_LENGTH` bytes.
     """
     if not isinstance(text, str) or not text.strip():
         raise RuleSyntaxError("a condition must be a non-empty string")
-    if len(text) > MAX_CONDITION_LENGTH:
-        raise RuleSyntaxError(f"a condition is longer than {MAX_CONDITION_LENGTH} characters")
+    if len(text.encode()) > MAX_CONDITION_LENGTH:
+        raise RuleSyntaxError(f"a condition is longer than {MAX_CONDITION_LENGTH} bytes (UTF-8)")
     parser = _Parser(text)
     left = parser.operand()
     op = parser.operator()

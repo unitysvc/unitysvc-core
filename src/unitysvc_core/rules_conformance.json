@@ -74,6 +74,7 @@
     {"name": "unquoted bracket key", "when": "body[0] == 'x'", "error": "expected a quoted key"},
     {"name": "missing operand", "when": "body.a ==", "error": "expected a request value or a quoted literal"},
     {"name": "missing operator", "when": "body.a 'b'", "error": "expected '==' or 'in'"},
+    {"name": "length is measured in UTF-8 bytes", "when": "body.a == '测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测测'", "error": "longer than"},
     {"name": "empty condition", "when": "   ", "error": "non-empty string"}
   ]
 }
