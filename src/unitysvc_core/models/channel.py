@@ -157,12 +157,13 @@ class RequestRule(BaseModel):
     """A condition the gateway checks before dispatch, and the response it answers with when it holds.
 
     ``when`` is a Lua expression the gateway compiles and evaluates against the
-    request (unitysvc/apisix-gateways#94, #96); its language, the values it can
-    read and its limits are the gateway's, and core does not parse it. Template
-    references (``${ customer_secrets.NAME ?? }``, ``${ secrets.NAME }``,
+    request (unitysvc/apisix-gateways#94, #96, #98); its language, the values it
+    can read and its limits are the gateway's, and core does not parse it.
+    Template references (``${ customer_secrets.NAME ?? }``, ``${ secrets.NAME }``,
     ``{{ params.NAME }}``, ``{{ enrollment.code }}``) are bound by the gateway as
-    invocation arguments, never spliced into the source; a secret may only be
-    compared whole (``==`` / ``~=``).
+    invocation arguments, never spliced into the source; a resolved secret is an
+    ordinary value the approved functions may inspect, so anchor a substring
+    test on a secret so that only a whole value can match.
     """
 
     model_config = ConfigDict(extra="forbid")
