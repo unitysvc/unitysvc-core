@@ -2361,24 +2361,8 @@
     },
     "RequestRule": {
       "additionalProperties": false,
-      "description": "A condition the gateway checks before dispatch, and the response it answers with when it holds.\n\n``when`` is a Lua expression the gateway compiles and evaluates against the\nrequest (unitysvc/apisix-gateways#94); its language, the values it can read\nand its limits are the gateway's. Core does not parse it: it checks only\nthat it is a bounded string carrying no template syntax, since values\nreach a condition as arguments, never by substitution into its source.\n\nA condition reads a customer secret only through the gateway's\n``secret_equals(NAME, value)`` helper, and only a secret it declares in\n``customer_secrets``; the platform resolves exactly those names for the rule.",
+      "description": "A condition the gateway checks before dispatch, and the response it answers with when it holds.\n\n``when`` is a Lua expression the gateway compiles and evaluates against the\nrequest (unitysvc/apisix-gateways#94, #96); its language, the values it can\nread and its limits are the gateway's, and core does not parse it. Template\nreferences (``${ customer_secrets.NAME ?? }``, ``${ secrets.NAME }``,\n``{{ params.NAME }}``, ``{{ enrollment.code }}``) are bound by the gateway as\ninvocation arguments, never spliced into the source; a secret may only be\ncompared whole (``==`` / ``~=``).",
       "properties": {
-        "customer_secrets": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Customer secrets the condition compares with secret_equals(NAME, value); a rule's secret is always optional for the customer",
-          "title": "Customer Secrets"
-        },
         "name": {
           "anyOf": [
             {

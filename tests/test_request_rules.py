@@ -53,32 +53,17 @@ class TestCondition:
         "when",
         [
             "body.id == '${ customer_secrets.HOOK ?? }'",
-            "body.id == '${ secrets.TOKEN }'",
-            "body.name == '{{ params.marker }}'",
+            'header["x-token"] ~= "${ secrets.TOKEN }"',
+            "body.count >= {{ params.MIN_COUNT }} and not {{ params.DISABLED }}",
+            'query["code"] == "{{ enrollment.code }}"',
         ],
     )
-    def test_template_references_are_refused(self, when: str) -> None:
-        with pytest.raises(ValidationError, match="takes no template references"):
-            self._rule(when=when)
+    def test_template_references_are_left_to_the_gateway(self, when: str) -> None:
+        assert self._rule(when=when).when == when
 
-    def test_declared_customer_secrets(self) -> None:
-        rule = self._rule(when='secret_equals("HOOK_ID", body.user_id)', customer_secrets=["HOOK_ID"])
-        assert rule.customer_secrets == ["HOOK_ID"]
-
-    @pytest.mark.parametrize(
-        ("names", "message"),
-        [
-            ([], "1 to 8 names"),
-            ([f"S{i}" for i in range(9)], "1 to 8 names"),
-            (["hook_id"], "UPPER_SNAKE_CASE"),
-            (["HOOK-ID"], "UPPER_SNAKE_CASE"),
-            (["HOOK_ID\n"], "UPPER_SNAKE_CASE"),
-            (["A", "A"], "twice"),
-        ],
-    )
-    def test_bad_customer_secret_lists(self, names: list[str], message: str) -> None:
-        with pytest.raises(ValidationError, match=message):
-            self._rule(when="true", customer_secrets=names)
+    def test_customer_secrets_is_not_a_rule_field(self) -> None:
+        with pytest.raises(ValidationError, match="customer_secrets"):
+            self._rule(when="true", customer_secrets=["HOOK_ID"])
 
 
 class TestChannelField:
@@ -96,8 +81,7 @@ class TestChannelField:
     def test_round_trip(self) -> None:
         rule = {
             "name": "echo",
-            "when": 'secret_equals("DISCORD_WEBHOOK_ID", body.user_id)',
-            "customer_secrets": ["DISCORD_WEBHOOK_ID"],
+            "when": 'body.user_id == "${ customer_secrets.DISCORD_WEBHOOK_ID ?? }"',
             "respond": {"status": 204},
         }
         dumped = _rules_channel(rule).model_dump(exclude_none=True)
@@ -105,7 +89,7 @@ class TestChannelField:
 
     def test_bad_condition_names_its_rule(self) -> None:
         with pytest.raises(ValidationError, match=r"request_rules\.0\.when"):
-            _rules_channel({"when": "body.a == '{{ params.a }}'", "respond": {"status": 204}})
+            _rules_channel({"when": "   ", "respond": {"status": 204}})
 
     @pytest.mark.parametrize(
         "config",
