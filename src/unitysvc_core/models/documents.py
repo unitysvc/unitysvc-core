@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .base import DocumentCategoryEnum, MimeTypeEnum
 
@@ -42,3 +42,16 @@ class DocumentData(BaseModel):
         default=False,
         description="Whether document is publicly accessible without authentication",
     )
+
+    @field_validator("meta")
+    @classmethod
+    def _no_output_contains(cls, meta: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Refuse the retired ``meta.output_contains`` (unitysvc#2490): a test
+        passes or fails on its exit code, and the backend refuses the key at
+        ingest (unitysvc#2862), so catch it at ``specs validate`` instead."""
+        if meta and "output_contains" in meta:
+            raise ValueError(
+                "'output_contains' is no longer supported. A test passes or fails on its "
+                "exit code: assert inside the script and exit non-zero on failure (unitysvc#2490)."
+            )
+        return meta
