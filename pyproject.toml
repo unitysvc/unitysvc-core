@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unitysvc-core"
-version = "0.3.6"
+version = "0.3.7"
 description = "Shared data models and validation helpers for UnitySVC packages"
 readme = "README.md"
 authors = [{ name = "Bo Peng", email = "bo.peng@unitysvc.com" }]
@@ -80,7 +80,7 @@ package = true
 include-package-data = true
 
 [tool.setuptools.package-data]
-unitysvc_core = ["schema/*.json", "py.typed"]
+unitysvc_core = ["schema/*.json", "py.typed", "rules_conformance.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

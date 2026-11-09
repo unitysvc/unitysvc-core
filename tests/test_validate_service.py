@@ -113,3 +113,34 @@ def test_services_validate_in_parallel_with_one_validator(validator: DataValidat
         results = list(pool.map(lambda job: validator.validate_service(**job[1], service_dir=job[0]), jobs))
 
     assert results == expected
+
+
+def test_a_request_rule_condition_is_checked(validator: DataValidator) -> None:
+    """``specs validate`` reports a bad condition with the rule it is in (unitysvc/unitysvc#2947)."""
+    files = _files(SERVICES[0])
+    offering = files["offering"]
+    channel = next(iter(offering["upstream_access_config"].values()))
+    channel["request_rules"] = [{"when": "header['x-github-event'] == 'ping'", "respond": {"status": 200}}]
+    assert validator.validate_service(offering=offering)["offering"] == []
+
+    channel["request_rules"] = [{"when": "body.id in '${ customer_secrets.HOOK_URL ?? }'", "respond": {"status": 204}}]
+    errors = validator.validate_service(offering=offering)["offering"]
+    assert any("request_rules" in e and "may only be compared with '=='" in e for e in errors)
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {"respond": {"status": 200, "headers": {"Content-Length\n": "100"}}},
+        {"respond": {"status": 200, "body": "ok", "content_type": "text/plain\r\n; charset=utf-8"}},
+        {"when": "method\u00a0== 'GET'", "respond": {"status": 200}},
+        {"when": "method == 'GET'\u00a0", "respond": {"status": 200}},
+        {"when": "body.id == '${ customer_secrets.HOOK ?? }\n'", "respond": {"status": 204}},
+    ],
+)
+def test_request_rule_boundary_errors_reach_service_validation(validator: DataValidator, rule: dict) -> None:
+    offering = _files(SERVICES[0])["offering"]
+    channel = next(iter(offering["upstream_access_config"].values()))
+    channel["request_rules"] = [rule]
+    errors = validator.validate_service(offering=offering)["offering"]
+    assert any("request_rules" in error for error in errors)

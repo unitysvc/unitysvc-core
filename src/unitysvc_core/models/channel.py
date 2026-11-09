@@ -28,6 +28,8 @@ field also accepts a string.
 """
 
 import builtins
+import json
+import re
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
@@ -44,6 +46,7 @@ from pydantic import (
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
 
+from ..rules import MAX_RULES, parse_condition
 from .validators import validate_channel_name
 
 # A string field that is a value or a template rendering to one.
@@ -81,6 +84,99 @@ class RequestTransformer(BaseModel):
     proxy_rewrite: dict[str, Any] | None = Field(default=None, description="Rewrite the upstream path and headers")
     body_transformer: dict[str, Any] | None = Field(default=None, description="Rewrite the request body")
     set_body: str | None = Field(default=None, description="Replace the request body with this template")
+
+
+# Response headers a request rule may not set: the gateway manages them, they
+# are hop-by-hop, or the response's content type has its own field.
+_REFUSED_RULE_HEADERS = frozenset(
+    {
+        "connection",
+        "content-length",
+        "content-type",
+        "date",
+        "keep-alive",
+        "server",
+        "set-cookie",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    }
+)
+_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+_CONTENT_TYPE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*([ \t]*;[ -~]*)?$")
+_MAX_RULE_BODY_BYTES = 8192
+_MAX_RULE_HEADERS = 16
+
+
+class RuleResponse(BaseModel):
+    """The static response a request rule answers with (unitysvc/unitysvc#2947)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: int = Field(ge=200, le=599, description="HTTP status, 200-599")
+    body: dict[str, Any] | list[Any] | str | None = Field(
+        default=None,
+        description="An object or array is sent as JSON; a string is sent as is, with content_type",
+    )
+    content_type: str | None = Field(default=None, description="Content type of a string body, e.g. text/plain")
+    headers: dict[str, str] | None = Field(default=None, description="Extra response headers")
+
+    @model_validator(mode="after")
+    def _check_response(self) -> "RuleResponse":
+        if self.body is not None and self.status in (204, 205, 304):
+            raise ValueError(f"a {self.status} response has no body")
+        if isinstance(self.body, str):
+            if self.content_type is None:
+                raise ValueError("a string body needs content_type")
+            size = len(self.body.encode())
+        else:
+            if self.content_type is not None:
+                raise ValueError("content_type is only for a string body; an object or array is sent as JSON")
+            size = len(json.dumps(self.body, ensure_ascii=False).encode()) if self.body is not None else 0
+        if size > _MAX_RULE_BODY_BYTES:
+            raise ValueError(f"the body is larger than {_MAX_RULE_BODY_BYTES} bytes")
+        if self.content_type is not None and not _CONTENT_TYPE_RE.fullmatch(self.content_type):
+            raise ValueError(f"content_type {self.content_type!r} is not a media type")
+        headers = self.headers or {}
+        if len(headers) > _MAX_RULE_HEADERS:
+            raise ValueError(f"at most {_MAX_RULE_HEADERS} headers")
+        for name, value in headers.items():
+            lower = name.lower()
+            if not _HEADER_NAME_RE.fullmatch(name):
+                raise ValueError(f"header name {name!r} is not valid")
+            if lower in _REFUSED_RULE_HEADERS or lower.startswith(("proxy-", "x-unitysvc-")):
+                raise ValueError(f"header {name!r} is managed by the gateway and cannot be set by a rule")
+            if "\r" in value or "\n" in value or len(value) > 1024:
+                raise ValueError(f"header {name!r} must be one line of at most 1024 characters")
+        return self
+
+
+class RequestRule(BaseModel):
+    """A condition the gateway checks before dispatch, and the response it answers with when it holds.
+
+    See :mod:`unitysvc_core.rules` for the condition language.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(
+        default=None,
+        pattern=r"^[a-z0-9][a-z0-9-]{0,47}$",
+        description="Shown in logs and the X-UnitySVC-Rule response header",
+    )
+    when: str | None = Field(
+        default=None,
+        description="The condition, e.g. header['x-github-event'] == 'ping'; absent means every request",
+    )
+    respond: RuleResponse
+
+    @field_validator("when")
+    @classmethod
+    def _check_condition(cls, value: str | None) -> str | None:
+        if value is not None:
+            parse_condition(value)
+        return value
 
 
 class _Server(BaseModel):
@@ -252,6 +348,20 @@ class HttpChannel(_ChannelBase):
     server_model: ClassVar[builtins.type[_Server]] = HttpServer
     access_method: Literal["http"] = "http"
     servers: list[HttpServer] = Field(default_factory=list)
+    request_rules: list[RequestRule] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_RULES,
+        description="Rules the gateway checks in order before dispatch; the first that holds answers the request",
+    )
+
+    @field_validator("request_rules")
+    @classmethod
+    def _unique_rule_names(cls, rules: list[RequestRule] | None) -> list[RequestRule] | None:
+        names = [rule.name for rule in rules or [] if rule.name is not None]
+        if duplicates := sorted({name for name in names if names.count(name) > 1}):
+            raise ValueError(f"rule names must be unique: {', '.join(duplicates)}")
+        return rules
 
 
 class SmtpChannel(_ChannelBase):
