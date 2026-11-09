@@ -1061,6 +1061,24 @@
           "description": "Request formats the channel serves",
           "title": "Request Formats"
         },
+        "request_rules": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/RequestRule"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Rules the gateway checks in order before dispatch; the first that holds answers the request",
+          "title": "Request Rules"
+        },
         "request_transformer": {
           "anyOf": [
             {
@@ -2341,6 +2359,47 @@
       "title": "PriceTier",
       "type": "object"
     },
+    "RequestRule": {
+      "additionalProperties": false,
+      "description": "A condition the gateway checks before dispatch, and the response it answers with when it holds.\n\nSee :mod:`unitysvc_core.rules` for the condition language.",
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,47}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Shown in logs and the X-UnitySVC-Rule response header",
+          "title": "Name"
+        },
+        "respond": {
+          "$ref": "#/$defs/RuleResponse"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The condition, e.g. header['x-github-event'] == 'ping'; absent means every request",
+          "title": "When"
+        }
+      },
+      "required": [
+        "respond"
+      ],
+      "title": "RequestRule",
+      "type": "object"
+    },
     "RequestTransformer": {
       "additionalProperties": false,
       "description": "How the gateway rewrites a request before sending it upstream.",
@@ -2480,6 +2539,74 @@
         "percentage"
       ],
       "title": "RevenueSharePriceData",
+      "type": "object"
+    },
+    "RuleResponse": {
+      "additionalProperties": false,
+      "description": "The static response a request rule answers with (unitysvc/unitysvc#2947).",
+      "properties": {
+        "body": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "An object or array is sent as JSON; a string is sent as is, with content_type",
+          "title": "Body"
+        },
+        "content_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Content type of a string body, e.g. text/plain",
+          "title": "Content Type"
+        },
+        "headers": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Extra response headers",
+          "title": "Headers"
+        },
+        "status": {
+          "description": "HTTP status, 200-599",
+          "maximum": 599,
+          "minimum": 200,
+          "title": "Status",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "RuleResponse",
       "type": "object"
     },
     "S3Channel": {
