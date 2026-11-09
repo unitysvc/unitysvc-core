@@ -1,24 +1,14 @@
-"""Request rules: the condition language and the channel field (unitysvc/unitysvc#2947)."""
+"""Request rules: the channel field and what core checks of it (unitysvc/unitysvc#2947).
 
-import json
-from importlib import resources
+Conditions are Lua expressions compiled by the gateway (apisix-gateways#94);
+core does not parse them.
+"""
 
 import pytest
 from pydantic import ValidationError
 
 from unitysvc_core.models import HttpChannel, RequestRule, UpstreamAccessConfig
-from unitysvc_core.rules import (
-    MAX_CONDITION_LENGTH,
-    MAX_RULES,
-    Condition,
-    Ref,
-    RuleSyntaxError,
-    Slot,
-    evaluate,
-    parse_condition,
-)
-
-_CASES = json.loads(resources.files("unitysvc_core").joinpath("rules_conformance.json").read_text())["cases"]
+from unitysvc_core.models.channel import MAX_CONDITION_BYTES, MAX_RULES
 
 
 def _channel(config: dict):
@@ -31,55 +21,70 @@ def _rules_channel(*rules: dict) -> HttpChannel:
     return channel
 
 
-class TestConformance:
-    """The cases the gateway's evaluator must also pass."""
+class TestCondition:
+    @staticmethod
+    def _rule(**fields: object) -> RequestRule:
+        return RequestRule.model_validate({"respond": {"status": 204}, **fields})
 
-    def test_case_names_are_unique(self) -> None:
-        names = [case["name"] for case in _CASES]
-        assert len(names) == len(set(names))
+    @pytest.mark.parametrize(
+        "when",
+        [
+            'header["x-github-event"] == "ping"',
+            'body.type == "ping" or string.find(body.text or "", params.MARKER, 1, true) ~= nil',
+            "not body.author or body.author.bot == true",
+            "(body.n or 0) > 3 and method == 'POST'",
+            "this is not even Lua",  # the gateway reports syntax, core does not
+        ],
+    )
+    def test_any_lua_text_is_accepted_unparsed(self, when: str) -> None:
+        assert self._rule(when=when).when == when
 
-    @pytest.mark.parametrize("case", _CASES, ids=[case["name"] for case in _CASES])
-    def test_case(self, case: dict) -> None:
-        if "error" in case:
-            with pytest.raises(RuleSyntaxError) as excinfo:
-                parse_condition(case["when"])
-            assert case["error"] in str(excinfo.value)
-        else:
-            condition = parse_condition(case["when"])
-            assert evaluate(condition, case.get("request", {}), case.get("slots")) is case["match"]
+    @pytest.mark.parametrize("when", ["", "   ", "\n\t"])
+    def test_an_empty_condition_is_refused(self, when: str) -> None:
+        with pytest.raises(ValidationError, match="must not be empty"):
+            self._rule(when=when)
 
+    def test_length_is_measured_in_utf8_bytes(self) -> None:
+        assert self._rule(when="x" * MAX_CONDITION_BYTES).when
+        with pytest.raises(ValidationError, match="longer than"):
+            self._rule(when="测" * (MAX_CONDITION_BYTES // 3 + 1))
 
-class TestParse:
-    def test_parsed_shape(self) -> None:
-        assert parse_condition("header['X-Event'] == 'ping'") == Condition("==", Ref("header", ("x-event",)), "ping")
-        assert parse_condition("'[bot]' in body.sender.login") == Condition(
-            "in", Ref("body", ("sender", "login")), "[bot]", literal_first=True
-        )
+    @pytest.mark.parametrize(
+        "when",
+        [
+            "body.id == '${ customer_secrets.HOOK ?? }'",
+            "body.id == '${ secrets.TOKEN }'",
+            "body.name == '{{ params.marker }}'",
+        ],
+    )
+    def test_template_references_are_refused(self, when: str) -> None:
+        with pytest.raises(ValidationError, match="takes no template references"):
+            self._rule(when=when)
 
-    def test_slots(self) -> None:
-        condition = parse_condition("body.id == '${ customer_secrets.HOOK_ID ?? none }'")
-        assert condition.literal == Slot("customer_secrets", "HOOK_ID", "none")
-        assert condition.literal.is_secret
-        param = parse_condition("'{{ params.marker }}' in body.name").literal
-        assert param == Slot("params", "marker") and not param.is_secret
+    def test_declared_customer_secrets(self) -> None:
+        rule = self._rule(when='secret_equals("HOOK_ID", body.user_id)', customer_secrets=["HOOK_ID"])
+        assert rule.customer_secrets == ["HOOK_ID"]
 
-    def test_condition_length_limit(self) -> None:
-        with pytest.raises(RuleSyntaxError, match="longer than"):
-            parse_condition("body.a == '" + "x" * MAX_CONDITION_LENGTH + "'")
-
-    def test_ref_depth_limit(self) -> None:
-        with pytest.raises(RuleSyntaxError, match="deeper than"):
-            parse_condition("body" + ".a" * 17 + " == 'x'")
-
-    def test_non_string_is_refused(self) -> None:
-        with pytest.raises(RuleSyntaxError, match="non-empty string"):
-            parse_condition(None)  # type: ignore[arg-type]
+    @pytest.mark.parametrize(
+        ("names", "message"),
+        [
+            ([], "1 to 8 names"),
+            ([f"S{i}" for i in range(9)], "1 to 8 names"),
+            (["hook_id"], "UPPER_SNAKE_CASE"),
+            (["HOOK-ID"], "UPPER_SNAKE_CASE"),
+            (["HOOK_ID\n"], "UPPER_SNAKE_CASE"),
+            (["A", "A"], "twice"),
+        ],
+    )
+    def test_bad_customer_secret_lists(self, names: list[str], message: str) -> None:
+        with pytest.raises(ValidationError, match=message):
+            self._rule(when="true", customer_secrets=names)
 
 
 class TestChannelField:
     def test_rules_are_a_channel_field(self) -> None:
         channel = _rules_channel(
-            {"name": "github-ping", "when": "header['x-github-event'] == 'ping'", "respond": {"status": 200}},
+            {"name": "github-ping", "when": 'header["x-github-event"] == "ping"', "respond": {"status": 200}},
             {"respond": {"status": 503, "body": {"error": "paused"}}},
         )
         assert channel.request_rules is not None
@@ -91,7 +96,8 @@ class TestChannelField:
     def test_round_trip(self) -> None:
         rule = {
             "name": "echo",
-            "when": "body.user_id == '${ customer_secrets.DISCORD_WEBHOOK_ID ?? }'",
+            "when": 'secret_equals("DISCORD_WEBHOOK_ID", body.user_id)',
+            "customer_secrets": ["DISCORD_WEBHOOK_ID"],
             "respond": {"status": 204},
         }
         dumped = _rules_channel(rule).model_dump(exclude_none=True)
@@ -99,13 +105,7 @@ class TestChannelField:
 
     def test_bad_condition_names_its_rule(self) -> None:
         with pytest.raises(ValidationError, match=r"request_rules\.0\.when"):
-            _rules_channel({"when": "body.a != 'b'", "respond": {"status": 204}})
-
-    def test_secret_under_in_is_refused(self) -> None:
-        with pytest.raises(ValidationError, match="may only be compared with '=='"):
-            _rules_channel(
-                {"when": "body.user_id in '${ customer_secrets.DISCORD_WEBHOOK_URL ?? }'", "respond": {"status": 204}}
-            )
+            _rules_channel({"when": "body.a == '{{ params.a }}'", "respond": {"status": 204}})
 
     @pytest.mark.parametrize(
         "config",
