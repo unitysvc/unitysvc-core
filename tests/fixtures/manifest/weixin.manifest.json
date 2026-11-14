@@ -1,0 +1,36 @@
+{
+  "services": [
+    {
+      "name": "gateway",
+      "image": "ghcr.io/kadxy/weixin-ilink-gateway:v0.1.3@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "ports": [
+        3000
+      ],
+      "env": {
+        "PORT": "3000",
+        "DATA_DIR": "/app/data",
+        "API_KEY": "${API_KEY}",
+        "WEBHOOK_URLS": "${WEBHOOK_URLS:-}"
+      },
+      "resources": {
+        "limits": {
+          "cpu": "250m",
+          "memory": "256Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "health": {
+        "type": "exec",
+        "command": [
+          "wget",
+          "-qO-",
+          "http://localhost:3000/status"
+        ],
+        "period_seconds": 10,
+        "timeout_seconds": 5,
+        "failure_threshold": 3,
+        "start_period_seconds": 10
+      }
+    }
+  ]
+}

@@ -11,6 +11,11 @@ from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedE
 from jsonschema.validators import Draft7Validator
 
 from .grants import ExportsResolver
+from .instance_spec import (
+    InstanceSpecIssue,
+    instance_spec_format,
+    validate_instance_spec,
+)
 from .parameter_usage import validate_channel_parameters, validate_required_parameter_usage
 from .utils import SCHEMA_TO_STEM, is_hidden_path, load_data_file, schema_for_path
 
@@ -675,6 +680,113 @@ class DataValidator:
         """Whether an offering declares no channel: an external app (#2873)."""
         return isinstance(offering, dict) and not offering.get("upstream_access_config")
 
+    @staticmethod
+    def _is_container_only(offering: dict[str, Any] | None) -> bool:
+        """Whether every channel of an offering is a ``container`` channel."""
+        config = offering.get("upstream_access_config") if isinstance(offering, dict) else None
+        return (
+            isinstance(config, dict)
+            and bool(config)
+            and all(isinstance(c, dict) and c.get("access_method") == "container" for c in config.values())
+        )
+
+    @staticmethod
+    def _container_channels(offering: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+        config = offering.get("upstream_access_config") if isinstance(offering, dict) else None
+        if not isinstance(config, dict):
+            return {}
+        return {n: c for n, c in config.items() if isinstance(c, dict) and c.get("access_method") == "container"}
+
+    @staticmethod
+    def _document_text(doc: dict[str, Any], service_dir: Path | None) -> str | None:
+        """A document's content: inlined ``file_content``, else the file beside the data file."""
+        content = doc.get("file_content")
+        if isinstance(content, str):
+            return content
+        rel = doc.get("file_path")
+        if not isinstance(rel, str) or service_dir is None:
+            return None
+        path = Path(rel) if Path(rel).is_absolute() else service_dir / rel
+        try:
+            return path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None  # a missing file is reported by the file-reference checks
+
+    def check_instance_specs(
+        self, offering: dict[str, Any] | None, service_dir: Path | None
+    ) -> tuple[list[str], list[InstanceSpecIssue]]:
+        """Validate the instance spec each container channel runs (unitysvc/unitysvc-core#105).
+
+        Returns ``(errors, warnings)``. The spec is a document of category
+        ``instance_spec`` named by the channel's ``spec``; its Compose content is
+        checked against the channel (entries, resource split). A spec is checked
+        once per channel, as each tier's resources differ. Errors are shared with
+        backend ingest, through :func:`validate_instance_spec`.
+        """
+        from .models.channel import ContainerChannel
+
+        errors: list[str] = []
+        warnings: list[InstanceSpecIssue] = []
+        documents = offering.get("documents") if isinstance(offering, dict) else None
+        documents = documents if isinstance(documents, dict) else {}
+        for name, raw in self._container_channels(offering).items():
+            at = f"upstream_access_config.{name}"
+            try:
+                channel = ContainerChannel.model_validate(raw)
+            except ValueError:
+                continue  # the channel's own errors are reported by the schema checks
+            doc = documents.get(channel.spec)
+            if not isinstance(doc, dict):
+                errors.append(f"{at}.spec: no document titled {channel.spec!r} in the offering's documents")
+                continue
+            if doc.get("category") != "instance_spec":
+                errors.append(f"{at}.spec: document {channel.spec!r} must have category 'instance_spec'")
+                continue
+            fmt = instance_spec_format(doc.get("meta"))
+            text = self._document_text(doc, service_dir)
+            if text is None:
+                if "file_path" not in doc and "file_content" not in doc:
+                    errors.append(f"{at}.spec: document {channel.spec!r} has no file_path to read the spec from")
+                continue
+            report = validate_instance_spec(text, format=fmt, channel=channel)
+            errors.extend(f"{at}.spec ({channel.spec!r}): {issue}" for issue in report.errors)
+            warnings.extend(issue.model_copy(update={"path": f"{at}: {issue.path}"}) for issue in report.warnings)
+        return errors, warnings
+
+    def service_warnings(
+        self, offering: dict[str, Any] | None, service_dir: Path | None = None
+    ) -> list[InstanceSpecIssue]:
+        """Warnings for a service that are not errors: what a Compose spec drops or changes.
+
+        ``specs validate`` prints these after the errors; a loud one (``issue.loud``)
+        is data loss or a missing guarantee the seller must not miss.
+        """
+        return self.check_instance_specs(offering, service_dir)[1]
+
+    def validate_container_probes(
+        self, data: dict[str, Any], offering: dict[str, Any] | None, service_dir: Path | None
+    ) -> list[str]:
+        """Check each declarative ``connectivity_test`` document of a container service (a proposal)."""
+        from .models.probes import validate_probes_text
+
+        channels = self._container_channels(offering)
+        documents = data.get("documents")
+        if not channels or not isinstance(documents, dict):
+            return []
+        errors: list[str] = []
+        entries = {
+            e.get("name") for channel in channels.values() for e in channel.get("entries") or [] if isinstance(e, dict)
+        }
+        for title, doc in documents.items():
+            if not isinstance(doc, dict) or doc.get("category") != "connectivity_test":
+                continue
+            if not str(doc.get("file_path", "")).endswith(".json"):
+                continue  # a script, run as before
+            text = self._document_text(doc, service_dir)
+            if text is not None:
+                errors.extend(f"documents.{title}: {e}" for e in validate_probes_text(text, entries))
+        return errors
+
     def validate_external_app_listing(self, data: dict[str, Any], offering: dict[str, Any] | None) -> list[str]:
         """A listing whose offering declares no channel is an external app
         (unitysvc/unitysvc#2873): reached at its homepage, so it has nothing to
@@ -702,7 +814,10 @@ class DataValidator:
         document with category "connectivity_test". This is required for
         automated service testing during the publish workflow. An external
         app (its offering declares no channel) needs none: the platform checks
-        its product links instead (unitysvc/unitysvc#2873).
+        its product links instead (unitysvc/unitysvc#2873). Neither does a
+        container service (every channel is ``container``): the platform derives
+        the test (start, wait for health, fetch each entry), and a seller may
+        add declarative probes (unitysvc/unitysvc-core#105).
 
         Args:
             data: The data to validate
@@ -714,7 +829,7 @@ class DataValidator:
         errors: list[str] = []
 
         # Only validate listing_v1 schema
-        if schema_name != "listing_v1" or self._is_channel_less(offering):
+        if schema_name != "listing_v1" or self._is_channel_less(offering) or self._is_container_only(offering):
             return errors
 
         documents = data.get("documents")
@@ -1062,6 +1177,8 @@ class DataValidator:
         # only, unitysvc/unitysvc#2726).
         if schema_name == "offering_v1":
             errors.extend(validate_channel_parameters(data))
+            # The Compose file each container channel runs (unitysvc/unitysvc-core#105).
+            errors.extend(self.check_instance_specs(data, service_dir)[0])
 
         # Validate service_options keys and value types (listing_v1 only)
         service_options_errors = self.validate_service_options_keys(data, schema_name)
@@ -1092,6 +1209,7 @@ class DataValidator:
             errors.extend(validate_listing_jinja_var_references(data))
             errors.extend(validate_listing_interfaces_are_canonical(uai))
             errors.extend(self.validate_external_app_listing(data, offering))
+            errors.extend(self.validate_container_probes(data, offering, service_dir))
             if offering is not None:
                 errors.extend(
                     validate_required_parameter_usage(

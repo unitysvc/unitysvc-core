@@ -11,6 +11,11 @@ This directory contains **JSON schemas** automatically generated from Pydantic m
   - Shared data structures (Document, UpstreamInterface, etc.)
   - Reusable field definitions
 
+### Container service schemas
+
+- **`normalized_manifest_v1.json`** - The compiled instance spec the compute agent receives (generated from `NormalizedManifest`; unitysvc-core#105)
+- **`probes_v1.json`** - Declarative connectivity probes for a container service (a proposal)
+
 ### Business Entity Schemas
 
 - **`provider_v1.json`** - Validates provider business data

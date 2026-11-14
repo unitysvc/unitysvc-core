@@ -46,6 +46,7 @@ from pydantic import (
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
 
+from .container import ContainerEntry, ContainerResources
 from .validators import validate_channel_name
 
 # A string field that is a value or a template rendering to one.
@@ -395,6 +396,52 @@ class McpChannel(_ChannelBase):
     servers: list[McpServer] = Field(default_factory=list)
 
 
+class ContainerChannel(_ChannelBase):
+    """A tier of a service that runs as instances on Kubernetes (unitysvc/unitysvc-core#105).
+
+    ``spec`` is the title of an ``instance_spec`` Document, written directly on
+    the channel; ``resources`` is the tier total. ``servers`` is optional and
+    has no container-specific meaning: each is an ordinary ``HttpServer`` the
+    gateway reaches, and the listing rule (an enrollable channel and a matching
+    ``/e/{{ enrollment.code }}`` interface) is checked by the validator, which
+    sees the listing. ``entries`` is PROVISIONAL (#105 open 1 and 2).
+    """
+
+    server_model: ClassVar[builtins.type[_Server]] = HttpServer
+    access_method: Literal["container"]
+    servers: list[HttpServer] = Field(default_factory=list)
+    spec: str = Field(min_length=1, description="Title of the instance_spec Document that defines the instance")
+    resources: ContainerResources
+    entries: list[ContainerEntry] | None = Field(
+        default=None, description="PROVISIONAL (#105 open 1): the URLs the instance is reached at"
+    )
+
+    @model_validator(mode="after")
+    def _check_container(self) -> "ContainerChannel":
+        if self.type not in (None, "enrollable"):
+            raise ValueError("a container channel is always enrollable: omit 'type' or set it to 'enrollable'")
+        requests = self.customer_access_requests or []
+        if not any(
+            r.get("object") == "resource:container"
+            and "create" in (r.get("permissions") or [])
+            and r.get("required") is True
+            for r in requests
+        ):
+            raise ValueError(
+                "a container channel must request resource:container with the create permission, and mark it "
+                'required: customer_access_requests: [{"object": "resource:container", "permissions": ["create"], '
+                '"required": true, "justification": "..."}]'
+            )
+        names = [entry.name for entry in self.entries or []]
+        if duplicates := sorted({n for n in names if names.count(n) > 1}):
+            raise ValueError(f"entry names must be unique: {', '.join(duplicates)}")
+        split = self.resources.services
+        for entry in self.entries or []:
+            if split and entry.service not in split:
+                raise ValueError(f"entry {entry.name!r}: service {entry.service!r} has no share in resources.services")
+        return self
+
+
 def _access_method(value: Any) -> str:
     if isinstance(value, dict):
         method = value.get("access_method", "http")
@@ -406,11 +453,12 @@ ChannelConfig = Annotated[
     Annotated[HttpChannel, Tag("http")]
     | Annotated[SmtpChannel, Tag("smtp")]
     | Annotated[S3Channel, Tag("s3")]
-    | Annotated[McpChannel, Tag("mcp")],
+    | Annotated[McpChannel, Tag("mcp")]
+    | Annotated[ContainerChannel, Tag("container")],
     Discriminator(
         _access_method,
         custom_error_type="invalid_access_method",
-        custom_error_message="access_method must be one of 'http', 'smtp', 's3', 'mcp'",
+        custom_error_message="access_method must be one of 'http', 'smtp', 's3', 'mcp', 'container'",
     ),
 ]
 """One upstream access channel; ``access_method`` (default ``http``) selects its server type."""

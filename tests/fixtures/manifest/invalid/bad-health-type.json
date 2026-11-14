@@ -1,0 +1,51 @@
+{
+  "services": [
+    {
+      "name": "api",
+      "image": "ghcr.io/acme/api@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "ports": [
+        8080,
+        9090
+      ],
+      "health": {
+        "type": "grpc",
+        "path": "/ready",
+        "port": 9090,
+        "period_seconds": 10,
+        "timeout_seconds": 3,
+        "success_threshold": 2,
+        "failure_threshold": 5,
+        "start_period_seconds": 90
+      }
+    },
+    {
+      "name": "cache",
+      "image": "ghcr.io/acme/cache@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "ports": [
+        6379
+      ],
+      "health": {
+        "type": "tcp",
+        "start_period_seconds": 0
+      }
+    },
+    {
+      "name": "queue",
+      "image": "ghcr.io/acme/queue@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "health": {
+        "type": "exec",
+        "command": [
+          "/bin/healthcheck",
+          "--quick"
+        ]
+      }
+    },
+    {
+      "name": "web",
+      "image": "ghcr.io/acme/web@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "ports": [
+        8080
+      ]
+    }
+  ]
+}

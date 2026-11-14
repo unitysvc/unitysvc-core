@@ -283,6 +283,641 @@
       "title": "ConstantPriceData",
       "type": "object"
     },
+    "ContainerChannel": {
+      "additionalProperties": false,
+      "description": "A tier of a service that runs as instances on Kubernetes (unitysvc/unitysvc-core#105).\n\n``spec`` is the title of an ``instance_spec`` Document, written directly on\nthe channel; ``resources`` is the tier total. ``servers`` is optional and\nhas no container-specific meaning: each is an ordinary ``HttpServer`` the\ngateway reaches, and the listing rule (an enrollable channel and a matching\n``/e/{{ enrollment.code }}`` interface) is checked by the validator, which\nsees the listing. ``entries`` is PROVISIONAL (#105 open 1 and 2).",
+      "properties": {
+        "acceptable_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats this server accepts",
+          "title": "Acceptable Formats"
+        },
+        "access_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Access Key"
+        },
+        "access_method": {
+          "const": "container",
+          "title": "Access Method",
+          "type": "string"
+        },
+        "api_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A secret reference, or one of '', '__strip__', '__forward__', '__sigv4__'",
+          "title": "Api Key"
+        },
+        "applicable_interfaces": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The user access interfaces that reach this channel (display only)",
+          "title": "Applicable Interfaces"
+        },
+        "auth_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "forward, static, customer_token or none",
+          "title": "Auth Mode"
+        },
+        "auth_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Auth Token"
+        },
+        "base_url": {
+          "description": "Upstream base URL",
+          "title": "Base Url",
+          "type": "string"
+        },
+        "customer_access_requests": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the enrolling customer is asked to approve; see unitysvc_core.grants",
+          "title": "Customer Access Requests"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "entries": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ContainerEntry"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "PROVISIONAL (#105 open 1): the URLs the instance is reached at",
+          "title": "Entries"
+        },
+        "headers": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Headers"
+        },
+        "is_active": {
+          "default": true,
+          "title": "Is Active",
+          "type": "boolean"
+        },
+        "mail_from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mail From"
+        },
+        "mail_to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mail To"
+        },
+        "max_message_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Message Bytes"
+        },
+        "method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Method"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Server name, unique within the channel",
+          "title": "Name"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChannelParams"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "payload_format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Body format sent upstream, e.g. msg",
+          "title": "Payload Format"
+        },
+        "rate_limit_refs": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Names of the provider's rate limits this channel consumes",
+          "title": "Rate Limit Refs"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Region"
+        },
+        "request_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats the channel serves",
+          "title": "Request Formats"
+        },
+        "request_transformer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequestTransformer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "resources": {
+          "$ref": "#/$defs/ContainerResources"
+        },
+        "routing_key": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Values the gateway routes on, e.g. model",
+          "title": "Routing Key"
+        },
+        "secret_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Secret Key"
+        },
+        "servers": {
+          "items": {
+            "$ref": "#/$defs/HttpServer"
+          },
+          "title": "Servers",
+          "type": "array"
+        },
+        "session_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Token"
+        },
+        "sigv4_service": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sigv4 Service"
+        },
+        "smtp_host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Host"
+        },
+        "smtp_password": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Password"
+        },
+        "smtp_port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Port"
+        },
+        "smtp_target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Target"
+        },
+        "smtp_tls": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Tls"
+        },
+        "smtp_username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Smtp Username"
+        },
+        "sort_order": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Channel rank, lowest first",
+          "title": "Sort Order"
+        },
+        "spec": {
+          "description": "Title of the instance_spec Document that defines the instance",
+          "minLength": 1,
+          "title": "Spec",
+          "type": "string"
+        },
+        "tls_verify": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tls Verify"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "enum": [
+                "unbound",
+                "secret_bound",
+                "enrollable",
+                "me_bound"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Normally derived by the platform; declare 'enrollable' to state it",
+          "title": "Type"
+        },
+        "upstream_format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The request format the upstream speaks",
+          "title": "Upstream Format"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative share of traffic among the channel's servers",
+          "title": "Weight"
+        }
+      },
+      "required": [
+        "access_method",
+        "spec",
+        "resources"
+      ],
+      "title": "ContainerChannel",
+      "type": "object"
+    },
+    "ContainerEntry": {
+      "additionalProperties": false,
+      "description": "A URL the instance is reached at: one service port (PROVISIONAL, #105 open 1 and 2).\n\nWhether the instance needs URLs beyond ``servers``, whether they belong in\nthe channel, and which ``auth`` values apply are not decided. ``gateway``\nis deliberately not a value (open 2): do not add it here.",
+      "properties": {
+        "auth": {
+          "description": "Who may reach it: the customer's login, a UnitySVC key, or no UnitySVC check (the app's own)",
+          "enum": [
+            "login",
+            "key",
+            "app"
+          ],
+          "title": "Auth",
+          "type": "string"
+        },
+        "name": {
+          "description": "Entry name, unique within the channel; a DNS label",
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Path the entry opens at; starts with /",
+          "title": "Path"
+        },
+        "port": {
+          "description": "The service's container port",
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Port",
+          "type": "integer"
+        },
+        "service": {
+          "description": "The Compose service that serves it",
+          "title": "Service",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "service",
+        "port",
+        "auth"
+      ],
+      "title": "ContainerEntry",
+      "type": "object"
+    },
+    "ContainerResources": {
+      "additionalProperties": false,
+      "description": "A tier's total resources (unitysvc/unitysvc-core#105, decided 3).\n\n``cpu``, ``memory`` and ``ephemeral-storage`` limits are required (the\ninstance's quota is built from them); ``nvidia.com/gpu`` is optional. A spec\nwith several services needs ``services``, the split, which must sum within\nthe tier total; a single service gets the whole tier.",
+      "properties": {
+        "limits": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Most each resource may use: resource name to quantity",
+          "title": "Limits",
+          "type": "object"
+        },
+        "requests": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What is reserved; each at most its limit. Absent: the limits are reserved",
+          "title": "Requests"
+        },
+        "services": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/ServiceResources"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional per-service split, by Compose service name; each resource's sum stays within the tier",
+          "title": "Services"
+        }
+      },
+      "required": [
+        "limits"
+      ],
+      "title": "ContainerResources",
+      "type": "object"
+    },
     "CountPriceData": {
       "additionalProperties": false,
       "description": "Price data for count-scaled pricing (API calls, events, requests).\n\nSupported types: ``one_thousand``, ``one_million``.  The ``count``\nequivalence-group field is the base unit.\n\nUsage can be provided as ``count``, ``one_thousand``, or\n``one_million`` — cross-unit conversion is automatic.\n\nNote: ``image`` and ``step`` pricing types also use ``count`` but have\ntheir own dedicated classes (``ImagePriceData``, ``StepPriceData``).",
@@ -429,6 +1064,7 @@
         "code_example",
         "code_example_output",
         "connectivity_test",
+        "instance_spec",
         "request_template",
         "use_case",
         "troubleshooting",
@@ -3069,6 +3705,41 @@
       "title": "S3Server",
       "type": "object"
     },
+    "ServiceResources": {
+      "additionalProperties": false,
+      "description": "One service's share of the tier: all of ``cpu``, ``memory`` and ``ephemeral-storage``.\n\nThe agent fills a missing limit with its own default, which could take the\ninstance past the tier, so a share names every native resource.",
+      "properties": {
+        "limits": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Most each resource may use: resource name to quantity",
+          "title": "Limits",
+          "type": "object"
+        },
+        "requests": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What is reserved; each at most its limit. Absent: the limits are reserved",
+          "title": "Requests"
+        }
+      },
+      "required": [
+        "limits"
+      ],
+      "title": "ServiceResources",
+      "type": "object"
+    },
     "ServiceTypeEnum": {
       "description": "Broad service category — defines the access pattern and protocol.\n\nOptional on an offering: a service that fits none leaves it out, and\ndescribes what it does with capabilities and tags.\n\nAI modalities (vision, tools, rerank, etc.) are tracked via the\n`capabilities` list on ServiceOffering, not service_type.",
       "enum": [
@@ -3080,6 +3751,7 @@
         "content",
         "streaming",
         "compute",
+        "container",
         "proxy",
         "gateway",
         "mcp",
@@ -3759,6 +4431,9 @@
           },
           {
             "$ref": "#/$defs/McpChannel"
+          },
+          {
+            "$ref": "#/$defs/ContainerChannel"
           }
         ]
       },

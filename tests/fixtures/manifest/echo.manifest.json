@@ -1,0 +1,33 @@
+{
+  "services": [
+    {
+      "name": "web",
+      "image": "docker.io/hashicorp/http-echo@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186",
+      "ports": [
+        5678
+      ],
+      "args": [
+        "-listen=:5678",
+        "-text=healthy"
+      ],
+      "resources": {
+        "limits": {
+          "cpu": "250m",
+          "memory": "256Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "health": {
+        "type": "exec",
+        "command": [
+          "/http-echo",
+          "-version"
+        ],
+        "period_seconds": 5,
+        "timeout_seconds": 2,
+        "failure_threshold": 3,
+        "start_period_seconds": 10
+      }
+    }
+  ]
+}

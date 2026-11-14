@@ -26,7 +26,9 @@ import sys
 from pathlib import Path
 
 from unitysvc_core.models.listing_v1 import ListingV1
+from unitysvc_core.models.manifest import NormalizedManifest
 from unitysvc_core.models.offering_v1 import OfferingV1
+from unitysvc_core.models.probes import ProbesV1
 from unitysvc_core.models.promotion_data import PromotionV1
 from unitysvc_core.models.provider_v1 import ProviderV1
 from unitysvc_core.models.service_group_data import ServiceGroupV1
@@ -39,6 +41,10 @@ MODELS = {
     "provider_v1": ProviderV1,
     "promotion_v1": PromotionV1,
     "service_group_v1": ServiceGroupV1,
+    # Not data files a seller writes at a path: the agent's input (unitysvc-core#105) and the
+    # content of a declarative connectivity_test document.
+    "normalized_manifest_v1": NormalizedManifest,
+    "probes_v1": ProbesV1,
 }
 
 
