@@ -30,6 +30,7 @@ from .channel import (
     RETIRED_CHANNEL_KEYS,
     ChannelConfig,
     ChannelParams,
+    ContainerChannel,
     HttpChannel,
     HttpServer,
     McpChannel,
@@ -43,9 +44,11 @@ from .channel import (
     SmtpServer,
     UpstreamAccessConfig,
 )
+from .container import ContainerEntry, ContainerResources, ServiceResources, parse_quantity
 from .documents import DocumentData
 from .listing_data import ServiceListingData
 from .listing_v1 import ListingV1
+from .manifest import ManifestHealth, ManifestResources, ManifestService, NormalizedManifest
 from .offering_data import ServiceOfferingData
 from .offering_v1 import OfferingV1
 from .pricing import (
@@ -77,6 +80,7 @@ from .pricing import (
     upstream_price_from_description,
     validate_pricing,
 )
+from .probes import Probe, ProbesV1
 from .promotion_data import (
     PROMOTION_SCHEMA_VERSION,
     PromotionData,
@@ -129,6 +133,17 @@ __all__ = [
     "SmtpChannel",
     "S3Channel",
     "McpChannel",
+    "ContainerChannel",
+    "ContainerEntry",
+    "ContainerResources",
+    "ServiceResources",
+    "parse_quantity",
+    "NormalizedManifest",
+    "ManifestService",
+    "ManifestResources",
+    "ManifestHealth",
+    "Probe",
+    "ProbesV1",
     "HttpServer",
     "SmtpServer",
     "S3Server",

@@ -1,0 +1,44 @@
+{
+  "name": "hashicorp/echo",
+  "display_name": "HTTP Echo on unitysvc.app",
+  "currency": "USD",
+  "list_price": {
+    "type": "channel",
+    "default": "base",
+    "description": "$0.05-$0.20 / hour | choose a resource tier",
+    "channels": {
+      "base": {
+        "type": "one_hour",
+        "price": "0.05",
+        "description": "$0.05 / hour while running"
+      },
+      "medium": {
+        "type": "one_hour",
+        "price": "0.20",
+        "description": "$0.20 / hour while running"
+      }
+    }
+  },
+  "service_options": {
+    "default_visibility": "private",
+    "enrollment": {
+      "required": true,
+      "limit_per_customer": 1
+    }
+  },
+  "documents": {
+    "Getting started": {
+      "category": "getting_started",
+      "file_path": "README.md",
+      "mime_type": "markdown",
+      "is_public": true
+    },
+    "Probes": {
+      "category": "connectivity_test",
+      "mime_type": "text",
+      "file_path": "probes.json",
+      "is_public": false
+    }
+  },
+  "time_created": "2026-01-01T00:00:00Z"
+}

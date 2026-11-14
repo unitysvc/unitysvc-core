@@ -1,0 +1,47 @@
+{
+  "services": [
+    {
+      "name": "web",
+      "image": "ghcr.io/acme/web@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ports": [
+        8080
+      ],
+      "env": {
+        "LOG_LEVEL": "info",
+        "A_FIRST": "1"
+      },
+      "args": [
+        "--serve"
+      ],
+      "replicas": 2,
+      "health": {
+        "type": "http",
+        "path": "/healthz"
+      },
+      "resources": {
+        "requests": {
+          "cpu": "250m",
+          "memory": "512Mi",
+          "ephemeral-storage": "1Gi"
+        },
+        "limits": {
+          "cpu": "1",
+          "memory": "512Mi",
+          "ephemeral-storage": "2Gi"
+        }
+      },
+      "cpus": "1"
+    },
+    {
+      "name": "worker",
+      "image": "ghcr.io/acme/worker@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "resources": {
+        "limits": {
+          "cpu": "500m",
+          "memory": "1Gi",
+          "nvidia.com/gpu": "1"
+        }
+      }
+    }
+  ]
+}

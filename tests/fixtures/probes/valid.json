@@ -1,0 +1,1 @@
+{"probes": [{"entry": "web", "path": "/", "expect_status": 200, "expect_body_contains": "healthy"}, {"entry": "web", "path": "/health"}]}

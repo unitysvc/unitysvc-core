@@ -1,0 +1,85 @@
+{
+  "name": "echo",
+  "service_type": "container",
+  "summary": "A disposable HTTP echo instance",
+  "payout_price": {
+    "type": "revenue_share",
+    "percentage": "80",
+    "description": "80% after platform compute cost"
+  },
+  "documents": {
+    "Application": {
+      "category": "instance_spec",
+      "file_path": "compose.yaml",
+      "mime_type": "text",
+      "meta": {
+        "format": "compose"
+      },
+      "is_public": false
+    }
+  },
+  "upstream_access_config": {
+    "base": {
+      "access_method": "container",
+      "description": "Small workflow",
+      "spec": "Application",
+      "resources": {
+        "limits": {
+          "cpu": "250m",
+          "memory": "256Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "entries": [
+        {
+          "name": "web",
+          "service": "web",
+          "port": 5678,
+          "auth": "key"
+        }
+      ],
+      "customer_access_requests": [
+        {
+          "object": "resource:container",
+          "permissions": [
+            "create"
+          ],
+          "required": true,
+          "justification": "Run a disposable application instance for this enrollment"
+        }
+      ]
+    },
+    "medium": {
+      "access_method": "container",
+      "description": "Larger workflow",
+      "spec": "Application",
+      "resources": {
+        "limits": {
+          "cpu": "1",
+          "memory": "1Gi",
+          "ephemeral-storage": "2Gi"
+        }
+      },
+      "entries": [
+        {
+          "name": "web",
+          "service": "web",
+          "port": 5678,
+          "auth": "key"
+        }
+      ],
+      "customer_access_requests": [
+        {
+          "object": "resource:container",
+          "permissions": [
+            "create"
+          ],
+          "required": true,
+          "justification": "Run a disposable application instance for this enrollment"
+        }
+      ]
+    }
+  },
+  "time_created": "2026-01-01T00:00:00Z",
+  "description": "A tiny HTTP server that answers every request with a fixed text. A reference service for the container channel."
+}

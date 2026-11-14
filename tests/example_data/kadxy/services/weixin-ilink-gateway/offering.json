@@ -1,0 +1,74 @@
+{
+  "name": "weixin-ilink-gateway",
+  "service_type": "container",
+  "summary": "HTTP gateway for the WeChat iLink Bot protocol: QR login, messaging, webhook push",
+  "details": {
+    "links": {
+      "homepage": "https://github.com/Kadxy/weixin-ilink-gateway"
+    }
+  },
+  "payout_price": {
+    "type": "revenue_share",
+    "percentage": "80",
+    "description": "80% after platform compute cost"
+  },
+  "documents": {
+    "Application": {
+      "category": "instance_spec",
+      "file_path": "compose.yaml",
+      "mime_type": "text",
+      "meta": {
+        "format": "compose"
+      },
+      "is_public": false
+    }
+  },
+  "upstream_access_config": {
+    "base": {
+      "access_method": "container",
+      "description": "One WeChat bot account",
+      "spec": "Application",
+      "resources": {
+        "limits": {
+          "cpu": "250m",
+          "memory": "256Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "entries": [
+        {
+          "name": "api",
+          "service": "gateway",
+          "port": 3000,
+          "auth": "app"
+        }
+      ],
+      "params": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "webhook_urls": {
+              "type": "string",
+              "description": "Comma-separated URLs that receive incoming messages"
+            }
+          }
+        },
+        "testing_defaults": {
+          "webhook_urls": ""
+        }
+      },
+      "customer_access_requests": [
+        {
+          "object": "resource:container",
+          "permissions": [
+            "create"
+          ],
+          "required": true,
+          "justification": "Run one gateway instance for this enrollment"
+        }
+      ]
+    }
+  },
+  "time_created": "2026-01-01T00:00:00Z",
+  "description": "Runs the open-source weixin-ilink-gateway for your WeChat bot account. Note: login state is kept on temporary storage, so after a restart or replacement you scan the QR code again."
+}

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .base import DocumentCategoryEnum, MimeTypeEnum
 
@@ -55,3 +55,14 @@ class DocumentData(BaseModel):
                 "exit code: assert inside the script and exit non-zero on failure (unitysvc#2490)."
             )
         return meta
+
+    @model_validator(mode="after")
+    def _instance_spec_format(self) -> DocumentData:
+        """An ``instance_spec`` states its format in ``meta.format`` (default ``compose``); only that is accepted."""
+        if self.category == DocumentCategoryEnum.instance_spec:
+            from ..instance_spec import SUPPORTED_FORMATS, instance_spec_format, unsupported_format_message
+
+            fmt = instance_spec_format(self.meta)
+            if fmt not in SUPPORTED_FORMATS:
+                raise ValueError(unsupported_format_message((self.meta or {}).get("format")))
+        return self

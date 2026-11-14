@@ -88,6 +88,7 @@ class DocumentCategoryEnum(StrEnum):
     code_example = "code_example"
     code_example_output = "code_example_output"
     connectivity_test = "connectivity_test"  # Test connectivity & performance (not visible to users)
+    instance_spec = "instance_spec"  # What a container channel runs: a Compose file (meta.format), unitysvc-core#105
     request_template = "request_template"  # Default request body for playground pre-fill
     use_case = "use_case"
     troubleshooting = "troubleshooting"
@@ -313,6 +314,7 @@ class ServiceTypeEnum(StrEnum):
 
     # === Compute services ===
     compute = "compute"  # GPU instances, dev environments (SSH/WireGuard)
+    container = "container"  # Instances of a Compose app run on Kubernetes (unitysvc-core#105)
 
     # === Proxy services ===
     # Protocol-level passthrough to a customer-owned upstream. Platform relays

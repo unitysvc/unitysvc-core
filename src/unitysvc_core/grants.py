@@ -218,6 +218,10 @@ RESOURCES: dict[str, Exports] = {
             },
         },
     ),
+    # A container instance of the channel's tier (the ``container`` channel,
+    # ``access_method: "container"``): the customer may be given one to run.
+    # It has no options; its size is the channel's ``resources``.
+    "container": Exports({"create": ()}, {}),
 }
 
 _REQUEST_KEYS = frozenset({"object", "permissions", "required", "justification", "options", "limits"})
@@ -504,8 +508,10 @@ def validate_access_requests(
         if resource:
             exports = RESOURCES[name]
             check_resource(at, obj, permissions, options, entry.get("limits"))
-            if kind := next(
-                (o[ROOM_KIND] for other, o, _ in seen if other == obj and o[ROOM_KIND] == options[ROOM_KIND]), None
+            if name == "room" and (
+                kind := next(
+                    (o[ROOM_KIND] for other, o, _ in seen if other == obj and o[ROOM_KIND] == options[ROOM_KIND]), None
+                )
             ):
                 raise ValueError(f"{at}: {obj} with {ROOM_KIND}={kind} is listed twice; a kind is requested once")
         elif resolve is not None:
@@ -632,6 +638,8 @@ def check_resource(where: str, obj: str, permissions: list[str], options: dict[s
     check_claim(where, obj, permissions, options, RESOURCES[obj.removeprefix(RESOURCE_PREFIX)])
     if limits:
         raise ValueError(f"{where}.limits: {obj} is provisioned, not called; it takes no limits")
+    if obj != f"{RESOURCE_PREFIX}room":
+        return
     kind = options.get(ROOM_KIND)
     if kind is None:
         raise ValueError(

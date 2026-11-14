@@ -1,0 +1,306 @@
+{
+  "$defs": {
+    "ManifestHealth": {
+      "additionalProperties": false,
+      "description": "A seller-defined readiness check for one service (the agent's ``Health``).\n\n``http``: GET ``path`` on ``port`` (2xx or 3xx passes); ``tcp``: ``port``\naccepts a connection; ``exec``: ``command`` runs in the container and exits\n0. ``port`` defaults to the service's first port. Timing is optional; the\nagent's defaults are period 5 s, timeout 2 s, success 1, failure 3, start\nperiod 60 s.",
+      "properties": {
+        "command": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "failure_threshold": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Threshold"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "period_seconds": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Period Seconds"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Port"
+        },
+        "start_period_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start Period Seconds"
+        },
+        "success_threshold": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Success Threshold"
+        },
+        "timeout_seconds": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout Seconds"
+        },
+        "type": {
+          "enum": [
+            "http",
+            "tcp",
+            "exec"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ManifestHealth",
+      "type": "object"
+    },
+    "ManifestResources": {
+      "additionalProperties": false,
+      "description": "What a service asks for and may use: resource name to Kubernetes quantity.",
+      "properties": {
+        "limits": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Limits"
+        },
+        "requests": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requests"
+        }
+      },
+      "title": "ManifestResources",
+      "type": "object"
+    },
+    "ManifestService": {
+      "additionalProperties": false,
+      "description": "One container of an instance (the agent's ``Service``).",
+      "properties": {
+        "args": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Replaces the image's command",
+          "title": "Args"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Replaces the image's entrypoint",
+          "title": "Command"
+        },
+        "env": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Env"
+        },
+        "health": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ManifestHealth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "image": {
+          "description": "Digest-pinned image reference",
+          "minLength": 1,
+          "title": "Image",
+          "type": "string"
+        },
+        "name": {
+          "description": "A DNS label; the Service name siblings reach it by",
+          "title": "Name",
+          "type": "string"
+        },
+        "ports": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Container ports (TCP)",
+          "title": "Ports"
+        },
+        "replicas": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Replicas"
+        },
+        "resources": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ManifestResources"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name",
+        "image"
+      ],
+      "title": "ManifestService",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The compiled instance spec: the agent's ``Manifest``.",
+  "properties": {
+    "services": {
+      "items": {
+        "$ref": "#/$defs/ManifestService"
+      },
+      "minItems": 1,
+      "title": "Services",
+      "type": "array"
+    }
+  },
+  "required": [
+    "services"
+  ],
+  "title": "NormalizedManifest",
+  "type": "object"
+}

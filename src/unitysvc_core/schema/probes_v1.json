@@ -1,0 +1,66 @@
+{
+  "$defs": {
+    "Probe": {
+      "additionalProperties": false,
+      "description": "One request made to an entry, and what it must answer.",
+      "properties": {
+        "entry": {
+          "description": "Name of a channel entry",
+          "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$",
+          "title": "Entry",
+          "type": "string"
+        },
+        "expect_body_contains": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Text the response body must contain",
+          "title": "Expect Body Contains"
+        },
+        "expect_status": {
+          "default": 200,
+          "description": "The status the response must have",
+          "maximum": 599,
+          "minimum": 100,
+          "title": "Expect Status",
+          "type": "integer"
+        },
+        "path": {
+          "default": "/",
+          "description": "Request path, starts with /",
+          "pattern": "^/",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entry"
+      ],
+      "title": "Probe",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The content of a declarative ``connectivity_test`` Document.",
+  "properties": {
+    "probes": {
+      "items": {
+        "$ref": "#/$defs/Probe"
+      },
+      "minItems": 1,
+      "title": "Probes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "probes"
+  ],
+  "title": "ProbesV1",
+  "type": "object"
+}
