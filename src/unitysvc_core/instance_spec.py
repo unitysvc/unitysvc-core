@@ -92,6 +92,7 @@ _HEALTHCHECK_KEYS = frozenset({"test", "interval", "timeout", "retries", "start_
 _DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 _ENV_NAME_RE = re.compile(r"^[-._a-zA-Z][-._a-zA-Z0-9]*$")
 _INTERPOLATION_RE = re.compile(r"\$(\{[^}]*\}|[A-Za-z_])")
+_MAX_DURATION_SECONDS = 86400.0  # far above any bound the agent accepts; keeps float overflow out of ceil()
 _DURATION_RE = re.compile(r"^(?:\d+(?:\.\d+)?(?:us|ms|s|m|h))+$")
 _DURATION_PART_RE = re.compile(r"(\d+(?:\.\d+)?)(us|ms|s|m|h)")
 _DURATION_UNIT = {"us": 1e-6, "ms": 1e-3, "s": 1.0, "m": 60.0, "h": 3600.0}
@@ -516,7 +517,11 @@ class _Checker:
         if not isinstance(value, str) or not _DURATION_RE.fullmatch(value):
             self.error("bad_value", where, f"{value!r} is not a duration like 10s, 1m30s or 500ms")
             return None
-        return sum(float(n) * _DURATION_UNIT[u] for n, u in _DURATION_PART_RE.findall(value))
+        seconds = sum(float(n) * _DURATION_UNIT[u] for n, u in _DURATION_PART_RE.findall(value))
+        if not math.isfinite(seconds) or seconds > _MAX_DURATION_SECONDS:
+            self.error("bad_value", where, f"{value[:40]!r} is too long a duration")
+            return None
+        return seconds
 
     def _healthcheck(self, name: str, check: Any, ports: list[int]) -> ManifestHealth | None:
         at = f"services.{name}.healthcheck"
@@ -741,6 +746,9 @@ def _check(text: str, fmt: str, channel: ContainerChannel | None) -> _Checker:
         return checker
     try:
         doc = _parse(text)
+    except RecursionError:
+        checker.error("too_deep", "", "the file is nested too deeply to read")
+        return checker
     except yaml.YAMLError as exc:
         mark = getattr(exc, "problem_mark", None)
         where = f" (line {mark.line + 1})" if mark is not None else ""
@@ -748,7 +756,14 @@ def _check(text: str, fmt: str, channel: ContainerChannel | None) -> _Checker:
         return checker
     try:
         checker.check(doc)
-    except (TypeError, AttributeError, ValueError, KeyError) as exc:  # a shape no check above anticipated
+    except (
+        TypeError,
+        AttributeError,
+        ValueError,
+        KeyError,
+        OverflowError,
+        RecursionError,
+    ) as exc:  # a shape no check above anticipated
         checker.error("malformed", "", f"the file has a structure that cannot be read ({type(exc).__name__}: {exc})")
     checker.report.services = list(checker.ports)
     return checker

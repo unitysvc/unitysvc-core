@@ -634,6 +634,12 @@ class TestMalformedInput:
         report = validate_instance_spec(text)
         assert not report.ok or text == ""
 
+    def test_duration_overflow_and_deep_nesting_are_reported(self) -> None:
+        huge = _compose(healthcheck={"test": ["CMD", "x"], "interval": "9" * 400 + "s"})
+        assert "bad_value" in _codes(validate_instance_spec(huge))
+        deep = "services: " + "[" * 600 + "0" + "]" * 600
+        assert not validate_instance_spec(deep).ok
+
     def test_huge_quantities_do_not_hang(self) -> None:
         for text in ("1e1000000000", "1e-1000000000", "1" * 100000, "1e31"):
             with pytest.raises(ValueError):
