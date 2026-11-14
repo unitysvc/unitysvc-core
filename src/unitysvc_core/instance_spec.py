@@ -250,7 +250,7 @@ class _Checker:
             return set()
         for name, volume in volumes.items():
             path = f"volumes.{name}"
-            if volume in (None, {}):
+            if volume is None or volume == {}:
                 continue
             if not isinstance(volume, dict):
                 self.error("bad_volumes", path, "a volume must be empty or a mapping")
@@ -258,7 +258,7 @@ class _Checker:
             for key, value in volume.items():
                 if key == "driver" and value == "local":
                     continue
-                if key.startswith("x-"):
+                if isinstance(key, str) and key.startswith("x-"):
                     continue
                 self.error(
                     "rejected_key", f"{path}.{key}", f"`{key}` is not allowed on a volume: only a plain scratch volume"
@@ -603,6 +603,9 @@ class _Checker:
                     self.error("unsupported_key", where, f"unsupported volume keys {sorted(extra)}")
                     continue
                 source, target = item.get("source"), item.get("target")
+                if source is not None and not isinstance(source, str):
+                    self.error("bad_value", where, "a volume's source must be a name")
+                    continue
             else:
                 self.error("bad_value", where, "a volume must be a string or a mapping")
                 continue
@@ -647,7 +650,9 @@ class _Checker:
             self.error("bad_value", at, "`depends_on` must be a list or a mapping")
             return
         for target in targets:
-            if target not in all_services:
+            if not isinstance(target, str):
+                self.error("bad_value", at, f"{target!r} is not a service name")
+            elif target not in all_services:
                 self.error("unknown_service", at, f"depends on {target!r}, which is not a service of this file")
         self.warn(
             "depends_on",
@@ -673,27 +678,23 @@ class _Checker:
         service_networks[name] = names or {"default"}
 
     def _network_split(self, service_networks: dict[str, set[str]]) -> None:
-        """Services share one network namespace here: a file that keeps some apart cannot keep that promise."""
-        groups: list[set[str]] = []
-        members: list[set[str]] = []
-        for name, networks in service_networks.items():
-            merged_networks, merged_names = set(networks), {name}
-            rest_groups, rest_members = [], []
-            for group, names in zip(groups, members, strict=True):
-                if group & merged_networks:
-                    merged_networks |= group
-                    merged_names |= names
-                else:
-                    rest_groups.append(group)
-                    rest_members.append(names)
-            groups, members = [*rest_groups, merged_networks], [*rest_members, merged_names]
-        if len(groups) > 1:
-            parts = " | ".join(", ".join(sorted(m)) for m in members)
+        """Services share one network here: a file in which two services have no network in common cannot keep that.
+
+        Joining a third service to both networks does not connect them in Compose, so the check is on each pair.
+        """
+        apart = [
+            (a, b)
+            for index, a in enumerate(service_networks)
+            for b in list(service_networks)[index + 1 :]
+            if not service_networks[a] & service_networks[b]
+        ]
+        if apart:
+            pairs = ", ".join(f"{a} and {b}" for a, b in apart[:5])
             self.error(
                 "split_networks",
                 "services",
-                f"the services are split across networks that do not connect them ({parts}); in an instance every "
-                "service reaches every sibling, so the separation would be silently lost",
+                f"some services share no network ({pairs}); in an instance every service reaches every sibling, "
+                "so the separation would be silently lost",
             )
         elif any(n != {"default"} for n in service_networks.values()):
             self.warn("ignored_key", "services", "service `networks` are ignored: all services share one network")
@@ -745,7 +746,10 @@ def _check(text: str, fmt: str, channel: ContainerChannel | None) -> _Checker:
         where = f" (line {mark.line + 1})" if mark is not None else ""
         checker.error("invalid_yaml", "", f"not valid YAML{where}: {getattr(exc, 'problem', None) or exc}")
         return checker
-    checker.check(doc)
+    try:
+        checker.check(doc)
+    except (TypeError, AttributeError, ValueError, KeyError) as exc:  # a shape no check above anticipated
+        checker.error("malformed", "", f"the file has a structure that cannot be read ({type(exc).__name__}: {exc})")
     checker.report.services = list(checker.ports)
     return checker
 

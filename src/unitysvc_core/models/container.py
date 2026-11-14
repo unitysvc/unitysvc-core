@@ -29,6 +29,9 @@ _SI.update({"k": Fraction(10**3), "M": Fraction(10**6), "G": Fraction(10**9)})
 _SI.update({"T": Fraction(10**12), "P": Fraction(10**15), "E": Fraction(10**18)})
 _BINARY = {f"{p}i": Fraction(2 ** (10 * i)) for i, p in enumerate("KMGTPE", start=1)}
 
+_MAX_QUANTITY_CHARS = 64
+_MAX_EXPONENT = 30
+
 # A DNS-1123 label, which a Kubernetes Service and a hostname segment must be.
 DNS_LABEL_RE = re.compile(r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
 
@@ -43,6 +46,8 @@ def parse_quantity(value: str) -> Fraction:
     """
     if not isinstance(value, str):
         raise ValueError(f"{value!r} is not a quantity string")
+    if len(value) > _MAX_QUANTITY_CHARS:
+        raise ValueError(f"a quantity is at most {_MAX_QUANTITY_CHARS} characters")
     match = _QUANTITY_RE.fullmatch(value.strip())
     if not match:
         raise ValueError(f"{value!r} is not a Kubernetes quantity (like 250m, 1, 512Mi, 2Gi)")
@@ -50,7 +55,10 @@ def parse_quantity(value: str) -> Fraction:
     if suffix in _BINARY:
         factor = _BINARY[suffix]
     elif len(suffix) > 1 and suffix[0] in "eE":
-        factor = Fraction(10) ** int(suffix[1:])
+        exponent = int(suffix[1:])
+        if abs(exponent) > _MAX_EXPONENT:  # before the power: 1e1000000000 must not be computed
+            raise ValueError(f"{value!r}: the exponent must be between -{_MAX_EXPONENT} and {_MAX_EXPONENT}")
+        factor = Fraction(10) ** exponent
     elif suffix in _SI:
         factor = _SI[suffix]
     else:
@@ -85,11 +93,16 @@ class ResourceSet(BaseModel):
         default=None, description="What is reserved; each at most its limit. Absent: the limits are reserved"
     )
 
+    def effective(self, where: str = "resources") -> tuple[dict[str, Fraction], dict[str, Fraction]]:
+        """``(requests, limits)`` as the agent resolves them: a resource with no request is requested at its limit."""
+        requests, limits = self.parsed(where)
+        return {**limits, **requests}, limits
+
     def parsed(self, where: str = "resources") -> tuple[dict[str, Fraction], dict[str, Fraction]]:
         """``(requests, limits)`` as exact amounts; requests default to the limits."""
         limits = _check_quantities(f"{where}.limits", self.limits)
         if self.requests is None:
-            return dict(limits), limits
+            return {}, limits
         requests = _check_quantities(f"{where}.requests", self.requests)
         for name, amount in requests.items():
             if name not in limits:
@@ -104,11 +117,17 @@ class ResourceSet(BaseModel):
 
 
 class ServiceResources(ResourceSet):
-    """One service's share of the tier."""
+    """One service's share of the tier: all of ``cpu``, ``memory`` and ``ephemeral-storage``.
+
+    The agent fills a missing limit with its own default, which could take the
+    instance past the tier, so a share names every native resource.
+    """
 
     @model_validator(mode="after")
     def _check_names(self) -> ServiceResources:
-        self.parsed("resources.services.<name>")
+        _, limits = self.parsed("resources.services.<name>")
+        if missing := [name for name in REQUIRED_RESOURCES if name not in limits]:
+            raise ValueError(f"a service's share must set the limits of {', '.join(missing)}")
         return self
 
 
@@ -128,7 +147,7 @@ class ContainerResources(ResourceSet):
 
     @model_validator(mode="after")
     def _check_tier(self) -> ContainerResources:
-        requests, limits = self.parsed()
+        requests, limits = self.effective()
         if missing := [name for name in REQUIRED_RESOURCES if name not in limits]:
             raise ValueError(f"resources.limits must set {', '.join(missing)}")
         for service in self.services or {}:
@@ -138,7 +157,7 @@ class ContainerResources(ResourceSet):
             for side, total in (("limits", limits), ("requests", requests)):
                 sums: dict[str, Fraction] = {}
                 for share in self.services.values():
-                    share_requests, share_limits = share.parsed()
+                    share_requests, share_limits = share.effective()
                     for name, amount in (share_limits if side == "limits" else share_requests).items():
                         sums[name] = sums.get(name, Fraction(0)) + amount
                 for name, amount in sums.items():

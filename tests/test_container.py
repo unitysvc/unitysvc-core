@@ -129,6 +129,25 @@ class TestResources:
         with pytest.raises(ValidationError, match="limits of cpu add up to more than the tier"):
             ContainerResources.model_validate({"limits": LIMITS, "services": split})
 
+    def test_a_share_names_every_native_resource(self) -> None:
+        tier = {"limits": LIMITS}
+        full = {"limits": {"cpu": "100m", "memory": "128Mi", "ephemeral-storage": "100Mi"}}
+        for share in ({"limits": {}}, {"limits": {"cpu": "100m", "memory": "128Mi"}}):
+            with pytest.raises(ValidationError, match="must set the limits of"):
+                ContainerResources.model_validate({**tier, "services": {"web": full, "worker": share}})
+
+    def test_a_partial_request_counts_at_its_limit(self) -> None:
+        # worker requests only memory: its cpu request is its limit (the agent's rule), so the cpu requests sum to 200m.
+        full = {"cpu": "100m", "memory": "100Mi", "ephemeral-storage": "100Mi"}
+        services = {
+            "web": {"limits": {**full, "cpu": "200m"}, "requests": {"cpu": "100m"}},
+            "worker": {"limits": full, "requests": {"memory": "50Mi"}},
+        }
+        tier = {"limits": {**LIMITS, "cpu": "300m"}}
+        with pytest.raises(ValidationError, match="requests of cpu add up"):
+            ContainerResources.model_validate({**tier, "requests": {"cpu": "150m"}, "services": services})
+        ContainerResources.model_validate({**tier, "requests": {"cpu": "200m"}, "services": services})
+
     def test_the_split_requests_count_too(self) -> None:
         split = {
             "a": {"limits": {"cpu": "1", "memory": "100Mi", "ephemeral-storage": "100Mi"}, "requests": {"cpu": "200m"}},
@@ -138,6 +157,17 @@ class TestResources:
         with pytest.raises(ValidationError, match="requests of cpu add up"):
             ContainerResources.model_validate({**tier, "requests": {"cpu": "250m"}, "services": split})
         ContainerResources.model_validate({**tier, "requests": {"cpu": "300m"}, "services": split})
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("interval", "10m"), ("timeout", "10m"), ("retries", 31), ("start_period", "3m")],
+    )
+    def test_health_timings_stay_within_the_agents_bounds(self, field: str, value: Any) -> None:
+        health = {"test": ["CMD", "x"], field: value}
+        report = validate_instance_spec(_compose(healthcheck=health))
+        assert not report.ok
+        ok = {"interval": "5m", "timeout": "5m", "retries": 30, "start_period": "2m"}[field]
+        assert validate_instance_spec(_compose(healthcheck={"test": ["CMD", "x"], field: ok})).ok
 
 
 # --- the channel ----------------------------------------------------------------------------------
@@ -519,6 +549,21 @@ class TestReject:
         )
         assert "split_networks" in _codes(validate_instance_spec(text))
 
+    def test_a_third_service_does_not_connect_two_networks(self) -> None:
+        text = yaml.safe_dump(
+            {
+                "services": {
+                    "web": {"image": f"w{DIGEST}", "networks": ["front"]},
+                    "db": {"image": f"d{DIGEST}", "networks": ["back"]},
+                    "proxy": {"image": f"p{DIGEST}", "networks": ["front", "back"]},
+                },
+                "networks": {"front": {}, "back": {}},
+            }
+        )
+        report = validate_instance_spec(text)
+        assert "split_networks" in _codes(report)
+        assert "db and web" in next(e.message for e in report.errors if e.code == "split_networks")
+
     def test_networks_that_still_connect_the_services_are_only_ignored(self) -> None:
         text = yaml.safe_dump(
             {
@@ -560,6 +605,40 @@ class TestReject:
 
     def test_oversized_specs(self) -> None:
         assert "too_large" in _codes(validate_instance_spec("#" * (300 * 1024)))
+
+
+class TestMalformedInput:
+    """Bad shapes are reported, never raised (the validation API's promise)."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "services: {web: {image: 'x@sha256:%s', volumes: [{type: volume, source: 123, target: /data}]}}"
+            % ("a" * 64),
+            "services: {web: {image: 'x@sha256:%s', depends_on: [[]]}}" % ("a" * 64),
+            "services: {web: {image: 'x@sha256:%s', depends_on: [{a: 1}]}}" % ("a" * 64),
+            "services: {web: {image: 'x@sha256:%s'}}\nvolumes: {v: {1: 2}}" % ("a" * 64),
+            "services: {web: {image: 'x@sha256:%s', ports: [[80]]}}" % ("a" * 64),
+            "services: {web: {image: 'x@sha256:%s', environment: [1, [2]]}}" % ("a" * 64),
+            "services: {web: {image: 'x@sha256:%s', healthcheck: {test: [1, 2]}}}" % ("a" * 64),
+            "services: {web: {image: 'x@sha256:%s', networks: [[1]]}}" % ("a" * 64),
+            "services: {1: {image: 5}}",
+            "services: {web: null}",
+            "services: [1]",
+            "{1: 2}",
+            "42",
+            "",
+        ],
+    )
+    def test_reported_not_raised(self, text: str) -> None:
+        report = validate_instance_spec(text)
+        assert not report.ok or text == ""
+
+    def test_huge_quantities_do_not_hang(self) -> None:
+        for text in ("1e1000000000", "1e-1000000000", "1" * 100000, "1e31"):
+            with pytest.raises(ValueError):
+                parse_quantity(text)
+        assert parse_quantity("1e30") == 10**30
 
 
 class TestSiblings:

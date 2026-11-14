@@ -3707,7 +3707,7 @@
     },
     "ServiceResources": {
       "additionalProperties": false,
-      "description": "One service's share of the tier.",
+      "description": "One service's share of the tier: all of ``cpu``, ``memory`` and ``ephemeral-storage``.\n\nThe agent fills a missing limit with its own default, which could take the\ninstance past the tier, so a share names every native resource.",
       "properties": {
         "limits": {
           "additionalProperties": {

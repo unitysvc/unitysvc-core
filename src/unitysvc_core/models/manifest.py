@@ -50,11 +50,14 @@ class ManifestHealth(BaseModel):
     path: str | None = None
     port: int | None = Field(default=None, ge=1, le=65535)
     command: list[str] | None = None
-    period_seconds: int | None = Field(default=None, ge=1)
-    timeout_seconds: int | None = Field(default=None, ge=1)
-    success_threshold: int | None = Field(default=None, ge=1)
-    failure_threshold: int | None = Field(default=None, ge=1)
-    start_period_seconds: int | None = Field(default=None, ge=0)
+    # The agent's bounds (internal/render/validate.go): period and timeout 1..300, success 1..10, failure 1..30,
+    # start period 0..the cluster's progress deadline. The deadline is configured per cluster (default 120 s);
+    # core checks the default, so a cluster configured longer may accept more than the schema does.
+    period_seconds: int | None = Field(default=None, ge=1, le=300)
+    timeout_seconds: int | None = Field(default=None, ge=1, le=300)
+    success_threshold: int | None = Field(default=None, ge=1, le=10)
+    failure_threshold: int | None = Field(default=None, ge=1, le=30)
+    start_period_seconds: int | None = Field(default=None, ge=0, le=120)
 
     @model_validator(mode="after")
     def _check_type(self) -> ManifestHealth:
