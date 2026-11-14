@@ -314,6 +314,7 @@ class ServiceTypeEnum(StrEnum):
 
     # === Compute services ===
     compute = "compute"  # GPU instances, dev environments (SSH/WireGuard)
+    container = "container"  # An on-demand app hosted on unitysvc.app
 
     # === Proxy services ===
     # Protocol-level passthrough to a customer-owned upstream. Platform relays

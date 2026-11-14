@@ -46,7 +46,7 @@ from pydantic import (
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
 
-from .container import ContainerEntry, ContainerResources
+from .container import ContainerEntry, ContainerTierResources
 from .validators import validate_channel_name
 
 # A string field that is a value or a template rendering to one.
@@ -362,20 +362,18 @@ class ContainerServer(_Server):
     """One prepared application, referenced by offering-scoped document title."""
 
     spec: str = Field(min_length=1, description="Title of an offering's container_spec document")
-    resources: dict[str, ContainerResources] = Field(
-        min_length=1, description="Per-replica allocation keyed by Compose service"
-    )
 
 
 class ContainerChannel(_ChannelBase):
     model_config = ConfigDict(
         extra="forbid",
-        json_schema_extra={"anyOf": [{"required": ["servers"]}, {"required": ["spec", "resources"]}]},
+        json_schema_extra={"anyOf": [{"required": ["servers"]}, {"required": ["spec"]}]},
     )
     server_model: ClassVar[builtins.type[_Server]] = ContainerServer
     access_method: Literal["container"]
     type: Literal["enrollable"] = "enrollable"
     servers: list[ContainerServer] = Field(default_factory=list, min_length=1, max_length=1)
+    resources: ContainerTierResources = Field(description="Total tier budget and per-service allocations")
     entries: list[ContainerEntry] = Field(default_factory=list)
 
     @model_validator(mode="after")

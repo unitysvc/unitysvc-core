@@ -10,7 +10,6 @@ import json
 import re
 import shlex
 import tomllib
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -23,8 +22,8 @@ from .models.container import (
     ContainerHealth,
     ContainerManifest,
     ContainerModel,
-    ContainerResources,
     ContainerService,
+    ContainerTierResources,
 )
 
 
@@ -133,18 +132,16 @@ def _environment(values: dict[str, str] | list[str]) -> dict[str, str]:
 def normalize_container_spec(
     data: dict[str, Any],
     *,
-    resources: Mapping[str, ContainerResources | dict[str, Any]],
+    resources: ContainerTierResources | dict[str, Any],
     entries: list[ContainerEntry] | None = None,
 ) -> ContainerManifest:
     spec = ContainerSpec.model_validate(data)
-    if set(resources) != set(spec.services):
-        raise ValueError("tier resources must name every Compose service exactly once")
+    budget = (
+        resources if isinstance(resources, ContainerTierResources) else ContainerTierResources.model_validate(resources)
+    )
+    allocations = budget.allocate({name: source.deploy.replicas for name, source in spec.services.items()})
     services = []
     for name, source in sorted(spec.services.items()):
-        allocation = resources[name]
-        allocation = (
-            allocation if isinstance(allocation, ContainerResources) else ContainerResources.model_validate(allocation)
-        )
         health = source.health or (source.healthcheck.normalize() if source.healthcheck else None)
         services.append(
             ContainerService(
@@ -154,7 +151,7 @@ def normalize_container_spec(
                 env=_environment(source.environment),
                 command=shlex.split(source.entrypoint) if isinstance(source.entrypoint, str) else source.entrypoint,
                 args=shlex.split(source.command) if isinstance(source.command, str) else source.command,
-                resources=allocation,
+                resources=allocations[name],
                 replicas=source.deploy.replicas,
                 health=health,
             )
@@ -204,6 +201,6 @@ def container_manifest_for_channel(offering: dict[str, Any], channel_name: str, 
     document = (model.documents or {})[server.spec]
     return normalize_container_spec(
         load_container_spec(service_dir / str(document.file_path)),
-        resources=server.resources,
+        resources=channel.resources,
         entries=channel.entries,
     )

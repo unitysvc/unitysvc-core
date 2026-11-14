@@ -1,0 +1,54 @@
+{
+  "currency": "USD",
+  "display_name": "HTTP Echo on unitysvc.app",
+  "documents": {
+    "Connectivity test": {
+      "category": "connectivity_test",
+      "file_path": "connectivity.py",
+      "is_active": true,
+      "is_public": false,
+      "meta": {
+        "container_timeout_seconds": 120,
+        "requirements": [
+          "unitysvc-core>=0.3.10"
+        ],
+        "runtime": "docker",
+        "timeout": 180
+      },
+      "mime_type": "python"
+    },
+    "Getting started": {
+      "category": "getting_started",
+      "file_path": "README.md",
+      "is_public": true,
+      "mime_type": "markdown"
+    }
+  },
+  "list_price": {
+    "channels": {
+      "base": {
+        "description": "$0.05 / hour while running",
+        "price": "0.05",
+        "type": "one_hour"
+      },
+      "medium": {
+        "description": "$0.20 / hour while running",
+        "price": "0.20",
+        "type": "one_hour"
+      }
+    },
+    "default": "base",
+    "description": "$0.05–$0.20 / hour | choose a resource tier",
+    "type": "channel"
+  },
+  "name": "hashicorp/echo",
+  "service_options": {
+    "default_visibility": "private",
+    "enrollment": {
+      "limit_per_customer": 1,
+      "required": true
+    }
+  },
+  "status": "ready",
+  "time_created": "2026-11-14T00:00:00Z"
+}

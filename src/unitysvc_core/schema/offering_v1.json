@@ -283,6 +283,31 @@
       "title": "ConstantPriceData",
       "type": "object"
     },
+    "ContainerAllocation": {
+      "additionalProperties": false,
+      "description": "Seller-facing CPU/RAM/scratch allocation, independent of Kubernetes.",
+      "properties": {
+        "cpu": {
+          "title": "Cpu",
+          "type": "string"
+        },
+        "ephemeral_disk": {
+          "title": "Ephemeral Disk",
+          "type": "string"
+        },
+        "memory": {
+          "title": "Memory",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cpu",
+        "memory",
+        "ephemeral_disk"
+      ],
+      "title": "ContainerAllocation",
+      "type": "object"
+    },
     "ContainerChannel": {
       "additionalProperties": false,
       "anyOf": [
@@ -293,8 +318,7 @@
         },
         {
           "required": [
-            "spec",
-            "resources"
+            "spec"
           ]
         }
       ],
@@ -434,13 +458,8 @@
           "title": "Request Formats"
         },
         "resources": {
-          "additionalProperties": {
-            "$ref": "#/$defs/ContainerResources"
-          },
-          "description": "Per-replica allocation keyed by Compose service",
-          "minProperties": 1,
-          "title": "Resources",
-          "type": "object"
+          "$ref": "#/$defs/ContainerTierResources",
+          "description": "Total tier budget and per-service allocations"
         },
         "servers": {
           "items": {
@@ -491,7 +510,8 @@
         }
       },
       "required": [
-        "access_method"
+        "access_method",
+        "resources"
       ],
       "title": "ContainerChannel",
       "type": "object"
@@ -500,10 +520,25 @@
       "additionalProperties": false,
       "description": "A public entry target. Central assigns its hostname at instance creation.",
       "properties": {
+        "auth": {
+          "default": "enrollment_key",
+          "enum": [
+            "enrollment_key",
+            "none"
+          ],
+          "title": "Auth",
+          "type": "string"
+        },
         "name": {
           "maxLength": 63,
           "pattern": "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$",
           "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "default": "/",
+          "pattern": "^/[^?#]*$",
+          "title": "Path",
           "type": "string"
         },
         "port": {
@@ -525,28 +560,6 @@
         "port"
       ],
       "title": "ContainerEntry",
-      "type": "object"
-    },
-    "ContainerResources": {
-      "additionalProperties": false,
-      "description": "One replica's allocation. Each tier explicitly budgets CPU, RAM and disk.\n\nA resource given only as a request or limit is copied to the other side.\nExtended resources use integer quantities and equal requests and limits.",
-      "properties": {
-        "limits": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "title": "Limits",
-          "type": "object"
-        },
-        "requests": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "title": "Requests",
-          "type": "object"
-        }
-      },
-      "title": "ContainerResources",
       "type": "object"
     },
     "ContainerServer": {
@@ -582,15 +595,6 @@
           "description": "Server name, unique within the channel",
           "title": "Name"
         },
-        "resources": {
-          "additionalProperties": {
-            "$ref": "#/$defs/ContainerResources"
-          },
-          "description": "Per-replica allocation keyed by Compose service",
-          "minProperties": 1,
-          "title": "Resources",
-          "type": "object"
-        },
         "spec": {
           "description": "Title of an offering's container_spec document",
           "minLength": 1,
@@ -612,10 +616,50 @@
         }
       },
       "required": [
-        "spec",
-        "resources"
+        "spec"
       ],
       "title": "ContainerServer",
+      "type": "object"
+    },
+    "ContainerTierResources": {
+      "additionalProperties": false,
+      "description": "A channel's total budget and explicit per-replica service allocations.\n\nA single service/replica may use the whole budget without repeating it.\nMulti-service or replicated applications must declare every allocation.",
+      "properties": {
+        "cpu": {
+          "title": "Cpu",
+          "type": "string"
+        },
+        "ephemeral_disk": {
+          "title": "Ephemeral Disk",
+          "type": "string"
+        },
+        "memory": {
+          "title": "Memory",
+          "type": "string"
+        },
+        "services": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/ContainerAllocation"
+              },
+              "minProperties": 1,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Services"
+        }
+      },
+      "required": [
+        "cpu",
+        "memory",
+        "ephemeral_disk"
+      ],
+      "title": "ContainerTierResources",
       "type": "object"
     },
     "CountPriceData": {
@@ -3416,6 +3460,7 @@
         "content",
         "streaming",
         "compute",
+        "container",
         "proxy",
         "gateway",
         "mcp",

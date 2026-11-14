@@ -95,6 +95,67 @@ class ContainerResources(ContainerModel):
         return self
 
 
+class ContainerAllocation(ContainerModel):
+    """Seller-facing CPU/RAM/scratch allocation, independent of Kubernetes."""
+
+    cpu: str
+    memory: str
+    ephemeral_disk: str
+
+    @model_validator(mode="after")
+    def _quantities(self) -> ContainerAllocation:
+        values = self.quantities()
+        if values["cpu"] % Decimal("0.001"):
+            raise ValueError("CPU must use whole millicores (at least 1m)")
+        if any(values[name] % 1 for name in ("memory", "ephemeral-storage")):
+            raise ValueError("memory and ephemeral_disk must use whole bytes")
+        return self
+
+    def quantities(self) -> dict[str, Decimal]:
+        return {
+            "cpu": resource_quantity(self.cpu),
+            "memory": resource_quantity(self.memory),
+            "ephemeral-storage": resource_quantity(self.ephemeral_disk),
+        }
+
+    def runtime_resources(self) -> ContainerResources:
+        values = {"cpu": self.cpu, "memory": self.memory, "ephemeral-storage": self.ephemeral_disk}
+        return ContainerResources(requests=values, limits=values)
+
+
+class ContainerTierResources(ContainerAllocation):
+    """A channel's total budget and explicit per-replica service allocations.
+
+    A single service/replica may use the whole budget without repeating it.
+    Multi-service or replicated applications must declare every allocation.
+    """
+
+    services: dict[str, ContainerAllocation] | None = Field(default=None, min_length=1)
+
+    def allocate(self, replicas: dict[str, int]) -> dict[str, ContainerResources]:
+        allocations: dict[str, ContainerAllocation]
+        if self.services is None:
+            if len(replicas) != 1 or next(iter(replicas.values())) != 1:
+                raise ValueError(
+                    "resources.services must explicitly allocate every service for multi-service/replica apps"
+                )
+            allocations = {next(iter(replicas)): self}
+        else:
+            allocations = self.services
+        if set(allocations) != set(replicas):
+            raise ValueError("resources.services must name every Compose service exactly once")
+        totals = dict.fromkeys(NATIVE_RESOURCES, Decimal(0))
+        for name, allocation in allocations.items():
+            for resource, quantity in allocation.quantities().items():
+                totals[resource] += quantity * replicas[name]
+        for resource, budget in self.quantities().items():
+            if totals[resource] > budget:
+                raise ValueError(
+                    f"{resource}: service allocations including replicas exceed the channel's total budget"
+                )
+        return {name: allocation.runtime_resources() for name, allocation in allocations.items()}
+
+
 class ContainerHealth(ContainerModel):
     type: Literal["http", "tcp", "exec"]
     path: str | None = None
@@ -160,6 +221,8 @@ class ContainerEntry(ContainerModel):
     name: str = Field(pattern=SERVICE_NAME, max_length=63)
     service: str = Field(pattern=SERVICE_NAME, max_length=63)
     port: StrictInt = Field(ge=1, le=65535)
+    auth: Literal["enrollment_key", "none"] = "enrollment_key"
+    path: str = Field(default="/", pattern=r"^/[^?#]*$")
 
 
 class ContainerManifest(ContainerModel):

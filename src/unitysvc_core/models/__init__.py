@@ -45,7 +45,15 @@ from .channel import (
     SmtpServer,
     UpstreamAccessConfig,
 )
-from .container import ContainerEntry, ContainerHealth, ContainerManifest, ContainerResources, ContainerService
+from .container import (
+    ContainerAllocation,
+    ContainerEntry,
+    ContainerHealth,
+    ContainerManifest,
+    ContainerResources,
+    ContainerService,
+    ContainerTierResources,
+)
 from .documents import DocumentData
 from .listing_data import ServiceListingData
 from .listing_v1 import ListingV1
@@ -129,6 +137,8 @@ __all__ = [
     "ChannelConfig",
     "ContainerChannel",
     "ContainerServer",
+    "ContainerAllocation",
+    "ContainerTierResources",
     "ContainerEntry",
     "ContainerHealth",
     "ContainerManifest",

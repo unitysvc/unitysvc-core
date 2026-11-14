@@ -3,12 +3,21 @@
   "documents": {
     "Application": {
       "category": "container_spec",
+      "description": "Prepared container application shared by both tiers",
       "file_path": "compose.yaml",
+      "is_active": true,
+      "is_public": false,
       "mime_type": "text"
     }
   },
   "name": "echo",
-  "service_type": "compute",
+  "payout_price": {
+    "description": "80% after platform compute cost",
+    "percentage": "80",
+    "type": "revenue_share"
+  },
+  "service_type": "container",
+  "status": "ready",
   "summary": "A disposable HTTP echo instance",
   "time_created": "2026-11-14T00:00:00Z",
   "upstream_access_config": {
@@ -27,25 +36,19 @@
       "description": "Small workflow",
       "entries": [
         {
+          "auth": "enrollment_key",
           "name": "web",
+          "path": "/",
           "port": 5678,
           "service": "web"
         }
       ],
-      "servers": [
-        {
-          "resources": {
-            "web": {
-              "limits": {
-                "cpu": "250m",
-                "ephemeral-storage": "1Gi",
-                "memory": "256Mi"
-              }
-            }
-          },
-          "spec": "Application"
-        }
-      ],
+      "resources": {
+        "cpu": "250m",
+        "ephemeral_disk": "1Gi",
+        "memory": "256Mi"
+      },
+      "spec": "Application",
       "type": "enrollable"
     },
     "medium": {
@@ -63,25 +66,19 @@
       "description": "Larger workflow",
       "entries": [
         {
+          "auth": "enrollment_key",
           "name": "web",
+          "path": "/",
           "port": 5678,
           "service": "web"
         }
       ],
-      "servers": [
-        {
-          "resources": {
-            "web": {
-              "limits": {
-                "cpu": "1",
-                "ephemeral-storage": "2Gi",
-                "memory": "1Gi"
-              }
-            }
-          },
-          "spec": "Application"
-        }
-      ],
+      "resources": {
+        "cpu": "1",
+        "ephemeral_disk": "2Gi",
+        "memory": "1Gi"
+      },
+      "spec": "Application",
       "type": "enrollable"
     }
   }

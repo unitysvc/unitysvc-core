@@ -1,56 +1,116 @@
-# Container offering contract
+# Container service example
 
-`offering.json` offers two named tiers backed by one prepared application.
-`compose.yaml` is the source; `base.manifest.json` and `medium.manifest.json` are
-the normalized runtime fixtures the compute runner consumes.
+This is a complete seller catalog in the existing flat `specs/` layout:
 
-An upstream channel with `access_method: container` is enrollment-only and has
-exactly one `ContainerServer`. `spec` names an offering-scoped `container_spec`
-Document. The channel's `entries` name internal service ports; central generates
-instance URLs. No instance URL goes in `user_access_interfaces`.
+```text
+specs/hashicorp/echo/
+├── provider.json      # Project behind the software
+├── offering.json      # Container channels, technical Document and payout
+├── listing.json       # Customer prices, enrollment settings and documents
+├── compose.yaml       # Prepared application, uploaded as a Document
+├── connectivity.py    # Required connectivity test, uploaded unchanged
+└── README.md          # Customer getting-started document
+```
 
-Each server's `resources` maps **every Compose service** to one replica's
-Kubernetes-style `requests` / `limits`. CPU, memory and `ephemeral-storage` are
-explicit. A value given on only one side is copied across. Requests cannot exceed
-limits; extended resources such as `nvidia.com/gpu` need equal integer quantities.
-There is no second aggregate tier budget to split: totals are derived from these
-allocations multiplied by each service's `deploy.replicas`. Runtime surge/quota
-headroom is separate from the tier allocation. Pricing and placement stay central.
+`provider.name` is `hashicorp`, `offering.name` is the bare `echo`, and
+`listing.name` is `hashicorp/echo`, matching its folder. A seller publishes the
+service; the provider credits the project behind the software. `service.json`
+is CLI-managed, records the service ID after upload, and is not authored here.
 
-The existing `compute` service type describes this example. Container execution
-does not force that classification: a self-hosted LLM can retain `service_type:
-llm`. Resource consent is an explicit required `resource:container` / `create`
-customer access request, through the existing grant mechanism.
+## Extend the existing spec
 
-## Initial source subset
+The offering uses `service_type: container` and two upstream channels, `base`
+and `medium`. Each has `access_method: container`, a customer-facing description,
+a resource budget, entries and a required `resource:container` / `create` request.
+A hosted app may keep another catalog classification, such as `llm`.
 
-Container services require a `connectivity_test` document, just like other
-services. The generic unitysvc-data test pulls and starts these prepared images
-and checks health. Sellers may run that same script locally before uploading it;
-it is not a separate optional document category. Backend execution must supply
-the normalized manifest and a Docker-capable test environment.
+The application is an ordinary offering-scoped `DocumentData` record, under the
+title `Application`, with the new `category: container_spec`, `mime_type: text`
+and `file_path: compose.yaml`. Each channel's `spec` references **that title**.
+The existing upload pipeline sends the file bytes through content-addressed
+Document storage; no separate app catalog or uploaded per-tier manifest exists.
+The source Document belongs on the offering because its contents define what
+all listings of that offering execute.
 
-- Prepared images pinned by SHA-256 digest; execution nodes do not build images.
-- `services`, `image`, internal TCP `ports`/`expose`, explicit `environment`,
-  `entrypoint`, `command`, `deploy.replicas`, `healthcheck` or native `health`.
-- Compose `entrypoint` overrides the image entrypoint (runtime `command`);
-  Compose `command` overrides its CMD (runtime `args`). String forms are split
-  into arguments; shell execution must be explicit.
-- `healthcheck.test` CMD maps to an exec check; CMD-SHELL/string maps to
-  `/bin/sh -c`. Interval, timeout, retries and start period map to the runner's
-  existing fields, at whole-second resolution. Native HTTP/TCP/exec checks are
-  also accepted. Kubernetes defaults the omitted timings; the runner validates
-  start period against its configured rollout deadline.
-- Missing/disabled health falls back to TCP on the first declared port. With
-  no port/check, readiness means the container started. Image-embedded Docker
-  HEALTHCHECK instructions are not used by Kubernetes.
-- Build, volumes/persistence, host access, published ports, UDP, dependency
-  ordering, arbitrary networks and implicit host environment inheritance are
-  rejected. Source/secret preparation and entry authentication remain outside
-  this initial execution contract. A health test does not certify those features.
+The listing uses existing `list_price: {type: channel, ...}` pricing with hourly
+rates for both tiers and the offering's existing revenue-share `payout_price`.
+`service_options.enrollment` requires enrollment and caps instances per customer.
+Its Documents contain the required `connectivity_test` and a `getting_started`
+page. Instance URLs are generated per enrollment and are never authored in
+`user_access_interfaces`.
 
-`normalize_container_spec` is a pure compiler. It validates entry targets and
-returns `ContainerManifest`; its deterministic JSON and content hash can be tied
-to the accepted offering revision. The schemas are generated by
-`scripts/generate_schemas.py`. Static seller validation compiles local referenced
-documents as well as checking the offering metadata.
+Entries declare `name`, `service`, `port`, `auth` (`enrollment_key` or `none`)
+and optional `path` (default `/`). These describe central/edge access policy;
+local Docker health checks do not enforce or certify that policy. Entry
+hostnames are assigned by central, not the seller.
+
+## Resources belong to the channel
+
+`resources.cpu`, `memory` and `ephemeral_disk` are the total tier budget, using
+explicit core/byte quantities. A single service with one replica receives that
+budget. Multi-service or replicated applications must declare every service's
+**per-replica** allocation within the same channel:
+
+```json
+"resources": {
+  "cpu": "1", "memory": "1Gi", "ephemeral_disk": "4Gi",
+  "services": {
+    "web": {"cpu": "250m", "memory": "256Mi", "ephemeral_disk": "1Gi"},
+    "worker": {"cpu": "100m", "memory": "128Mi", "ephemeral_disk": "512Mi"}
+  }
+}
+```
+
+The compiler multiplies each allocation by its Compose `deploy.replicas` and
+rejects sums above the total budget. There is no automatic division between
+services. Allocations are converted internally into equal Kubernetes requests
+and limits; `ephemeral_disk` maps to `ephemeral-storage`. The initial seller
+format accepts CPU, RAM and scratch disk; GPU/other hardware and persistent
+storage are excluded. Placement and base-cost pricing remain backend work.
+
+## Validate and test locally
+
+With the matching core/seller changes installed and Docker available, run from
+this directory:
+
+```bash
+usvc seller specs validate
+usvc seller specs format
+usvc seller specs run-tests hashicorp/echo --category connectivity_test --skip-links
+```
+
+The local command compiles the selected channel and referenced Compose Document
+in memory, then runs the same uploaded connectivity script against every tier.
+No `base.manifest.json` or `medium.manifest.json` is required. The script in this
+folder is a copy of unitysvc-data's generic `container_connectivity_v1`; it keeps
+this example self-contained while the companion package changes are reviewed.
+Sellers may instead use the existing preset mechanism in `listing.json`:
+
+```json
+"Connectivity test": {"$doc_preset": "container_connectivity_v1"}
+```
+
+The test pulls the existing digest-pinned image, starts services and checks
+health; it never builds an image. Local execution is optional, while the
+connectivity Document remains required. The backend test executor must provide
+the same normalized manifest and Docker capability. Backend execution, review
+integration, entry authentication, deployment and billing are subsequent work;
+this example has not been uploaded or activated.
+
+## Initial Compose subset
+
+Accepted source fields are `services`, prepared digest-pinned `image`, internal
+TCP `ports`/`expose`, explicit `environment`, `entrypoint`, `command`,
+`deploy.replicas`, and `healthcheck` or native HTTP/TCP/exec `health`.
+Compose entrypoint maps to runtime command and Compose command to runtime args.
+String forms are split into arguments; shell execution must be explicit.
+`healthcheck` CMD/CMD-SHELL and whole-second timings map to the compute health
+fields. Missing health falls back to TCP on the first declared port, then running
+state when there are no ports. Image-embedded HEALTHCHECK is not used.
+
+Build declarations, volumes, host access, published ports, UDP, dependency
+ordering, arbitrary networks and host environment inheritance are rejected.
+Platform-injected environment references and secret delivery are not implemented
+by this initial compiler; the reference image requires neither. Scratch files
+may disappear on restart, replacement, suspension or cancellation. Passing the
+local test does not certify Kubernetes/gVisor behavior or disk quotas.
