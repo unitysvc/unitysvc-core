@@ -218,6 +218,10 @@ RESOURCES: dict[str, Exports] = {
             },
         },
     ),
+    "container": Exports(
+        {"create": ()},
+        {"type": "object", "additionalProperties": False, "properties": {}},
+    ),
 }
 
 _REQUEST_KEYS = frozenset({"object", "permissions", "required", "justification", "options", "limits"})
@@ -632,6 +636,8 @@ def check_resource(where: str, obj: str, permissions: list[str], options: dict[s
     check_claim(where, obj, permissions, options, RESOURCES[obj.removeprefix(RESOURCE_PREFIX)])
     if limits:
         raise ValueError(f"{where}.limits: {obj} is provisioned, not called; it takes no limits")
+    if obj == "resource:container":
+        return
     kind = options.get(ROOM_KIND)
     if kind is None:
         raise ValueError(

@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import ConfigDict, Field, HttpUrl, field_validator, model_validator
 
-from .channel import UpstreamAccessConfig
+from .channel import ContainerChannel, UpstreamAccessConfig
 from .documents import DocumentData
 from .offering_data import ServiceOfferingData
 from .pricing import Pricing
@@ -68,6 +68,19 @@ class OfferingV1(ServiceOfferingData):
         channel_less = not self.upstream_access_config.root
         if errors := validate_details_links(self.details, channel_less=channel_less):
             raise ValueError("; ".join(errors))
+        return self
+
+    @model_validator(mode="after")
+    def _container_documents(self) -> "OfferingV1":
+        for channel in self.upstream_access_config.root.values():
+            if not isinstance(channel, ContainerChannel):
+                continue
+            for server in channel.servers:
+                document = (self.documents or {}).get(server.spec)
+                if document is None or document.category.value != "container_spec":
+                    raise ValueError(f"container spec {server.spec!r} must name an offering container_spec document")
+                if not document.file_path or document.external_url:
+                    raise ValueError("a container_spec needs a local file_path; remote specifications are unsupported")
         return self
 
     @field_validator("name")

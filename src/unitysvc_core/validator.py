@@ -1009,6 +1009,11 @@ class DataValidator:
         pydantic_errors = self.validate_with_pydantic_model(data, schema_name)
         errors.extend(pydantic_errors)
 
+        if schema_name == "offering_v1" and service_dir is not None and not pydantic_errors:
+            from .containers import validate_container_documents
+
+            errors.extend(validate_container_documents(data, service_dir))
+
         # Validate file references in Union[str, HttpUrl] fields and file_path fields
         errors.extend(self._file_reference_errors(data, service_dir, self._union_fields[schema_name]))
 

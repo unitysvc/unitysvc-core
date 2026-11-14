@@ -30,6 +30,8 @@ from .channel import (
     RETIRED_CHANNEL_KEYS,
     ChannelConfig,
     ChannelParams,
+    ContainerChannel,
+    ContainerServer,
     HttpChannel,
     HttpServer,
     McpChannel,
@@ -43,6 +45,7 @@ from .channel import (
     SmtpServer,
     UpstreamAccessConfig,
 )
+from .container import ContainerEntry, ContainerHealth, ContainerManifest, ContainerResources, ContainerService
 from .documents import DocumentData
 from .listing_data import ServiceListingData
 from .listing_v1 import ListingV1
@@ -124,6 +127,13 @@ __all__ = [
     # Upstream access channels
     "UpstreamAccessConfig",
     "ChannelConfig",
+    "ContainerChannel",
+    "ContainerServer",
+    "ContainerEntry",
+    "ContainerHealth",
+    "ContainerManifest",
+    "ContainerResources",
+    "ContainerService",
     "ChannelParams",
     "HttpChannel",
     "SmtpChannel",

@@ -25,6 +25,8 @@ import json
 import sys
 from pathlib import Path
 
+from unitysvc_core.containers import ContainerSpec
+from unitysvc_core.models.container import ContainerManifest
 from unitysvc_core.models.listing_v1 import ListingV1
 from unitysvc_core.models.offering_v1 import OfferingV1
 from unitysvc_core.models.promotion_data import PromotionV1
@@ -34,6 +36,8 @@ from unitysvc_core.models.service_group_data import ServiceGroupV1
 SCHEMA_DIR = Path(__file__).resolve().parent.parent / "src" / "unitysvc_core" / "schema"
 
 MODELS = {
+    "container_manifest_v1": ContainerManifest,
+    "container_spec_v1": ContainerSpec,
     "offering_v1": OfferingV1,
     "listing_v1": ListingV1,
     "provider_v1": ProviderV1,

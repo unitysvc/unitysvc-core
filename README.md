@@ -61,7 +61,11 @@ pip install unitysvc-core
 ```
 
 Dependencies: `pydantic`, `email-validator`, `jsonschema`, `jinja2`,
-`tomli-w`. No `typer`, no `rich`, no `httpx`.
+`tomli-w`, `PyYAML`. No `typer`, no `rich`, no `httpx`.
+
+Container offerings use a restricted Compose source document and per-channel
+resource allocations. See the [container contract and two-tier example](examples/container/README.md)
+for the source subset, normalized runtime manifest, and connectivity-test requirements.
 
 ## Usage
 

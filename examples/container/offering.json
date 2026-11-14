@@ -1,0 +1,88 @@
+{
+  "description": "Reference container offering with two seller-defined resource tiers.",
+  "documents": {
+    "Application": {
+      "category": "container_spec",
+      "file_path": "compose.yaml",
+      "mime_type": "text"
+    }
+  },
+  "name": "echo",
+  "service_type": "compute",
+  "summary": "A disposable HTTP echo instance",
+  "time_created": "2026-11-14T00:00:00Z",
+  "upstream_access_config": {
+    "base": {
+      "access_method": "container",
+      "customer_access_requests": [
+        {
+          "justification": "Run a disposable application instance for this enrollment",
+          "object": "resource:container",
+          "permissions": [
+            "create"
+          ],
+          "required": true
+        }
+      ],
+      "description": "Small workflow",
+      "entries": [
+        {
+          "name": "web",
+          "port": 5678,
+          "service": "web"
+        }
+      ],
+      "servers": [
+        {
+          "resources": {
+            "web": {
+              "limits": {
+                "cpu": "250m",
+                "ephemeral-storage": "1Gi",
+                "memory": "256Mi"
+              }
+            }
+          },
+          "spec": "Application"
+        }
+      ],
+      "type": "enrollable"
+    },
+    "medium": {
+      "access_method": "container",
+      "customer_access_requests": [
+        {
+          "justification": "Run a disposable application instance for this enrollment",
+          "object": "resource:container",
+          "permissions": [
+            "create"
+          ],
+          "required": true
+        }
+      ],
+      "description": "Larger workflow",
+      "entries": [
+        {
+          "name": "web",
+          "port": 5678,
+          "service": "web"
+        }
+      ],
+      "servers": [
+        {
+          "resources": {
+            "web": {
+              "limits": {
+                "cpu": "1",
+                "ephemeral-storage": "2Gi",
+                "memory": "1Gi"
+              }
+            }
+          },
+          "spec": "Application"
+        }
+      ],
+      "type": "enrollable"
+    }
+  }
+}

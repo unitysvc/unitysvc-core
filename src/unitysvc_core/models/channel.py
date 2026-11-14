@@ -46,6 +46,7 @@ from pydantic import (
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
 
+from .container import ContainerEntry, ContainerResources
 from .validators import validate_channel_name
 
 # A string field that is a value or a template rendering to one.
@@ -357,6 +358,41 @@ class _ChannelBase(BaseModel):
         return json_schema
 
 
+class ContainerServer(_Server):
+    """One prepared application, referenced by offering-scoped document title."""
+
+    spec: str = Field(min_length=1, description="Title of an offering's container_spec document")
+    resources: dict[str, ContainerResources] = Field(
+        min_length=1, description="Per-replica allocation keyed by Compose service"
+    )
+
+
+class ContainerChannel(_ChannelBase):
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"anyOf": [{"required": ["servers"]}, {"required": ["spec", "resources"]}]},
+    )
+    server_model: ClassVar[builtins.type[_Server]] = ContainerServer
+    access_method: Literal["container"]
+    type: Literal["enrollable"] = "enrollable"
+    servers: list[ContainerServer] = Field(default_factory=list, min_length=1, max_length=1)
+    entries: list[ContainerEntry] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _resource_consent(self) -> "ContainerChannel":
+        if len(self.servers) != 1:
+            raise ValueError("a container channel needs exactly one application server")
+        if not any(
+            claim.get("object") == "resource:container"
+            and isinstance(claim.get("permissions"), list)
+            and "create" in claim["permissions"]
+            and claim.get("required") is True
+            for claim in self.customer_access_requests or []
+        ):
+            raise ValueError("a container channel must request required resource:container create permission")
+        return self
+
+
 class HttpChannel(_ChannelBase):
     server_model: ClassVar[builtins.type[_Server]] = HttpServer
     access_method: Literal["http"] = "http"
@@ -406,11 +442,12 @@ ChannelConfig = Annotated[
     Annotated[HttpChannel, Tag("http")]
     | Annotated[SmtpChannel, Tag("smtp")]
     | Annotated[S3Channel, Tag("s3")]
-    | Annotated[McpChannel, Tag("mcp")],
+    | Annotated[McpChannel, Tag("mcp")]
+    | Annotated[ContainerChannel, Tag("container")],
     Discriminator(
         _access_method,
         custom_error_type="invalid_access_method",
-        custom_error_message="access_method must be one of 'http', 'smtp', 's3', 'mcp'",
+        custom_error_message="access_method must be one of 'http', 'smtp', 's3', 'mcp', 'container'",
     ),
 ]
 """One upstream access channel; ``access_method`` (default ``http``) selects its server type."""

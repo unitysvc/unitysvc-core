@@ -8,6 +8,7 @@
         "code_example",
         "code_example_output",
         "connectivity_test",
+        "container_spec",
         "request_template",
         "use_case",
         "troubleshooting",

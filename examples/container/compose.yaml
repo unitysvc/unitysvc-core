@@ -1,0 +1,11 @@
+services:
+  web:
+    image: docker.io/hashicorp/http-echo@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186
+    command: ["-listen=:5678", "-text=healthy"]
+    expose: [5678]
+    healthcheck:
+      test: [CMD, /http-echo, -version]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 10s

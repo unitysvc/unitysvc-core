@@ -283,6 +283,341 @@
       "title": "ConstantPriceData",
       "type": "object"
     },
+    "ContainerChannel": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "servers"
+          ]
+        },
+        {
+          "required": [
+            "spec",
+            "resources"
+          ]
+        }
+      ],
+      "properties": {
+        "acceptable_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats this server accepts",
+          "title": "Acceptable Formats"
+        },
+        "access_method": {
+          "const": "container",
+          "title": "Access Method",
+          "type": "string"
+        },
+        "applicable_interfaces": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The user access interfaces that reach this channel (display only)",
+          "title": "Applicable Interfaces"
+        },
+        "customer_access_requests": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the enrolling customer is asked to approve; see unitysvc_core.grants",
+          "title": "Customer Access Requests"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/ContainerEntry"
+          },
+          "title": "Entries",
+          "type": "array"
+        },
+        "is_active": {
+          "default": true,
+          "title": "Is Active",
+          "type": "boolean"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Server name, unique within the channel",
+          "title": "Name"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChannelParams"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rate_limit_refs": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Names of the provider's rate limits this channel consumes",
+          "title": "Rate Limit Refs"
+        },
+        "request_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats the channel serves",
+          "title": "Request Formats"
+        },
+        "resources": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ContainerResources"
+          },
+          "description": "Per-replica allocation keyed by Compose service",
+          "minProperties": 1,
+          "title": "Resources",
+          "type": "object"
+        },
+        "servers": {
+          "items": {
+            "$ref": "#/$defs/ContainerServer"
+          },
+          "maxItems": 1,
+          "minItems": 1,
+          "title": "Servers",
+          "type": "array"
+        },
+        "sort_order": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Channel rank, lowest first",
+          "title": "Sort Order"
+        },
+        "spec": {
+          "description": "Title of an offering's container_spec document",
+          "minLength": 1,
+          "title": "Spec",
+          "type": "string"
+        },
+        "type": {
+          "const": "enrollable",
+          "default": "enrollable",
+          "title": "Type",
+          "type": "string"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative share of traffic among the channel's servers",
+          "title": "Weight"
+        }
+      },
+      "required": [
+        "access_method"
+      ],
+      "title": "ContainerChannel",
+      "type": "object"
+    },
+    "ContainerEntry": {
+      "additionalProperties": false,
+      "description": "A public entry target. Central assigns its hostname at instance creation.",
+      "properties": {
+        "name": {
+          "maxLength": 63,
+          "pattern": "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$",
+          "title": "Name",
+          "type": "string"
+        },
+        "port": {
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Port",
+          "type": "integer"
+        },
+        "service": {
+          "maxLength": 63,
+          "pattern": "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$",
+          "title": "Service",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "service",
+        "port"
+      ],
+      "title": "ContainerEntry",
+      "type": "object"
+    },
+    "ContainerResources": {
+      "additionalProperties": false,
+      "description": "One replica's allocation. Each tier explicitly budgets CPU, RAM and disk.\n\nA resource given only as a request or limit is copied to the other side.\nExtended resources use integer quantities and equal requests and limits.",
+      "properties": {
+        "limits": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Limits",
+          "type": "object"
+        },
+        "requests": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Requests",
+          "type": "object"
+        }
+      },
+      "title": "ContainerResources",
+      "type": "object"
+    },
+    "ContainerServer": {
+      "additionalProperties": false,
+      "description": "One prepared application, referenced by offering-scoped document title.",
+      "properties": {
+        "acceptable_formats": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Request formats this server accepts",
+          "title": "Acceptable Formats"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Server name, unique within the channel",
+          "title": "Name"
+        },
+        "resources": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ContainerResources"
+          },
+          "description": "Per-replica allocation keyed by Compose service",
+          "minProperties": 1,
+          "title": "Resources",
+          "type": "object"
+        },
+        "spec": {
+          "description": "Title of an offering's container_spec document",
+          "minLength": 1,
+          "title": "Spec",
+          "type": "string"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative share of traffic among the channel's servers",
+          "title": "Weight"
+        }
+      },
+      "required": [
+        "spec",
+        "resources"
+      ],
+      "title": "ContainerServer",
+      "type": "object"
+    },
     "CountPriceData": {
       "additionalProperties": false,
       "description": "Price data for count-scaled pricing (API calls, events, requests).\n\nSupported types: ``one_thousand``, ``one_million``.  The ``count``\nequivalence-group field is the base unit.\n\nUsage can be provided as ``count``, ``one_thousand``, or\n``one_million`` — cross-unit conversion is automatic.\n\nNote: ``image`` and ``step`` pricing types also use ``count`` but have\ntheir own dedicated classes (``ImagePriceData``, ``StepPriceData``).",
@@ -429,6 +764,7 @@
         "code_example",
         "code_example_output",
         "connectivity_test",
+        "container_spec",
         "request_template",
         "use_case",
         "troubleshooting",
@@ -3759,6 +4095,9 @@
           },
           {
             "$ref": "#/$defs/McpChannel"
+          },
+          {
+            "$ref": "#/$defs/ContainerChannel"
           }
         ]
       },

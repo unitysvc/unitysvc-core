@@ -1,0 +1,262 @@
+{
+  "$defs": {
+    "ContainerHealth": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "failure_threshold": {
+          "anyOf": [
+            {
+              "maximum": 30,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Threshold"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "period_seconds": {
+          "anyOf": [
+            {
+              "maximum": 300,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Period Seconds"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Port"
+        },
+        "start_period_seconds": {
+          "anyOf": [
+            {
+              "maximum": 2147483647,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start Period Seconds"
+        },
+        "success_threshold": {
+          "anyOf": [
+            {
+              "maximum": 10,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Success Threshold"
+        },
+        "timeout_seconds": {
+          "anyOf": [
+            {
+              "maximum": 300,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout Seconds"
+        },
+        "type": {
+          "enum": [
+            "http",
+            "tcp",
+            "exec"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ContainerHealth",
+      "type": "object"
+    },
+    "ContainerResources": {
+      "additionalProperties": false,
+      "description": "One replica's allocation. Each tier explicitly budgets CPU, RAM and disk.\n\nA resource given only as a request or limit is copied to the other side.\nExtended resources use integer quantities and equal requests and limits.",
+      "properties": {
+        "limits": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Limits",
+          "type": "object"
+        },
+        "requests": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Requests",
+          "type": "object"
+        }
+      },
+      "title": "ContainerResources",
+      "type": "object"
+    },
+    "ContainerService": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "health": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContainerHealth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "image": {
+          "pattern": "^\\S+@sha256:[0-9a-f]{64}$",
+          "title": "Image",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 63,
+          "pattern": "^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$",
+          "title": "Name",
+          "type": "string"
+        },
+        "ports": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Ports",
+          "type": "array"
+        },
+        "replicas": {
+          "default": 1,
+          "maximum": 2147483647,
+          "minimum": 1,
+          "title": "Replicas",
+          "type": "integer"
+        },
+        "resources": {
+          "$ref": "#/$defs/ContainerResources"
+        }
+      },
+      "required": [
+        "name",
+        "image",
+        "resources"
+      ],
+      "title": "ContainerService",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "services": {
+      "items": {
+        "$ref": "#/$defs/ContainerService"
+      },
+      "minItems": 1,
+      "title": "Services",
+      "type": "array"
+    }
+  },
+  "required": [
+    "services"
+  ],
+  "title": "ContainerManifest",
+  "type": "object"
+}

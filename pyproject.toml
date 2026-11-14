@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unitysvc-core"
-version = "0.3.9"
+version = "0.3.10"
 description = "Shared data models and validation helpers for UnitySVC packages"
 readme = "README.md"
 authors = [{ name = "Bo Peng", email = "bo.peng@unitysvc.com" }]
@@ -22,6 +22,7 @@ dependencies = [
   "jsonschema>=4.18",
   "jinja2",
   "tomli-w",
+  "PyYAML>=6.0",
   # Presets exposed under $<fn> sentinels that load_data_file expands
   # transparently after parse + override-merge. The actual set of
   # recognised sentinel keys is discovered dynamically from

@@ -88,6 +88,7 @@ class DocumentCategoryEnum(StrEnum):
     code_example = "code_example"
     code_example_output = "code_example_output"
     connectivity_test = "connectivity_test"  # Test connectivity & performance (not visible to users)
+    container_spec = "container_spec"  # Reviewed Compose subset for a container channel
     request_template = "request_template"  # Default request body for playground pre-fill
     use_case = "use_case"
     troubleshooting = "troubleshooting"
