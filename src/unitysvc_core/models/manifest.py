@@ -93,7 +93,7 @@ class ManifestScratch(BaseModel):
     @field_validator("path")
     @classmethod
     def _normalized(cls, value: str) -> str:
-        if posixpath.normpath(value) != value or value == "/":
+        if posixpath.normpath(value) != value or value == "/" or value.startswith("//"):
             raise ValueError("path must be normalized (no '..', '.', '//' or trailing '/') and below /")
         return value
 

@@ -1343,7 +1343,7 @@ class TestReviewFixes:
             assert "bad_value" in _codes(validate_instance_spec(text)), bad
         text = _with_volumes([{"type": "volume", "source": "v", "target": "/data"}, "/data/../data"])
         assert "duplicate_mount" in _codes(validate_instance_spec(text))
-        for bad in ("/data/..", "/a//b", "/a/", "/"):
+        for bad in ("/data/..", "/a//b", "/a/", "/", "//", "//data"):
             with pytest.raises(ValidationError):
                 NormalizedManifest.model_validate(
                     {"services": [{"name": "a", "image": "i", "scratch": [{"path": bad}]}]}
