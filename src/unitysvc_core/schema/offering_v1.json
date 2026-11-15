@@ -285,7 +285,7 @@
     },
     "ContainerChannel": {
       "additionalProperties": false,
-      "description": "A tier of a service that runs as instances on Kubernetes (unitysvc/unitysvc-core#105).\n\n``spec`` is the title of an ``instance_spec`` Document, written directly on\nthe channel; ``resources`` is the tier total. ``servers`` is optional and\nhas no container-specific meaning: each is an ordinary ``HttpServer`` the\ngateway reaches, and the listing rule (an enrollable channel and a matching\n``/e/{{ enrollment.code }}`` interface) is checked by the validator, which\nsees the listing. ``entries`` is PROVISIONAL (#105 open 1 and 2).",
+      "description": "A tier of a service that runs as instances on Kubernetes (unitysvc/unitysvc-core#105).\n\nThe instance spec is the offering's single ``instance_spec`` Document (or its\n``instance_spec`` shortcut) and every container channel runs it; ``resources``\nis the tier total. ``spec``, once the title of that Document, is deprecated. ``servers`` is optional and\nhas no container-specific meaning: each is an ordinary ``HttpServer`` the\ngateway reaches, and the listing rule (an enrollable channel and a matching\n``/e/{{ enrollment.code }}`` interface) is checked by the validator, which\nsees the listing. ``entries`` is PROVISIONAL (#105 open 1 and 2).",
       "properties": {
         "acceptable_formats": {
           "anyOf": [
@@ -739,10 +739,19 @@
           "title": "Sort Order"
         },
         "spec": {
-          "description": "Title of the instance_spec Document that defines the instance",
-          "minLength": 1,
-          "title": "Spec",
-          "type": "string"
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "deprecated": true,
+          "description": "DEPRECATED (unitysvc/unitysvc-core#107): omit it. An offering has one instance_spec Document, so there is nothing to name; if given it must be that Document's title. Removed in a later version",
+          "title": "Spec"
         },
         "tls_verify": {
           "anyOf": [
@@ -807,7 +816,6 @@
       },
       "required": [
         "access_method",
-        "spec",
         "resources"
       ],
       "title": "ContainerChannel",
@@ -4512,6 +4520,25 @@
       "default": null,
       "description": "How other services may use this one (what a customer access request can ask for): {\"permissions\": {<name>: [\"<METHOD> /<path>\", ...]}, \"options\": <JSON Schema object of the options a grant may set>, \"options_ui_schema\": <rjsf uiSchema>}. Without permissions, the service exports one, invoke, on every route; with permissions, exactly those (invoke only if declared), so a data service declaring read/write is never reached by invoke or service:*. Omitted: invoke only, no options. See unitysvc_core.grants.",
       "title": "Exports"
+    },
+    "instance_spec": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "format": "uri",
+          "maxLength": 2083,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The Compose file a container service runs: a path relative to this file, or an https URL (a snapshot source, fetched once at upload). Shortcut for one instance_spec Document",
+      "title": "Instance Spec"
     },
     "logo": {
       "anyOf": [

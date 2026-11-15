@@ -1,5 +1,6 @@
 """Data validation module for unitysvc_core."""
 
+import hashlib
 import json
 import re
 import warnings
@@ -12,6 +13,7 @@ from jsonschema.validators import Draft7Validator
 
 from .grants import ExportsResolver
 from .instance_spec import (
+    INSTANCE_SPEC_TITLE,
     InstanceSpecIssue,
     instance_spec_format,
     validate_instance_spec,
@@ -712,44 +714,77 @@ class DataValidator:
         except (OSError, UnicodeDecodeError):
             return None  # a missing file is reported by the file-reference checks
 
+    @staticmethod
+    def _instance_spec_document(offering: dict[str, Any] | None) -> tuple[str, dict[str, Any]] | None:
+        """The offering's one instance spec as ``(title, document)``: the shortcut, else the Document.
+
+        ``None`` when there is none or more than one; the offering model reports those.
+        """
+        if not isinstance(offering, dict):
+            return None
+        documents = offering.get("documents")
+        found = [
+            (title, doc)
+            for title, doc in (documents if isinstance(documents, dict) else {}).items()
+            if isinstance(doc, dict) and doc.get("category") == "instance_spec"
+        ]
+        shortcut = offering.get("instance_spec")
+        if isinstance(shortcut, str) and shortcut:
+            key = "external_url" if "://" in shortcut else "file_path"
+            found.append((INSTANCE_SPEC_TITLE, {"category": "instance_spec", key: shortcut}))
+        return found[0] if len(found) == 1 else None
+
     def check_instance_specs(
         self, offering: dict[str, Any] | None, service_dir: Path | None
     ) -> tuple[list[str], list[InstanceSpecIssue]]:
-        """Validate the instance spec each container channel runs (unitysvc/unitysvc-core#105).
+        """Validate the instance spec an offering's container channels run (unitysvc/unitysvc-core#105, #107).
 
-        Returns ``(errors, warnings)``. The spec is a document of category
-        ``instance_spec`` named by the channel's ``spec``; its Compose content is
-        checked against the channel (entries, resource split). A spec is checked
-        once per channel, as each tier's resources differ. Errors are shared with
-        backend ingest, through :func:`validate_instance_spec`.
+        Returns ``(errors, warnings)``. The spec is the offering's one
+        ``instance_spec`` (the shortcut or a Document); its Compose content is
+        checked against each container channel (entries, resource split), as each
+        tier's resources differ. A spec given as a URL is not fetched here: the
+        backend validates the snapshot it takes. A channel's deprecated ``spec`` warns,
+        and errors when it names another title. Errors are shared with backend
+        ingest, through :func:`validate_instance_spec`.
         """
         from .models.channel import ContainerChannel
 
         errors: list[str] = []
         warnings: list[InstanceSpecIssue] = []
-        documents = offering.get("documents") if isinstance(offering, dict) else None
-        documents = documents if isinstance(documents, dict) else {}
-        for name, raw in self._container_channels(offering).items():
+        channels = self._container_channels(offering)
+        found = self._instance_spec_document(offering) if channels else None
+        if found is None:
+            return errors, warnings
+        title, doc = found
+        fmt = instance_spec_format(doc.get("meta"))
+        text = self._document_text(doc, service_dir)
+        pinned = (doc.get("meta") or {}).get("sha256")
+        if text is not None and isinstance(pinned, str) and hashlib.sha256(text.encode()).hexdigest() != pinned:
+            errors.append(f"instance spec {title!r}: the file does not match meta.sha256 {pinned}")
+        for name, raw in channels.items():
             at = f"upstream_access_config.{name}"
             try:
                 channel = ContainerChannel.model_validate(raw)
             except ValueError:
                 continue  # the channel's own errors are reported by the schema checks
-            doc = documents.get(channel.spec)
-            if not isinstance(doc, dict):
-                errors.append(f"{at}.spec: no document titled {channel.spec!r} in the offering's documents")
-                continue
-            if doc.get("category") != "instance_spec":
-                errors.append(f"{at}.spec: document {channel.spec!r} must have category 'instance_spec'")
-                continue
-            fmt = instance_spec_format(doc.get("meta"))
-            text = self._document_text(doc, service_dir)
-            if text is None:
-                if "file_path" not in doc and "file_content" not in doc:
-                    errors.append(f"{at}.spec: document {channel.spec!r} has no file_path to read the spec from")
-                continue
+            if channel.spec is not None:
+                if channel.spec != title:
+                    errors.append(
+                        f"{at}.spec: {channel.spec!r} is not the offering's instance spec {title!r}; "
+                        "an offering has one, so omit 'spec'"
+                    )
+                warnings.append(
+                    InstanceSpecIssue(
+                        code="deprecated_spec",
+                        path=at,
+                        message="'spec' is deprecated and will be removed: an offering has one instance spec, omit it",
+                        loud=False,
+                    )
+                )
+            if text is None or doc.get("external_url") is not None:
+                continue  # a URL is validated by the backend on the snapshot; a missing file by the file checks
             report = validate_instance_spec(text, format=fmt, channel=channel)
-            errors.extend(f"{at}.spec ({channel.spec!r}): {issue}" for issue in report.errors)
+            errors.extend(f"{at}.instance_spec ({title!r}): {issue}" for issue in report.errors)
             warnings.extend(issue.model_copy(update={"path": f"{at}: {issue.path}"}) for issue in report.warnings)
         return errors, warnings
 

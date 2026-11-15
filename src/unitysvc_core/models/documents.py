@@ -60,9 +60,24 @@ class DocumentData(BaseModel):
     def _instance_spec_format(self) -> DocumentData:
         """An ``instance_spec`` states its format in ``meta.format`` (default ``compose``); only that is accepted."""
         if self.category == DocumentCategoryEnum.instance_spec:
-            from ..instance_spec import SUPPORTED_FORMATS, instance_spec_format, unsupported_format_message
+            from ..instance_spec import (
+                SUPPORTED_FORMATS,
+                instance_spec_format,
+                sha256_error,
+                snapshot_url_error,
+                unsupported_format_message,
+            )
 
             fmt = instance_spec_format(self.meta)
             if fmt not in SUPPORTED_FORMATS:
                 raise ValueError(unsupported_format_message((self.meta or {}).get("format")))
+            if (self.file_path is None) == (self.external_url is None):
+                raise ValueError("an instance_spec Document has exactly one of file_path or external_url")
+            if self.external_url is not None and (problem := snapshot_url_error(self.external_url)):
+                raise ValueError(f"instance_spec external_url {problem}")
+            meta = self.meta or {}
+            if "source" in meta and (problem := snapshot_url_error(meta["source"])):
+                raise ValueError(f"instance_spec meta.source {problem}")
+            if "sha256" in meta and (problem := sha256_error(meta["sha256"])):
+                raise ValueError(f"instance_spec meta.sha256 {problem}")
         return self

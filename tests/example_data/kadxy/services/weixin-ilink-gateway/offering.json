@@ -1,6 +1,7 @@
 {
   "name": "weixin-ilink-gateway",
   "service_type": "container",
+  "instance_spec": "compose.yaml",
   "summary": "HTTP gateway for the WeChat iLink Bot protocol: QR login, messaging, webhook push",
   "details": {
     "links": {
@@ -12,22 +13,10 @@
     "percentage": "80",
     "description": "80% after platform compute cost"
   },
-  "documents": {
-    "Application": {
-      "category": "instance_spec",
-      "file_path": "compose.yaml",
-      "mime_type": "text",
-      "meta": {
-        "format": "compose"
-      },
-      "is_public": false
-    }
-  },
   "upstream_access_config": {
     "base": {
       "access_method": "container",
       "description": "One WeChat bot account",
-      "spec": "Application",
       "resources": {
         "limits": {
           "cpu": "250m",
