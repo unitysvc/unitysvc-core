@@ -768,7 +768,9 @@ class DataValidator:
                 continue  # the channel's own errors are reported by the schema checks
             if text is None or doc.get("external_url") is not None:
                 continue  # a URL is validated by the backend on the snapshot; a missing file by the file checks
-            report = validate_instance_spec(text, format=fmt, channel=channel)
+            report = validate_instance_spec(
+                text, format=fmt, channel=channel, environment=(doc.get("meta") or {}).get("environment")
+            )
             errors.extend(f"{at}.instance_spec ({title!r}): {issue}" for issue in report.errors)
             warnings.extend(issue.model_copy(update={"path": f"{at}: {issue.path}"}) for issue in report.warnings)
         return errors, warnings

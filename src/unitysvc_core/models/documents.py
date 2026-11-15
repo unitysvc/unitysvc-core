@@ -62,6 +62,7 @@ class DocumentData(BaseModel):
         if self.category == DocumentCategoryEnum.instance_spec:
             from ..instance_spec import (
                 SUPPORTED_FORMATS,
+                environment_overlay_error,
                 instance_spec_format,
                 sha256_error,
                 snapshot_url_error,
@@ -80,4 +81,6 @@ class DocumentData(BaseModel):
                 raise ValueError(f"instance_spec meta.source {problem}")
             if "sha256" in meta and (problem := sha256_error(meta["sha256"])):
                 raise ValueError(f"instance_spec meta.sha256 {problem}")
+            if "environment" in meta and (problem := environment_overlay_error(meta["environment"])):
+                raise ValueError(f"instance_spec meta.environment {problem}")
         return self

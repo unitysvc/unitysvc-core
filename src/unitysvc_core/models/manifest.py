@@ -12,6 +12,8 @@ Deliberate differences from ``intent.go`` (listed in the PR that added it):
 
 * the agent's ``cpu`` and ``memory`` shorthand (request = limit) is not
   modelled: core always writes the general ``resources`` form;
+* ``scratch`` (temporary storage mounts) is a core addition the agent does not decode yet; the agent repo
+  vendors this schema when it adds it (unitysvc/unitysvc-core#107);
 * the agent's ``Entry`` (with a ``hostname`` central assigns) is not part of the
   manifest; it travels beside it in the intent.
 """
@@ -76,6 +78,18 @@ class ManifestHealth(BaseModel):
         return self
 
 
+class ManifestScratch(BaseModel):
+    """A path in the container that is temporary storage (from a Compose named or anonymous volume mount).
+
+    The cluster gives it an ``emptyDir``: the path exists and is writable, its data survives a container
+    restart but not a replacement of the instance, and it counts against the service's ephemeral storage.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(pattern=r"^/.", description="Absolute path inside the container, below /")
+
+
 class ManifestService(BaseModel):
     """One container of an instance (the agent's ``Service``)."""
 
@@ -90,6 +104,9 @@ class ManifestService(BaseModel):
     resources: ManifestResources | None = None
     replicas: int | None = Field(default=None, ge=0)
     health: ManifestHealth | None = None
+    scratch: list[ManifestScratch] | None = Field(
+        default=None, description="Temporary storage mounted in the container (an emptyDir each)"
+    )
 
     @field_validator("name")
     @classmethod
@@ -106,6 +123,15 @@ class ManifestService(BaseModel):
                 raise ValueError("ports must be 1-65535")
             if len(set(value)) != len(value):
                 raise ValueError("ports must be distinct")
+        return value
+
+    @field_validator("scratch")
+    @classmethod
+    def _scratch(cls, value: list[ManifestScratch] | None) -> list[ManifestScratch] | None:
+        if value is not None:
+            paths = [s.path for s in value]
+            if len(set(paths)) != len(paths):
+                raise ValueError("scratch paths must be distinct")
         return value
 
     @model_validator(mode="after")
