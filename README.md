@@ -237,7 +237,7 @@ A policy has three kinds of entry (unitysvc/unitysvc#2770):
 | `params` | the enrollment parameters (below) |
 | `request_rules` | `http` channels only: rules the gateway answers itself before dispatch (below) |
 | `servers` | the connection: `HttpServer`, `SmtpServer`, `S3Server` or `McpServer` (a `container` channel's are `HttpServer`s) |
-| `spec`, `resources`, `entries` | `container` channels only: the instance spec, the tier's resources and its entries (below) |
+| `resources`, `entries` | `container` channels only: the tier's resources and its entries (below) |
 
 The common one-server case writes the connection fields directly on the channel; they are read as `servers[0]`. When a channel has both, each server inherits the direct fields it does not set. Any string may be a template (`{{ params.X }}`, `${ secrets.X }`, `${ customer_secrets.X ?? default }`), so numeric and boolean connection fields also accept strings.
 
@@ -248,10 +248,11 @@ Unknown keys are refused. Retired keys are refused with what to do instead (`RET
 A `container` channel is one tier of a service that runs as instances on Kubernetes (unitysvc/unitysvc-core#105; the compute agent is unitysvc-compute-k8s). Core only holds the data format and its validation: no Kubernetes client, image pulling, placement or pricing. One channel per tier (`base`, `team`), each with its own `resources` and its own price in the listing's channel-keyed `list_price`.
 
 ```json
+"service_type": "container",
+"instance_spec": "compose.yaml",
 "upstream_access_config": {
   "base": {
     "access_method": "container",
-    "spec": "Application",
     "resources": {"limits": {"cpu": "250m", "memory": "256Mi", "ephemeral-storage": "1Gi"}},
     "entries": [{"name": "web", "service": "web", "port": 5678, "auth": "key"}],
     "customer_access_requests": [
@@ -262,14 +263,29 @@ A `container` channel is one tier of a service that runs as instances on Kuberne
 }
 ```
 
-- `spec` is the title of an `instance_spec` Document of the offering (written directly on the channel, like a one-server channel's connection).
+- There is no per-channel spec: every container channel of the offering runs the offering's one instance spec (below), so tiers differ in `resources`, not in stack. The earlier `spec` field (a Document title) is removed in 0.3.11; a channel carrying it is refused as an unknown field.
 - `resources` is the tier total, in Kubernetes' shape: `limits`, optionally `requests`, each a map from a resource name to a quantity (`250m`, `1Gi`, `1e3`, parsed as Kubernetes parses them). The names are `cpu`, `memory`, `ephemeral-storage` and `nvidia.com/gpu`; the first three limits are required; a request is at most its limit; a GPU is a whole number with a request equal to the limit. `resources.services` is an optional per-service split (`{"web": {"limits": {...}}}`) whose sums must stay within the tier (each share names `cpu`, `memory` and `ephemeral-storage`, and a resource without a request counts at its limit, as the agent resolves it); a spec with several services needs one. Quantities are at most 64 characters with an exponent of at most 30. A Compose `deploy.resources` is ignored: the channel is authoritative.
 - The channel is always enrollable and must request `resource:container` with `create`, marked `required` (`grants.RESOURCES` knows the resource; it has no options and no limits).
 - `servers` is optional and has no container-specific meaning: each is an ordinary `HttpServer` the gateway reaches, for example `{"base_url": "https://{{ enrollment.code }}.unitysvc.app/"}`. A container-only service sets no `servers`. An enrollable channel is reached at `/e/<CODE>` on the API gateway, which the platform provides; a listing never declares it (see Canonical user access interfaces).
 - `entries` (`name`, `service`, `port`, optional `path`, `auth` of `login`, `key` or `app`) is **provisional** (open question 1 of #105: whether instances need URLs beyond `servers`, and which `auth` values apply; `gateway` is deliberately not accepted).
 - `params` and `customer_access_requests` are as on the other channels.
 
-**The instance spec.** The seller's file is a Document of category `instance_spec`, `"meta": {"format": "compose"}` (the default and the only format accepted; any other is refused with a message saying so). Core stores it like any uploaded file; the platform passes it on. A format is accepted only if it compiles to the normalized manifest, which is why a Helm chart is not (it renders arbitrary Kubernetes objects).
+**The instance spec.** An offering with a `container` channel has exactly one instance spec, from either of two forms (two, or one on an offering with no container channel, is an error); a different stack is a different offering:
+
+- the offering-level shortcut, like `logo`: `"instance_spec": "compose.yaml"`, a path relative to the offering file or an https URL, in `compose` format;
+- a Document of category `instance_spec`, `"meta": {"format": "compose"}` (the default and the only format accepted; any other is refused with a message saying so), with exactly one of `file_path` and `external_url`.
+
+The seller tooling expands the shortcut before upload with `expand_instance_spec(offering)`, which returns the offering with `documents["Instance spec"]` added (`file_path` or `external_url`, not public) and the shortcut removed, and raises if the offering already has an instance-spec Document. Core accepts both forms. A format is accepted only if it compiles to the normalized manifest, which is why a Helm chart is not (it renders arbitrary Kubernetes objects). `resources.services` keys are checked against the services of that one file, for every container channel.
+
+*A URL is a snapshot source, not a link.* For this category core validates only the URL's shape: https, a host, no credentials, no `localhost`/`.local`/`.internal` name, no private, loopback or link-local IP literal (including integer and hex forms). Core fetches nothing and cannot check the content of a URL, so it validates the file only when it is local. `meta.source` (the original URL) and `meta.sha256` (64 lowercase hex characters, the bytes the seller tested) are accepted on the Document, and a local file is checked against `meta.sha256`. The contract for the **backend** (not implemented in core; unitysvc/unitysvc-core#107):
+
+1. At ingest, fetch the `external_url` (or the shortcut URL) once, store the bytes in the content-addressed object store, and keep the original URL in `meta.source`. Never fetch at enrollment; re-uploading is what refreshes the snapshot. The cluster runs what the policy approved.
+2. Run `validate_instance_spec` on the snapshot (with each container channel) and refuse the upload if it has errors. A failed fetch fails the upload with a clear error.
+3. https only, with a size cap and a timeout; limit redirects and apply the checks to each hop; refuse private, loopback and link-local addresses after resolving the host (SSRF); start with a host allowlist (`raw.githubusercontent.com`).
+4. Rewrite `github.com/<o>/<r>/blob/<ref>/<path>` pages to the raw URL. Warn on a branch URL (`/main/`); a commit-SHA permalink is the recommended form.
+5. If `meta.sha256` is set and the snapshot's differs, refuse the upload.
+
+`specs validate` and the local Docker `run-tests` in the seller tooling download the file themselves.
 
 **The Compose policy** is an allowlist: a key in none of these is rejected, so a new Compose feature is never silently accepted. The compose file is parsed as YAML without executing anything (duplicate keys are refused).
 
@@ -282,7 +298,7 @@ A `container` channel is one tier of a service that runs as instances on Kuberne
 
 A seller can keep one file for local Docker and the platform: write `image` as `name:tag@sha256:...` (Compose runs the digest) and leave `deploy.resources` in place. Sibling services reach each other by name (`redis:6379`); service names must be DNS labels. `${VAR}` in an `environment` value is kept as written with a warning (how a secret or parameter binds to it is open question 4 of #105); in `image` and `ports` a variable is an error.
 
-**Validating.** `validate_instance_spec(text, format="compose", channel=ContainerChannel | None)` returns an `InstanceSpecReport` of `errors` and `warnings`, each an `InstanceSpecIssue(code, path, message, loud)`; with the channel it also checks that every entry targets a declared service and port and that `resources.services` names the spec's services. It never raises on bad input. The seller CLI and backend ingest call it, directly or through `DataValidator`: `validate_service` / `validate_data_file` report the errors of every container channel's spec under `upstream_access_config.<channel>.spec`, and `DataValidator.service_warnings(offering, service_dir)` returns the warnings (`issue.loud` for the ones a seller must not miss) for `specs validate` to print after the errors.
+**Validating.** `validate_instance_spec(text, format="compose", channel=ContainerChannel | None)` returns an `InstanceSpecReport` of `errors` and `warnings`, each an `InstanceSpecIssue(code, path, message, loud)`; with the channel it also checks that every entry targets a declared service and port and that `resources.services` names the spec's services. It never raises on bad input. The seller CLI and backend ingest call it, directly or through `DataValidator`: `validate_service` / `validate_data_file` report the errors of every container channel's spec under `upstream_access_config.<channel>.instance_spec`, and `DataValidator.service_warnings(offering, service_dir)` returns the warnings (`issue.loud` for the ones a seller must not miss) for `specs validate` to print after the errors.
 
 **The normalized manifest** is what the agent receives for one instance: the compiled, validated spec. `NormalizedManifest` (JSON Schema `schema/normalized_manifest_v1.json`, which the agent repo vendors) has one service per Compose service with `name`, `image`, `ports`, `env`, `command`, `args`, `resources` (`requests`, `limits`), `replicas` and `health`, in the shapes of the agent's `intent.go`. `compile_instance_spec(text, resources)` returns a `CompiledInstanceSpec`: the manifest, the keys it `dropped` and the warnings. Compose `entrypoint` becomes `command` and Compose `command` becomes `args`; `healthcheck` becomes an `exec` `health` (`interval`, `timeout`, `retries` and `start_period` map to `period_seconds`, `timeout_seconds`, `failure_threshold` and `start_period_seconds`) (bounded as the agent bounds them: period and timeout 1-300 s, retries 1-30, start period at most its default 120 s progress deadline); the tier `resources` go to the single service, or are split by `resources.services`. That core compiles at all is a proposal (open question 3 of #105). `working_dir`, `user`, `read_only` and the scratch volumes are accepted by the policy but the agent's current manifest has no field for them: they are recorded in `dropped` with reason `not_carried` and a warning.
 

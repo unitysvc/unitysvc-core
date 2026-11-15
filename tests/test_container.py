@@ -14,8 +14,10 @@ from jsonschema import Draft7Validator
 from pydantic import ValidationError
 
 from unitysvc_core.instance_spec import (
+    INSTANCE_SPEC_TITLE,
     InstanceSpecError,
     compile_instance_spec,
+    expand_instance_spec,
     validate_instance_spec,
 )
 from unitysvc_core.models.channel import ContainerChannel, UpstreamAccessConfig
@@ -44,7 +46,6 @@ LIMITS = {"cpu": "250m", "memory": "256Mi", "ephemeral-storage": "1Gi"}
 def _channel(**changes: Any) -> dict[str, Any]:
     channel: dict[str, Any] = {
         "access_method": "container",
-        "spec": "Application",
         "resources": {"limits": dict(LIMITS)},
         "customer_access_requests": [dict(REQUEST)],
     }
@@ -180,12 +181,11 @@ class TestChannel:
         assert isinstance(channel, ContainerChannel)
         assert channel.servers == []
 
-    def test_requires_spec_and_resources(self) -> None:
-        for key in ("spec", "resources"):
-            data = _channel()
-            del data[key]
-            with pytest.raises(ValidationError, match=key):
-                ContainerChannel.model_validate(data)
+    def test_requires_resources(self) -> None:
+        data = _channel()
+        del data["resources"]
+        with pytest.raises(ValidationError, match="resources"):
+            ContainerChannel.model_validate(data)
 
     @pytest.mark.parametrize(
         "requests",
@@ -819,7 +819,7 @@ def _offering(config: dict[str, Any]) -> dict[str, Any]:
         "description": "d",
         "summary": "s",
         "time_created": "2026-01-01T00:00:00Z",
-        "documents": {"Application": {"category": "instance_spec", "mime_type": "text", "file_path": "compose.yaml"}},
+        "instance_spec": "compose.yaml",
         "upstream_access_config": config,
     }
 
@@ -854,20 +854,8 @@ class TestExamples:
         (tmp_path / "compose.yaml").write_text((WEIXIN / "docker-compose.original.yaml").read_text())
         offering = json.loads((ECHO / "offering.json").read_text())
         errors = validator.validate_service(offering=offering, service_dir=tmp_path)["offering"]
-        assert any("env_file" in e for e in errors) and any("upstream_access_config.base.spec" in e for e in errors)
-
-    def test_spec_must_name_a_document_of_the_category(self, validator: DataValidator) -> None:
-        offering = json.loads((ECHO / "offering.json").read_text())
-        offering["upstream_access_config"]["base"]["spec"] = "Missing"
-        assert any(
-            "no document titled 'Missing'" in e
-            for e in validator.validate_service(offering=offering, service_dir=ECHO)["offering"]
-        )
-        offering = json.loads((ECHO / "offering.json").read_text())
-        offering["documents"]["Application"]["category"] = "other"
-        assert any(
-            "category 'instance_spec'" in e
-            for e in validator.validate_service(offering=offering, service_dir=ECHO)["offering"]
+        assert any("env_file" in e for e in errors) and any(
+            "upstream_access_config.base.instance_spec" in e for e in errors
         )
 
     def test_entry_and_split_errors_surface_in_the_offering(self, validator: DataValidator) -> None:
@@ -997,3 +985,204 @@ def test_the_channel_schema_lists_the_container_channel() -> None:
     schema = json.loads((SCHEMA_DIR / "offering_v1.json").read_text())
     assert "ContainerChannel" in schema["$defs"]
     assert copy.deepcopy(schema["$defs"]["ContainerChannel"]["properties"]["access_method"])["const"] == "container"
+
+
+# --- one instance spec per offering (unitysvc-core#107) ------------------------------------------
+
+
+def _errors(validator: DataValidator, offering: dict[str, Any], service_dir: Path = ECHO) -> list[str]:
+    return validator.validate_service(offering=offering, service_dir=service_dir)["offering"]
+
+
+def _echo() -> dict[str, Any]:
+    return json.loads((ECHO / "offering.json").read_text())
+
+
+def _document(**changes: Any) -> dict[str, Any]:
+    doc: dict[str, Any] = {"category": "instance_spec", "mime_type": "text", "file_path": "compose.yaml"}
+    doc.update(changes)
+    return doc
+
+
+class TestOneInstanceSpec:
+    def test_the_shortcut_validates(self, validator: DataValidator) -> None:
+        assert _errors(validator, _echo()) == []
+
+    def test_the_document_form_validates(self, validator: DataValidator) -> None:
+        offering = expand_instance_spec(_echo())
+        assert list(offering["documents"]) == [INSTANCE_SPEC_TITLE] and "instance_spec" not in offering
+        assert _errors(validator, offering) == []
+
+    def test_a_container_offering_needs_one(self, validator: DataValidator) -> None:
+        offering = _echo()
+        del offering["instance_spec"]
+        assert any("needs its instance spec" in e for e in _errors(validator, offering))
+
+    def test_two_are_an_error_from_either_form(self, validator: DataValidator) -> None:
+        both = _echo()
+        both["documents"] = {"Application": _document()}
+        assert any("one instance spec, found 2" in e for e in _errors(validator, both))
+        two = expand_instance_spec(_echo())
+        two["documents"]["Second"] = _document()
+        assert any("one instance spec, found 2" in e for e in _errors(validator, two))
+
+    def test_another_offering_has_none(self, validator: DataValidator) -> None:
+        offering = {k: v for k, v in _echo().items() if k not in ("upstream_access_config",)}
+        offering["service_type"] = "llm"
+        offering["details"] = {"links": {"homepage": "https://example.com"}}
+        assert any("only an offering with a container channel" in e for e in _errors(validator, offering))
+        offering.pop("instance_spec")
+        offering["documents"] = {"Application": _document()}
+        assert any("only an offering with a container channel" in e for e in _errors(validator, offering))
+
+    def test_every_tier_runs_the_one_file(self, validator: DataValidator) -> None:
+        offering = _echo()
+        share = {"limits": {"cpu": "100m", "memory": "64Mi", "ephemeral-storage": "100Mi"}}
+        offering["upstream_access_config"]["medium"]["resources"]["services"] = {"web": share, "ghost": share}
+        errors = _errors(validator, offering)
+        assert any("medium.instance_spec" in e and "ghost" in e for e in errors)
+        assert not any("base." in e for e in errors)
+
+    def test_the_shortcut_is_a_path_or_an_https_url(self, validator: DataValidator) -> None:
+        offering = _echo()
+        offering["instance_spec"] = "https://raw.githubusercontent.com/o/r/" + "a" * 40 + "/compose.yaml"
+        assert _errors(validator, offering) == []
+        for bad in (
+            "http://example.com/c.yaml",
+            "https://localhost/c.yaml",
+            "https://10.0.0.1/c.yaml",
+            "ftp://x.com/c",
+        ):
+            offering["instance_spec"] = bad
+            assert any("instance_spec" in e for e in _errors(validator, offering)), bad
+
+    def test_a_missing_shortcut_file_is_reported(self, validator: DataValidator) -> None:
+        offering = _echo()
+        offering["instance_spec"] = "nope.yaml"
+        assert any("nope.yaml" in e and "does not exist" in e for e in _errors(validator, offering))
+
+
+class TestExpand:
+    def test_a_path_becomes_a_file_document(self) -> None:
+        out = expand_instance_spec({"name": "x", "instance_spec": "compose.yaml"})
+        assert out == {
+            "name": "x",
+            "documents": {
+                INSTANCE_SPEC_TITLE: {
+                    "category": "instance_spec",
+                    "mime_type": "text",
+                    "meta": {"format": "compose"},
+                    "is_public": False,
+                    "file_path": "compose.yaml",
+                }
+            },
+        }
+
+    def test_a_url_becomes_an_external_url_document(self) -> None:
+        url = "https://raw.githubusercontent.com/o/r/main/compose.yaml"
+        doc = expand_instance_spec({"instance_spec": url})["documents"][INSTANCE_SPEC_TITLE]
+        assert doc["external_url"] == url and "file_path" not in doc
+        DocumentData.model_validate(doc)
+
+    def test_it_keeps_other_documents_and_does_not_mutate(self) -> None:
+        offering = {"instance_spec": "c.yaml", "documents": {"Guide": {"category": "other"}}}
+        out = expand_instance_spec(offering)
+        assert set(out["documents"]) == {"Guide", INSTANCE_SPEC_TITLE}
+        assert "instance_spec" in offering and set(offering["documents"]) == {"Guide"}
+
+    def test_no_shortcut_is_a_copy(self) -> None:
+        offering = {"name": "x"}
+        assert expand_instance_spec(offering) == offering and expand_instance_spec(offering) is not offering
+
+    def test_conflicts_are_refused(self) -> None:
+        with pytest.raises(ValueError, match="one instance spec"):
+            expand_instance_spec({"instance_spec": "c.yaml", "documents": {"A": _document()}})
+        with pytest.raises(ValueError, match="already has an entry"):
+            expand_instance_spec({"instance_spec": "c.yaml", "documents": {INSTANCE_SPEC_TITLE: {"category": "other"}}})
+        with pytest.raises(ValueError, match="relative path or an https URL"):
+            expand_instance_spec({"instance_spec": 3})
+
+    def test_the_expanded_offering_validates_like_the_shortcut(self, validator: DataValidator) -> None:
+        shortcut = _echo()
+        assert _errors(validator, expand_instance_spec(shortcut)) == _errors(validator, shortcut) == []
+
+
+class TestSpecRemoved:
+    def test_a_channel_with_spec_is_rejected_as_an_unknown_field(self, validator: DataValidator) -> None:
+        offering = _echo()
+        offering["upstream_access_config"]["base"]["spec"] = INSTANCE_SPEC_TITLE
+        assert any("spec" in e and "Extra inputs are not permitted" in e for e in _errors(validator, offering))
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            ContainerChannel.model_validate(_channel(spec="Application"))
+
+    def test_the_schema_has_no_spec(self) -> None:
+        schema = json.loads((SCHEMA_DIR / "offering_v1.json").read_text())
+        assert "spec" not in schema["$defs"]["ContainerChannel"]["properties"]
+        assert "instance_spec" in schema["properties"]
+
+
+class TestSnapshotDocument:
+    URL = "https://raw.githubusercontent.com/o/r/" + "a" * 40 + "/compose.yaml"
+
+    def doc(self, **changes: Any) -> dict[str, Any]:
+        data = _document(external_url=self.URL)
+        del data["file_path"]
+        data.update(changes)
+        return data
+
+    def test_an_https_url_with_source_and_sha256(self) -> None:
+        DocumentData.model_validate(self.doc(meta={"source": self.URL, "sha256": "ab" * 32}))
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://example.com/c.yaml",
+            "https://localhost/c.yaml",
+            "https://foo.localhost/c.yaml",
+            "https://127.0.0.1/c.yaml",
+            "https://169.254.169.254/latest",
+            "https://192.168.1.5/c.yaml",
+            "https://[::1]/c.yaml",
+            "https://2130706433/c.yaml",
+            "https://0x7f000001/c.yaml",
+            "https://intranet/c.yaml",
+            "https://db.internal/c.yaml",
+            "https://user:pw@example.com/c.yaml",
+            "https:///c.yaml",
+            "file:///etc/passwd",
+        ],
+    )
+    def test_private_and_non_https_urls_are_refused(self, url: str) -> None:
+        with pytest.raises(ValidationError, match="external_url"):
+            DocumentData.model_validate(self.doc(external_url=url))
+
+    def test_bad_source_and_sha256_are_refused(self) -> None:
+        with pytest.raises(ValidationError, match="meta.source"):
+            DocumentData.model_validate(self.doc(meta={"source": "http://example.com/c"}))
+        for bad in ("abc", "A" * 64, 5):
+            with pytest.raises(ValidationError, match="meta.sha256"):
+                DocumentData.model_validate(self.doc(meta={"sha256": bad}))
+
+    def test_exactly_one_of_file_path_and_external_url(self) -> None:
+        with pytest.raises(ValidationError, match="exactly one"):
+            DocumentData.model_validate(_document(external_url=self.URL))
+        with pytest.raises(ValidationError, match="exactly one"):
+            DocumentData.model_validate({"category": "instance_spec", "mime_type": "text"})
+
+    def test_other_categories_keep_their_external_url(self) -> None:
+        DocumentData.model_validate({"category": "other", "mime_type": "text", "external_url": "http://example.com/x"})
+
+    def test_a_url_spec_is_not_fetched_or_checked_locally(self, validator: DataValidator) -> None:
+        offering = _echo()
+        offering["instance_spec"] = self.URL
+        assert _errors(validator, offering, service_dir=Path("/nonexistent")) == []
+
+    def test_sha256_pins_a_local_file(self, validator: DataValidator) -> None:
+        import hashlib
+
+        offering = expand_instance_spec(_echo())
+        doc = offering["documents"][INSTANCE_SPEC_TITLE]
+        doc["meta"]["sha256"] = hashlib.sha256((ECHO / "compose.yaml").read_bytes()).hexdigest()
+        assert _errors(validator, offering) == []
+        doc["meta"]["sha256"] = "0" * 64
+        assert any("does not match meta.sha256" in e for e in _errors(validator, offering))

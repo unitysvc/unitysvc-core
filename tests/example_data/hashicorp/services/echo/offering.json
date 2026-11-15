@@ -1,28 +1,17 @@
 {
   "name": "echo",
   "service_type": "container",
+  "instance_spec": "compose.yaml",
   "summary": "A disposable HTTP echo instance",
   "payout_price": {
     "type": "revenue_share",
     "percentage": "80",
     "description": "80% after platform compute cost"
   },
-  "documents": {
-    "Application": {
-      "category": "instance_spec",
-      "file_path": "compose.yaml",
-      "mime_type": "text",
-      "meta": {
-        "format": "compose"
-      },
-      "is_public": false
-    }
-  },
   "upstream_access_config": {
     "base": {
       "access_method": "container",
       "description": "Small workflow",
-      "spec": "Application",
       "resources": {
         "limits": {
           "cpu": "250m",
@@ -52,7 +41,6 @@
     "medium": {
       "access_method": "container",
       "description": "Larger workflow",
-      "spec": "Application",
       "resources": {
         "limits": {
           "cpu": "1",

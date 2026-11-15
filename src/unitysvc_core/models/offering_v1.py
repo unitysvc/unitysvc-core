@@ -43,6 +43,18 @@ class OfferingV1(ServiceOfferingData):
     # Convenience field for logo (converted to documents during import)
     logo: str | HttpUrl | None = None
 
+    # Convenience field for the instance spec of a container service: a relative
+    # path or an https URL (converted to documents["Instance spec"] during import,
+    # as logo is; core.instance_spec.expand_instance_spec does it). Its format is
+    # compose. unitysvc/unitysvc-core#107.
+    instance_spec: str | HttpUrl | None = Field(
+        default=None,
+        description=(
+            "The Compose file a container service runs: a path relative to this file, or an https URL "
+            "(a snapshot source, fetched once at upload). Shortcut for one instance_spec Document"
+        ),
+    )
+
     # The base allows None and keeps channels as plain dicts, for stored data
     # the platform has annotated. Omitted and empty are the same: an offering
     # with no channel, an external app reached at its own site (#2873).
@@ -68,6 +80,38 @@ class OfferingV1(ServiceOfferingData):
         channel_less = not self.upstream_access_config.root
         if errors := validate_details_links(self.details, channel_less=channel_less):
             raise ValueError("; ".join(errors))
+        return self
+
+    @field_validator("instance_spec")
+    @classmethod
+    def _instance_spec_source(cls, value: str | HttpUrl | None) -> str | HttpUrl | None:
+        from ..instance_spec import snapshot_url_error
+
+        text = None if value is None else str(value)
+        if text is not None and "://" in text and (problem := snapshot_url_error(text)):
+            raise ValueError(problem)
+        return value
+
+    @model_validator(mode="after")
+    def _one_instance_spec(self) -> "OfferingV1":
+        """A container offering has exactly one instance spec (shortcut or Document); any other has none."""
+        from .channel import ContainerChannel
+
+        count = sum(d.category == "instance_spec" for d in (self.documents or {}).values())
+        count += self.instance_spec is not None
+        has_container = any(isinstance(c, ContainerChannel) for c in self.upstream_access_config.root.values())
+        if has_container and count == 0:
+            raise ValueError(
+                "an offering with a container channel needs its instance spec: "
+                "set 'instance_spec' (a path or https URL) or add one document of category 'instance_spec'"
+            )
+        if count > 1:
+            raise ValueError(
+                f"an offering has one instance spec, found {count}: use either 'instance_spec' or a "
+                "document of category 'instance_spec', and only one"
+            )
+        if count == 1 and not has_container:
+            raise ValueError("only an offering with a container channel has an instance spec")
         return self
 
     @field_validator("name")

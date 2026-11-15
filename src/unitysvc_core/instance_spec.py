@@ -23,10 +23,12 @@ refused). Nothing here pulls an image or contacts a cluster.
 
 from __future__ import annotations
 
+import ipaddress
 import math
 import re
 import shlex
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import yaml
 from pydantic import BaseModel, Field
@@ -157,6 +159,88 @@ def instance_spec_format(meta: dict[str, Any] | None) -> str:
     """The format a document's ``meta`` declares; ``compose`` when it says nothing."""
     value = (meta or {}).get("format", DEFAULT_FORMAT)
     return value if isinstance(value, str) else ""
+
+
+INSTANCE_SPEC_TITLE = "Instance spec"
+"""The title the offering-level ``instance_spec`` shortcut expands to in ``documents``."""
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_PRIVATE_SUFFIXES = (".localhost", ".local", ".internal", ".localdomain", ".home.arpa")
+
+
+def snapshot_url_error(url: Any) -> str | None:
+    """Why ``url`` cannot be the source of an instance spec, or ``None`` if its shape is acceptable.
+
+    Shape only: https, a host, no credentials, and no host that is plainly private
+    (``localhost``, a private, loopback, link-local or reserved IP literal, an
+    integer or hex IP form, ``.local`` and ``.internal`` names). Core never fetches
+    anything. The backend, which does, repeats the checks on every address the host
+    resolves to and on every redirect (unitysvc/unitysvc-core#107).
+    """
+    if not isinstance(url, str) or not url:
+        return "must be an https URL"
+    try:
+        parts = urlsplit(url)
+        host = (parts.hostname or "").rstrip(".").lower()
+        parts.port  # noqa: B018 - raises ValueError for a bad port
+    except ValueError:
+        return f"{url!r} is not a valid URL"
+    if parts.scheme != "https":
+        return f"{url!r} must be an https URL"
+    if not host:
+        return f"{url!r} has no host"
+    if parts.username is not None or parts.password is not None:
+        return f"{url!r} must not carry credentials"
+    if host == "localhost" or host.endswith(_PRIVATE_SUFFIXES) or ("." not in host and ":" not in host):
+        return f"{url!r}: host {host!r} is not a public host"
+    if host.isdigit() or host.startswith("0x"):
+        return f"{url!r}: host {host!r} is an IP address written as a number"
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    if not address.is_global or address.is_multicast:
+        return f"{url!r}: host {host!r} is a private, loopback or link-local address"
+    return None
+
+
+def sha256_error(value: Any) -> str | None:
+    if not isinstance(value, str) or not _SHA256_RE.fullmatch(value):
+        return "must be 64 lowercase hexadecimal characters"
+    return None
+
+
+def expand_instance_spec(offering: dict[str, Any]) -> dict[str, Any]:
+    """Expand the offering-level ``instance_spec`` shortcut into ``documents["Instance spec"]``.
+
+    Returns a new offering dict with the shortcut removed and the Document added
+    (``file_path`` for a relative path, ``external_url`` for a URL, ``meta.format``
+    ``compose``, not public), the way ``logo`` expands. An offering without the
+    shortcut is returned as a copy. Raises ``ValueError`` if ``documents`` already
+    holds an ``instance_spec`` Document (an offering has one) or the title is taken.
+    The seller tooling calls this before upload; core does not read files here.
+    """
+    result = {key: value for key, value in offering.items() if key != "instance_spec"}
+    source = offering.get("instance_spec")
+    if source is None:
+        return result
+    if not isinstance(source, str) or not source:
+        raise ValueError("instance_spec must be a relative path or an https URL")
+    documents = dict(result.get("documents") or {})
+    if any(isinstance(d, dict) and d.get("category") == "instance_spec" for d in documents.values()):
+        raise ValueError("an offering has one instance spec: use either 'instance_spec' or a Document, not both")
+    if INSTANCE_SPEC_TITLE in documents:
+        raise ValueError(f"documents already has an entry titled {INSTANCE_SPEC_TITLE!r}")
+    document: dict[str, Any] = {
+        "category": "instance_spec",
+        "mime_type": "text",
+        "meta": {"format": DEFAULT_FORMAT},
+        "is_public": False,
+    }
+    document["external_url" if "://" in source else "file_path"] = source
+    documents[INSTANCE_SPEC_TITLE] = document
+    result["documents"] = documents
+    return result
 
 
 def unsupported_format_message(fmt: Any) -> str:
