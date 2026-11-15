@@ -1331,6 +1331,35 @@ class TestScratch:
         assert golden["services"][0]["scratch"] == [{"path": "/app/data"}]
 
 
+def _with_volumes(volumes: list[Any]) -> str:
+    base = {"image": f"example/app{DIGEST}", "ports": ["8080"], "volumes": volumes}
+    return yaml.safe_dump({"services": {"web": base}, "volumes": {"v": {}}})
+
+
+class TestReviewFixes:
+    def test_scratch_paths_are_normalized(self) -> None:
+        for bad in ("/data/..", "/data/../..", "/."):
+            text = _with_volumes([{"type": "volume", "source": "v", "target": bad}])
+            assert "bad_value" in _codes(validate_instance_spec(text)), bad
+        text = _with_volumes([{"type": "volume", "source": "v", "target": "/data"}, "/data/../data"])
+        assert "duplicate_mount" in _codes(validate_instance_spec(text))
+        for bad in ("/data/..", "/a//b", "/a/", "/"):
+            with pytest.raises(ValidationError):
+                NormalizedManifest.model_validate(
+                    {"services": [{"name": "a", "image": "i", "scratch": [{"path": bad}]}]}
+                )
+
+    def test_an_overlay_resolves_an_inherited_variable(self) -> None:
+        for env in (["KEY"], {"KEY": None}):
+            text = _compose(environment=env)
+            assert "bad_env" in _codes(validate_instance_spec(text))
+            overlay = {"web": {"KEY": "v"}}
+            assert validate_instance_spec(text, environment=overlay).ok
+            assert compile_instance_spec(text, _resources(), environment=overlay).manifest.services[0].env == {
+                "KEY": "v"
+            }
+
+
 class TestUpstreamExample:
     """The Kadxy URL-plus-overlay case: the project's own Compose file, a URL, a pinned hash and an overlay."""
 
@@ -1364,7 +1393,7 @@ class TestUpstreamExample:
             environment=doc["meta"]["environment"],
         )
         service = compiled.manifest.services[0]
-        assert service.env == {"API_KEY": "${UNITYSVC_INSTANCE_API_KEY}"}
+        assert service.env == {"DATA_DIR": "/app/data", "API_KEY": "${UNITYSVC_INSTANCE_API_KEY}"}
         assert service.image == "ghcr.io/kadxy/weixin-ilink-gateway:latest"
         assert [s.path for s in service.scratch or []] == ["/app/data"]
 

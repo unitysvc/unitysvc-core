@@ -20,6 +20,7 @@ Deliberate differences from ``intent.go`` (listed in the PR that added it):
 
 from __future__ import annotations
 
+import posixpath
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -87,7 +88,14 @@ class ManifestScratch(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    path: str = Field(pattern=r"^/.", description="Absolute path inside the container, below /")
+    path: str = Field(pattern=r"^/.", description="Normalized absolute path inside the container, below /")
+
+    @field_validator("path")
+    @classmethod
+    def _normalized(cls, value: str) -> str:
+        if posixpath.normpath(value) != value or value == "/":
+            raise ValueError("path must be normalized (no '..', '.', '//' or trailing '/') and below /")
+        return value
 
 
 class ManifestService(BaseModel):

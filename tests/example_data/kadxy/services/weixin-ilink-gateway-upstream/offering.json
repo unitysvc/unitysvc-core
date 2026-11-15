@@ -8,7 +8,7 @@
       "mime_type": "text",
       "meta": {
         "format": "compose",
-        "sha256": "28d6fa181a5081497a1f01f791b52751487ea7d047299600b10540057fe6156c",
+        "sha256": "b8f6f581b51f2fb43075f7efccff2bac414296eec6b267ffdab6a81a911704e8",
         "environment": {
           "gateway": {
             "API_KEY": "${UNITYSVC_INSTANCE_API_KEY}"

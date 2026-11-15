@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ipaddress
 import math
+import posixpath
 import re
 import shlex
 from typing import Any, Literal
@@ -436,7 +437,8 @@ class _Checker:
         image = self._image(name, service.get("image"), "build" in service)
         ports = self._ports(name, service.get("ports"))
         self.ports[name] = ports
-        env = {**self._environment(name, service.get("environment")), **self._overlay_env(name)}
+        overlay = self._overlay_env(name)
+        env = {**self._environment(name, service.get("environment"), frozenset(overlay)), **overlay}
         command = self._words(f"{at}.entrypoint", service.get("entrypoint"))
         args = self._words(f"{at}.command", service.get("command"))
         health = self._healthcheck(name, service.get("healthcheck"), ports)
@@ -633,7 +635,8 @@ class _Checker:
     def _overlay_env(self, name: str) -> dict[str, str]:
         return self._checked_overlay().get(name, {})
 
-    def _environment(self, name: str, environment: Any) -> dict[str, str]:
+    def _environment(self, name: str, environment: Any, supplied: frozenset[str] = frozenset()) -> dict[str, str]:
+        """The service's own environment; a bare variable the overlay (``supplied``) gives a value is no host lookup."""
         at = f"services.{name}.environment"
         pairs: list[tuple[str, Any]] = []
         if environment is None:
@@ -655,6 +658,8 @@ class _Checker:
             where = f"{at}.{key}"
             if not _ENV_NAME_RE.fullmatch(key):
                 self.error("bad_env", where, f"{key!r} is not a valid environment variable name")
+            elif value is None and key in supplied:
+                continue
             elif value is None:
                 self.error(
                     "bad_env",
@@ -814,6 +819,12 @@ class _Checker:
                         "between services",
                     )
                     continue
+            target = posixpath.normpath(target)
+            if target.startswith("//"):  # POSIX keeps exactly two leading slashes
+                target = "/" + target.lstrip("/")
+            if target == "/":
+                self.error("bad_value", where, "a volume cannot be mounted at the container's root")
+                continue
             if target in scratch:
                 self.error("duplicate_mount", where, f"{target} is mounted twice in this service")
                 continue

@@ -321,7 +321,7 @@ A seller can keep one file for local Docker and the platform and leave `deploy.r
 
 Each `entry` must name an entry of the offering's container channels. A script (any other file) is run as before. Core publishes the schema and fixtures (`tests/fixtures/probes`); the runners live in unitysvc-sellers and unitysvc-compute-k8s. The derived test is only as strict as `health`.
 
-Examples: `tests/example_data/hashicorp/services/echo` (one service, two tiers); `tests/example_data/kadxy/services/weixin-ilink-gateway` (secrets, scratch state, outbound traffic; its image digest is a marked placeholder); and `tests/example_data/kadxy/services/weixin-ilink-gateway-upstream` (the project's own Compose file by URL at a pinned commit with `meta.sha256`, plus a `meta.environment` overlay; `upstream-compose.yaml` is a local stand-in copy, as core fetches nothing).
+Examples: `tests/example_data/hashicorp/services/echo` (one service, two tiers); `tests/example_data/kadxy/services/weixin-ilink-gateway` (secrets, scratch state, outbound traffic; its image digest is a marked placeholder); and `tests/example_data/kadxy/services/weixin-ilink-gateway-upstream` (the project's own Compose file by URL at a pinned commit with `meta.sha256`, plus a `meta.environment` overlay; `upstream-compose.yaml` is a byte-for-byte copy of that file, and `meta.sha256` is its hash, as core fetches nothing).
 
 ### Request rules
 

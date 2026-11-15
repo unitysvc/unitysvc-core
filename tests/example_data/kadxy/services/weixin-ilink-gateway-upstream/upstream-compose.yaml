@@ -1,15 +1,15 @@
-# A local copy of weixin-ilink-gateway's own docker-compose.yaml, standing in for the file the offering's
-# external_url points at (core fetches nothing, so tests read this copy). It is the file as the project
-# writes it: a moving tag, a host port mapping, a named volume and `env_file: .env`. The platform accepts
-# it (with warnings); the offering's meta.environment supplies the variables env_file would have.
 services:
   gateway:
     image: ghcr.io/kadxy/weixin-ilink-gateway:latest
+    container_name: weixin-ilink-gateway
+    restart: unless-stopped
     ports:
-      - "3000:3000"
-    env_file: .env
+      - "29527:3000"
     volumes:
       - gateway-data:/app/data
-    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATA_DIR=/app/data
+
 volumes:
   gateway-data:
