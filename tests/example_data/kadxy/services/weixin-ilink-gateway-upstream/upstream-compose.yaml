@@ -1,0 +1,15 @@
+services:
+  gateway:
+    image: ghcr.io/kadxy/weixin-ilink-gateway:latest
+    container_name: weixin-ilink-gateway
+    restart: unless-stopped
+    ports:
+      - "29527:3000"
+    volumes:
+      - gateway-data:/app/data
+    env_file: .env
+    environment:
+      - DATA_DIR=/app/data
+
+volumes:
+  gateway-data:

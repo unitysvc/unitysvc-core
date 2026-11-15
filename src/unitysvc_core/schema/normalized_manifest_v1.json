@@ -169,6 +169,23 @@
       "title": "ManifestResources",
       "type": "object"
     },
+    "ManifestScratch": {
+      "additionalProperties": false,
+      "description": "A path in the container that is temporary storage (from a Compose named or anonymous volume mount).\n\nThe cluster gives it an ``emptyDir``: the path exists and is writable, its data survives a container\nrestart but not a replacement of the instance, and it counts against the service's ephemeral storage.",
+      "properties": {
+        "path": {
+          "description": "Normalized absolute path inside the container, below /",
+          "pattern": "^/.",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "ManifestScratch",
+      "type": "object"
+    },
     "ManifestService": {
       "additionalProperties": false,
       "description": "One container of an instance (the agent's ``Service``).",
@@ -281,6 +298,22 @@
             }
           ],
           "default": null
+        },
+        "scratch": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ManifestScratch"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Temporary storage mounted in the container (an emptyDir each)",
+          "title": "Scratch"
         }
       },
       "required": [

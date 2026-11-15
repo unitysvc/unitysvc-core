@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ipaddress
 import math
+import posixpath
 import re
 import shlex
 from typing import Any, Literal
@@ -38,6 +39,7 @@ from .models.container import DNS_LABEL_RE, ContainerResources
 from .models.manifest import (
     ManifestHealth,
     ManifestResources,
+    ManifestScratch,
     ManifestService,
     NormalizedManifest,
 )
@@ -68,7 +70,7 @@ _HONORED = frozenset(
 _IGNORED = frozenset({"container_name", "restart", "labels", "logging", "networks", "expose", "profiles", "links"})
 # Rejected, with why (anything not listed anywhere is rejected too, as "not supported").
 _REJECTED: dict[str, str] = {
-    "build": "an image is built elsewhere; give a digest-pinned `image`",
+    "build": "an image is built elsewhere; give an `image`",
     "privileged": "it removes the isolation instances run in",
     "cap_add": "it changes the container's isolation",
     "devices": "host devices are not available in a cluster",
@@ -80,7 +82,6 @@ _REJECTED: dict[str, str] = {
     "volumes_from": "volumes cannot be shared between services",
     "runtime": "the runtime is chosen by the platform",
     "extra_hosts": "it cannot work in a cluster",
-    "env_file": "put the values in `environment`",
     "extends": "write the whole service in this file",
     "include": "write the whole file in one piece",
     "secrets": "secrets are bound by the platform, not by a Compose `secrets` section",
@@ -204,6 +205,26 @@ def snapshot_url_error(url: Any) -> str | None:
     return None
 
 
+def environment_overlay_error(value: Any) -> str | None:
+    """Why ``value`` is not a ``meta.environment`` overlay (``{service: {NAME: "value"}}``), or ``None``.
+
+    Shape only: that each service exists in the file is checked with the file.
+    """
+    if not isinstance(value, dict) or not value:
+        return "must be a mapping of service name to a mapping of NAME to a string value"
+    for service, values in value.items():
+        if not isinstance(service, str) or not DNS_LABEL_RE.fullmatch(service):
+            return f"{service!r} is not a service name (a DNS label)"
+        if not isinstance(values, dict) or not values:
+            return f"{service}: must be a non-empty mapping of NAME to a string value"
+        for key, text in values.items():
+            if not isinstance(key, str) or not _ENV_NAME_RE.fullmatch(key):
+                return f"{service}.{key}: {key!r} is not a valid environment variable name"
+            if not isinstance(text, str):
+                return f"{service}.{key}: the value must be a string"
+    return None
+
+
 def sha256_error(value: Any) -> str | None:
     if not isinstance(value, str) or not _SHA256_RE.fullmatch(value):
         return "must be 64 lowercase hexadecimal characters"
@@ -277,8 +298,10 @@ def _parse(text: str) -> Any:
 class _Checker:
     """One pass over a parsed Compose document, collecting errors, warnings and the compiled services."""
 
-    def __init__(self, channel: ContainerChannel | None) -> None:
+    def __init__(self, channel: ContainerChannel | None, overlay: Any = None) -> None:
         self.channel = channel
+        self.overlay = overlay
+        self._overlay_checked: dict[str, dict[str, str]] | None = None
         self.report = InstanceSpecReport()
         self.dropped: list[DroppedKey] = []
         self.services: list[ManifestService] = []
@@ -325,6 +348,13 @@ class _Checker:
         for name, service in services.items():
             self._service(str(name), service, volumes, used_volumes, declared_networks, service_networks, services)
         self._network_split(service_networks)
+        for service in self._overlay_env_services():
+            if str(service) not in services:
+                self.error(
+                    "overlay_service",
+                    f"meta.environment.{service}",
+                    f"{service!r} is not a service of the file; its services are {', '.join(map(str, services))}",
+                )
         self._channel_context()
 
     def _top_volumes(self, volumes: Any) -> set[str]:
@@ -383,6 +413,16 @@ class _Checker:
             elif key.startswith("x-"):
                 self.warn("ignored_key", f"{at}.{key}", "extension fields (x-*) are ignored")
                 self.drop(name, key)
+            elif key == "env_file":
+                self.warn(
+                    "ignored_key",
+                    f"{at}.env_file",
+                    "`env_file` is ignored: the values it would supply are missing from the instance, so the "
+                    "service may not start. Provide them with `meta.environment` on the instance_spec Document "
+                    f"(meta.environment.{name}.NAME)",
+                    loud=True,
+                )
+                self.drop(name, "env_file")
             elif key == "deploy":
                 self._deploy(name, service["deploy"])
             elif key in _REJECTED:
@@ -397,11 +437,12 @@ class _Checker:
         image = self._image(name, service.get("image"), "build" in service)
         ports = self._ports(name, service.get("ports"))
         self.ports[name] = ports
-        env = self._environment(name, service.get("environment"))
+        overlay = self._overlay_env(name)
+        env = {**self._environment(name, service.get("environment"), frozenset(overlay)), **overlay}
         command = self._words(f"{at}.entrypoint", service.get("entrypoint"))
         args = self._words(f"{at}.command", service.get("command"))
         health = self._healthcheck(name, service.get("healthcheck"), ports)
-        self._volumes(name, service.get("volumes"), volumes, used_volumes)
+        scratch = self._volumes(name, service.get("volumes"), volumes, used_volumes)
         self._depends_on(name, service.get("depends_on"), all_services)
         self._networks(name, service.get("networks"), declared_networks, service_networks)
         for key, check in (("working_dir", str), ("user", (str, int)), ("read_only", bool)):
@@ -425,6 +466,7 @@ class _Checker:
                         command=command or None,
                         args=args or None,
                         health=health,
+                        scratch=[ManifestScratch(path=path) for path in scratch] or None,
                     )
                 )
             except ValueError as exc:
@@ -457,7 +499,7 @@ class _Checker:
         at = f"services.{name}.image"
         if image is None:
             if not has_build:
-                self.error("no_image", at, "a service needs `image`, pinned by digest (name:tag@sha256:...)")
+                self.error("no_image", at, "a service needs an `image` (name:tag, or name:tag@sha256:... to pin it)")
             return None
         if not isinstance(image, str) or not image:
             self.error("bad_value", at, "`image` must be a string")
@@ -465,14 +507,22 @@ class _Checker:
         if "$" in image:
             self.error("not_literal", at, "`image` must be written out in full: a variable cannot stand in the digest")
             return None
-        if not _DIGEST_RE.search(image):
+        if image != image.strip() or any(c.isspace() for c in image):
+            self.error("bad_value", at, "`image` must not contain whitespace")
+            return None
+        if "@" in image and not _DIGEST_RE.search(image):
             self.error(
-                "unpinned_image",
-                at,
-                f"`image` {image!r} is not pinned by digest; write name:tag@sha256:<64 hex digits> "
-                "(Compose runs the digest locally too, so one file serves local Docker and the platform)",
+                "bad_digest", at, f"`image` {image!r}: a digest must be written @sha256:<64 lowercase hex digits>"
             )
             return None
+        if not _DIGEST_RE.search(image):
+            self.warn(
+                "unpinned_image",
+                at,
+                f"`image` {image!r} is not pinned by digest: the platform runs it as written and reports the digest "
+                "it pulled, and a moving tag can change at a restart. Write name:tag@sha256:<64 hex digits> to pin it "
+                "(Compose runs the digest locally too)",
+            )
         return image
 
     def _ports(self, name: str, ports: Any) -> list[int]:
@@ -541,7 +591,52 @@ class _Checker:
             return None, None
         return number, published
 
-    def _environment(self, name: str, environment: Any) -> dict[str, str]:
+    def _overlay(self, where: str = "meta.environment") -> dict[str, dict[str, str]]:
+        """The ``meta.environment`` overlay, checked: ``{service: {NAME: "value"}}`` of strings."""
+        overlay = self.overlay
+        if overlay is None:
+            return {}
+        if not isinstance(overlay, dict):
+            self.error("bad_overlay", where, "must be a mapping of service name to a mapping of NAME to value")
+            return {}
+        result: dict[str, dict[str, str]] = {}
+        for service, values in overlay.items():
+            at = f"{where}.{service}"
+            if not isinstance(values, dict):
+                self.error("bad_overlay", at, "must be a mapping of NAME to a string value")
+                continue
+            clean: dict[str, str] = {}
+            for key, value in values.items():
+                if not isinstance(key, str) or not _ENV_NAME_RE.fullmatch(key):
+                    self.error("bad_env", f"{at}.{key}", f"{key!r} is not a valid environment variable name")
+                elif not isinstance(value, str):
+                    self.error("bad_env", f"{at}.{key}", "an environment value must be a string")
+                else:
+                    clean[key] = value
+                    if _INTERPOLATION_RE.search(value):
+                        self.warn(
+                            "interpolation",
+                            f"{at}.{key}",
+                            "contains a variable reference, kept as written; only ${UNITYSVC_INSTANCE_API_KEY} is "
+                            "bound per instance, how any other secret is bound is not decided yet "
+                            "(unitysvc-core#105, open 4)",
+                        )
+            result[str(service)] = clean
+        return result
+
+    def _checked_overlay(self) -> dict[str, dict[str, str]]:
+        if self._overlay_checked is None:
+            self._overlay_checked = self._overlay()
+        return self._overlay_checked
+
+    def _overlay_env_services(self) -> list[str]:
+        return list(self._checked_overlay())
+
+    def _overlay_env(self, name: str) -> dict[str, str]:
+        return self._checked_overlay().get(name, {})
+
+    def _environment(self, name: str, environment: Any, supplied: frozenset[str] = frozenset()) -> dict[str, str]:
+        """The service's own environment; a bare variable the overlay (``supplied``) gives a value is no host lookup."""
         at = f"services.{name}.environment"
         pairs: list[tuple[str, Any]] = []
         if environment is None:
@@ -563,6 +658,8 @@ class _Checker:
             where = f"{at}.{key}"
             if not _ENV_NAME_RE.fullmatch(key):
                 self.error("bad_env", where, f"{key!r} is not a valid environment variable name")
+            elif value is None and key in supplied:
+                continue
             elif value is None:
                 self.error(
                     "bad_env",
@@ -666,13 +763,15 @@ class _Checker:
             self.error("bad_value", at, str(exc).replace("\n", "; "))
             return None
 
-    def _volumes(self, name: str, volumes: Any, declared: set[str], used: dict[str, str]) -> None:
+    def _volumes(self, name: str, volumes: Any, declared: set[str], used: dict[str, str]) -> list[str]:
+        """Check a service's mounts; return the scratch paths (each a named or anonymous volume mount)."""
         at = f"services.{name}.volumes"
+        scratch: list[str] = []
         if volumes is None:
-            return
+            return scratch
         if not isinstance(volumes, list):
             self.error("bad_value", at, "`volumes` must be a list")
-            return
+            return scratch
         for index, item in enumerate(volumes):
             where = f"{at}[{index}]"
             source: Any
@@ -720,15 +819,25 @@ class _Checker:
                         "between services",
                     )
                     continue
+            target = posixpath.normpath(target)
+            if target.startswith("//"):  # POSIX keeps exactly two leading slashes
+                target = "/" + target.lstrip("/")
+            if target == "/":
+                self.error("bad_value", where, "a volume cannot be mounted at the container's root")
+                continue
+            if target in scratch:
+                self.error("duplicate_mount", where, f"{target} is mounted twice in this service")
+                continue
+            scratch.append(target)
             label = f"volume {source!r}" if source else "an anonymous volume"
             self.warn(
                 "scratch_volume",
                 where,
-                f"{label} at {target} becomes scratch space (emptyDir, counted in ephemeral-storage): its data does "
-                "not survive a restart or a replacement of the instance",
+                f"{label} at {target} becomes scratch space (an emptyDir the instance gets at that path, counted in "
+                "ephemeral-storage): its data survives a container restart but not a replacement of the instance",
                 loud=True,
             )
-            self.drop(name, "volumes", "not_carried")
+        return scratch
 
     def _depends_on(self, name: str, depends_on: Any, all_services: dict[Any, Any]) -> None:
         at = f"services.{name}.depends_on"
@@ -820,8 +929,8 @@ class _Checker:
             )
 
 
-def _check(text: str, fmt: str, channel: ContainerChannel | None) -> _Checker:
-    checker = _Checker(channel)
+def _check(text: str, fmt: str, channel: ContainerChannel | None, overlay: Any = None) -> _Checker:
+    checker = _Checker(channel, overlay)
     if fmt not in SUPPORTED_FORMATS:
         checker.error("unsupported_format", "", unsupported_format_message(fmt))
         return checker
@@ -854,21 +963,30 @@ def _check(text: str, fmt: str, channel: ContainerChannel | None) -> _Checker:
 
 
 def validate_instance_spec(
-    text: str, *, format: str = DEFAULT_FORMAT, channel: ContainerChannel | None = None
+    text: str,
+    *,
+    format: str = DEFAULT_FORMAT,
+    channel: ContainerChannel | None = None,
+    environment: dict[str, dict[str, str]] | None = None,
 ) -> InstanceSpecReport:
     """Validate an instance spec's content, with the channel that runs it when known.
 
     Checks the Compose allowlist and the static rules (literal digests,
     container-side ports, health checks, volumes, networks, service names). With
     ``channel``, also that every entry targets a declared service and port and
-    that ``resources.services`` names the spec's services. Never raises on bad
-    input: the problems are in the report.
+    that ``resources.services`` names the spec's services. ``environment`` is the
+    Document's ``meta.environment`` overlay: each service in it must exist in the
+    file. Never raises on bad input: the problems are in the report.
     """
-    return _check(text, format, channel).report
+    return _check(text, format, channel, environment).report
 
 
 def compile_instance_spec(
-    text: str, resources: ContainerResources, *, format: str = DEFAULT_FORMAT
+    text: str,
+    resources: ContainerResources,
+    *,
+    format: str = DEFAULT_FORMAT,
+    environment: dict[str, dict[str, str]] | None = None,
 ) -> CompiledInstanceSpec:
     """Compile a valid spec and the channel's ``resources`` into the agent's normalized manifest.
 
@@ -876,10 +994,14 @@ def compile_instance_spec(
     are split by ``resources.services``. Raises :class:`InstanceSpecError`
     (carrying the report) if the spec is not valid for these resources.
 
+    ``environment`` is the Document's ``meta.environment`` overlay, merged here
+    and only here: a value overrides the file's own ``environment`` for that
+    name, and the Compose bytes are never edited.
+
     PROPOSAL (unitysvc-core#105, open 3): that core compiles, rather than the
     agent, is not decided.
     """
-    checker = _check(text, format, None)
+    checker = _check(text, format, None, environment)
     report = checker.report
     names = list(checker.ports)
     split = resources.services

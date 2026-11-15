@@ -1,0 +1,79 @@
+{
+  "name": "weixin-ilink-gateway-upstream",
+  "service_type": "container",
+  "documents": {
+    "Instance spec": {
+      "category": "instance_spec",
+      "external_url": "https://raw.githubusercontent.com/Kadxy/weixin-ilink-gateway/ad6097361b834e263247764368c15529b5cf2a39/docker-compose.yaml",
+      "mime_type": "text",
+      "meta": {
+        "format": "compose",
+        "sha256": "b8f6f581b51f2fb43075f7efccff2bac414296eec6b267ffdab6a81a911704e8",
+        "environment": {
+          "gateway": {
+            "API_KEY": "${UNITYSVC_INSTANCE_API_KEY}"
+          }
+        }
+      },
+      "is_public": false
+    }
+  },
+  "summary": "HTTP gateway for the WeChat iLink Bot protocol: QR login, messaging, webhook push",
+  "details": {
+    "links": {
+      "homepage": "https://github.com/Kadxy/weixin-ilink-gateway"
+    }
+  },
+  "payout_price": {
+    "type": "revenue_share",
+    "percentage": "80",
+    "description": "80% after platform compute cost"
+  },
+  "upstream_access_config": {
+    "base": {
+      "access_method": "container",
+      "description": "One WeChat bot account",
+      "resources": {
+        "limits": {
+          "cpu": "250m",
+          "memory": "256Mi",
+          "ephemeral-storage": "1Gi"
+        }
+      },
+      "entries": [
+        {
+          "name": "api",
+          "service": "gateway",
+          "port": 3000,
+          "auth": "app"
+        }
+      ],
+      "params": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "webhook_urls": {
+              "type": "string",
+              "description": "Comma-separated URLs that receive incoming messages"
+            }
+          }
+        },
+        "testing_defaults": {
+          "webhook_urls": ""
+        }
+      },
+      "customer_access_requests": [
+        {
+          "object": "resource:container",
+          "permissions": [
+            "create"
+          ],
+          "required": true,
+          "justification": "Run one gateway instance for this enrollment"
+        }
+      ]
+    }
+  },
+  "time_created": "2026-01-01T00:00:00Z",
+  "description": "Runs the open-source weixin-ilink-gateway straight from its own docker-compose.yaml (pinned by URL and hash), with UnitySVC's API key supplied by an overlay."
+}

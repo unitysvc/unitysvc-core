@@ -30,7 +30,12 @@
         "timeout_seconds": 5,
         "failure_threshold": 3,
         "start_period_seconds": 10
-      }
+      },
+      "scratch": [
+        {
+          "path": "/app/data"
+        }
+      ]
     }
   ]
 }

@@ -31,6 +31,7 @@ ROOT = Path(__file__).parent
 EXAMPLES = ROOT / "example_data"
 ECHO = EXAMPLES / "hashicorp" / "services" / "echo"
 WEIXIN = EXAMPLES / "kadxy" / "services" / "weixin-ilink-gateway"
+WEIXIN_UPSTREAM = EXAMPLES / "kadxy" / "services" / "weixin-ilink-gateway-upstream"
 FIXTURES = ROOT / "fixtures"
 SCHEMA_DIR = ROOT.parent / "src" / "unitysvc_core" / "schema"
 DIGEST = "@sha256:" + "a" * 64
@@ -438,7 +439,22 @@ class TestLoudWarnings:
         assert report.ok, report.errors
         scratch = [w for w in report.warnings if w.code == "scratch_volume"]
         assert len(scratch) == 2 and all(w.loud for w in scratch)
-        assert "does not survive a restart" in scratch[0].message
+        assert "survives a container restart" in scratch[0].message
+        manifest = compile_instance_spec(text, ContainerResources.model_validate({"limits": LIMITS})).manifest
+        assert [s.path for s in manifest.services[0].scratch or []] == ["/data", "/cache"]
+        assert not any(
+            d.key == "volumes"
+            for d in compile_instance_spec(text, ContainerResources.model_validate({"limits": LIMITS})).dropped
+        )
+
+    def test_a_path_mounted_twice_is_an_error(self) -> None:
+        text = yaml.safe_dump(
+            {
+                "services": {"web": {"image": f"web{DIGEST}", "volumes": ["a:/data", "b:/data"]}},
+                "volumes": {"a": {}, "b": {}},
+            }
+        )
+        assert "duplicate_mount" in _codes(validate_instance_spec(text))
 
 
 class TestReject:
@@ -457,7 +473,6 @@ class TestReject:
             ("volumes_from", ["x"]),
             ("runtime", "nvidia"),
             ("extra_hosts", ["a:1.1.1.1"]),
-            ("env_file", ".env"),
             ("extends", {"service": "x"}),
             ("mem_limit", "1g"),
             ("secrets", ["s"]),
@@ -481,10 +496,32 @@ class TestReject:
 
     @pytest.mark.parametrize(
         "image",
-        ["nginx", "nginx:latest", "nginx:1.27", "nginx@sha256:abc", "nginx@sha256:" + "A" * 64, "nginx${TAG}" + DIGEST],
+        ["nginx@sha256:abc", "nginx@sha256:" + "A" * 64, "nginx${TAG}" + DIGEST, "nginx latest", "nginx:1@sha256:"],
     )
-    def test_images_must_be_pinned_by_a_literal_digest(self, image: str) -> None:
+    def test_a_written_digest_must_be_a_literal_valid_one(self, image: str) -> None:
         assert not validate_instance_spec(_compose(image=image)).ok
+
+    @pytest.mark.parametrize("image", ["nginx", "nginx:latest", "nginx:1.27", "ghcr.io/o/app:stable"])
+    def test_a_tag_or_no_tag_is_accepted_with_a_note(self, image: str) -> None:
+        report = validate_instance_spec(_compose(image=image))
+        assert report.ok, report.errors
+        note = next(w for w in report.warnings if w.code == "unpinned_image")
+        assert not note.loud and "runs it as written" in note.message and "reports the digest" in note.message
+        assert (
+            compile_instance_spec(_compose(image=image), ContainerResources.model_validate({"limits": LIMITS}))
+            .manifest.services[0]
+            .image
+            == image
+        )
+
+    def test_a_digest_written_by_the_seller_is_honored_as_written(self) -> None:
+        image = "ghcr.io/o/app:v1" + DIGEST
+        report = validate_instance_spec(_compose(image=image))
+        assert report.ok and "unpinned_image" not in _codes(report, "warnings")
+        manifest = compile_instance_spec(
+            _compose(image=image), ContainerResources.model_validate({"limits": LIMITS})
+        ).manifest
+        assert manifest.services[0].image == image
 
     def test_a_tag_with_a_digest_is_accepted(self) -> None:
         assert validate_instance_spec(_compose(image="ghcr.io/o/app:v1.2.3" + DIGEST)).ok
@@ -778,7 +815,6 @@ class TestCompileGolden:
         compiled = compile_instance_spec((WEIXIN / "compose.yaml").read_text(), channel.resources)
         assert {(d.service, d.key, d.reason) for d in compiled.dropped} == {
             ("gateway", "deploy.resources", "ignored"),
-            ("gateway", "volumes", "not_carried"),
         }
         assert any(w.loud for w in compiled.warnings)
 
@@ -801,8 +837,10 @@ class TestCompileGolden:
 
     def test_an_invalid_spec_does_not_compile(self) -> None:
         with pytest.raises(InstanceSpecError) as caught:
-            compile_instance_spec(_compose(image="nginx:latest"), ContainerResources.model_validate({"limits": LIMITS}))
-        assert "unpinned_image" in {e.code for e in caught.value.report.errors}
+            compile_instance_spec(
+                _compose(image="nginx@sha256:abc"), ContainerResources.model_validate({"limits": LIMITS})
+            )
+        assert "bad_digest" in {e.code for e in caught.value.report.errors}
 
 
 # --- the examples through the validator --------------------------------------------------------
@@ -843,20 +881,20 @@ class TestExamples:
         assert any(w.code == "scratch_volume" and w.loud for w in warnings)
         assert any(w.code == "interpolation" for w in warnings)
 
-    def test_the_original_weixin_compose_is_rejected(self) -> None:
-        report = validate_instance_spec((WEIXIN / "docker-compose.original.yaml").read_text())
-        assert {"unpinned_image", "rejected_key"} <= _codes(report)
-        assert any(e.path == "services.gateway.env_file" for e in report.errors)
-        assert any(e.path == "services.gateway.image" for e in report.errors)
-        assert "host_port" in _codes(report, "warnings")
+    def test_the_upstream_weixin_compose_is_accepted_with_loud_warnings(self) -> None:
+        report = validate_instance_spec((WEIXIN_UPSTREAM / "upstream-compose.yaml").read_text())
+        assert report.ok, report.errors
+        loud = {w.code for w in report.warnings if w.loud}
+        assert {"ignored_key", "scratch_volume"} <= loud
+        env_file = next(w for w in report.warnings if w.path == "services.gateway.env_file")
+        assert env_file.loud and "meta.environment" in env_file.message and "missing" in env_file.message
+        assert "unpinned_image" in _codes(report, "warnings")
 
     def test_a_bad_spec_fails_the_offering(self, validator: DataValidator, tmp_path: Path) -> None:
-        (tmp_path / "compose.yaml").write_text((WEIXIN / "docker-compose.original.yaml").read_text())
+        (tmp_path / "compose.yaml").write_text(_compose(privileged=True))
         offering = json.loads((ECHO / "offering.json").read_text())
         errors = validator.validate_service(offering=offering, service_dir=tmp_path)["offering"]
-        assert any("env_file" in e for e in errors) and any(
-            "upstream_access_config.base.instance_spec" in e for e in errors
-        )
+        assert any("upstream_access_config.base.instance_spec" in e and "privileged" in e for e in errors)
 
     def test_entry_and_split_errors_surface_in_the_offering(self, validator: DataValidator) -> None:
         offering = json.loads((ECHO / "offering.json").read_text())
@@ -1186,3 +1224,192 @@ class TestSnapshotDocument:
         assert _errors(validator, offering) == []
         doc["meta"]["sha256"] = "0" * 64
         assert any("does not match meta.sha256" in e for e in _errors(validator, offering))
+
+
+# --- addenda of #107: env_file, meta.environment, scratch ---------------------------------------------
+
+
+def _resources() -> ContainerResources:
+    return ContainerResources.model_validate({"limits": LIMITS})
+
+
+class TestEnvFile:
+    def test_env_file_is_ignored_loudly_not_rejected(self) -> None:
+        report = validate_instance_spec(_compose(env_file=".env"))
+        assert report.ok, report.errors
+        warning = next(w for w in report.warnings if w.path == "services.web.env_file")
+        assert warning.code == "ignored_key" and warning.loud
+        assert "missing" in warning.message and "meta.environment" in warning.message
+        compiled = compile_instance_spec(_compose(env_file=".env"), _resources())
+        assert ("web", "env_file", "ignored") in {(d.service, d.key, d.reason) for d in compiled.dropped}
+
+
+class TestEnvironmentOverlay:
+    def compose(self) -> str:
+        return _compose(environment={"A": "file", "KEEP": "k"})
+
+    def test_the_overlay_overrides_and_adds(self) -> None:
+        overlay = {"web": {"A": "overlay", "B": "new"}}
+        env = compile_instance_spec(self.compose(), _resources(), environment=overlay).manifest.services[0].env
+        assert env == {"A": "overlay", "KEEP": "k", "B": "new"}
+
+    def test_the_file_is_not_edited_and_no_overlay_is_the_file(self) -> None:
+        text = self.compose()
+        assert compile_instance_spec(text, _resources()).manifest.services[0].env == {"A": "file", "KEEP": "k"}
+        assert text == self.compose()
+
+    def test_it_supplies_what_env_file_would_have(self) -> None:
+        overlay = {"web": {"API_KEY": "${UNITYSVC_INSTANCE_API_KEY}"}}
+        text = _compose(env_file=".env")
+        env = compile_instance_spec(text, _resources(), environment=overlay).manifest.services[0].env
+        assert env == {"API_KEY": "${UNITYSVC_INSTANCE_API_KEY}"}
+        report = validate_instance_spec(text, environment=overlay)
+        assert report.ok and "interpolation" in _codes(report, "warnings")
+
+    def test_a_service_the_file_lacks_is_an_error(self) -> None:
+        report = validate_instance_spec(self.compose(), environment={"ghost": {"A": "1"}})
+        assert "overlay_service" in _codes(report)
+        with pytest.raises(InstanceSpecError):
+            compile_instance_spec(self.compose(), _resources(), environment={"ghost": {"A": "1"}})
+
+    @pytest.mark.parametrize(
+        "overlay",
+        [
+            {"web": {"1 BAD": "x"}},
+            {"web": {"A": 1}},
+            {"web": {"A": None}},
+            {"web": ["A=1"]},
+            {"Web": {"A": "1"}},
+            {"web": {}},
+            {},
+            ["web"],
+            "A=1",
+        ],
+    )
+    def test_the_document_refuses_a_bad_overlay(self, overlay: Any) -> None:
+        doc = {
+            "category": "instance_spec",
+            "mime_type": "text",
+            "file_path": "c.yaml",
+            "meta": {"environment": overlay},
+        }
+        with pytest.raises(ValidationError, match="meta.environment"):
+            DocumentData.model_validate(doc)
+
+    def test_the_document_accepts_an_overlay_and_the_validator_checks_it(self, validator: DataValidator) -> None:
+        offering = expand_instance_spec(_echo())
+        doc = offering["documents"][INSTANCE_SPEC_TITLE]
+        doc["meta"]["environment"] = {"web": {"GREETING": "hi"}}
+        assert _errors(validator, offering) == []
+        doc["meta"]["environment"] = {"ghost": {"GREETING": "hi"}}
+        assert any("meta.environment.ghost" in e for e in _errors(validator, offering))
+
+    def test_the_schema_describes_meta_as_open(self) -> None:
+        schema = json.loads((SCHEMA_DIR / "offering_v1.json").read_text())
+        assert "instance_spec" in json.dumps(schema)
+
+
+class TestScratch:
+    def test_the_manifest_schema_has_scratch(self) -> None:
+        props = MANIFEST_SCHEMA["$defs"]["ManifestService"]["properties"]
+        assert "scratch" in props
+        manifest = {"services": [{"name": "a", "image": "i", "scratch": [{"path": "/data"}]}]}
+        assert list(Draft7Validator(MANIFEST_SCHEMA).iter_errors(manifest)) == []
+        bad = {"services": [{"name": "a", "image": "i", "scratch": [{"path": "data"}]}]}
+        assert list(Draft7Validator(MANIFEST_SCHEMA).iter_errors(bad)) != []
+        with pytest.raises(ValidationError):
+            NormalizedManifest.model_validate(bad)
+        with pytest.raises(ValidationError, match="distinct"):
+            NormalizedManifest.model_validate(
+                {"services": [{"name": "a", "image": "i", "scratch": [{"path": "/d"}, {"path": "/d"}]}]}
+            )
+        with pytest.raises(ValidationError):
+            NormalizedManifest.model_validate({"services": [{"name": "a", "image": "i", "scratch": [{"path": "/"}]}]})
+
+    def test_the_golden_weixin_manifest_carries_scratch(self) -> None:
+        golden = json.loads((FIXTURES / "manifest" / "weixin.manifest.json").read_text())
+        assert golden["services"][0]["scratch"] == [{"path": "/app/data"}]
+
+
+def _with_volumes(volumes: list[Any]) -> str:
+    base = {"image": f"example/app{DIGEST}", "ports": ["8080"], "volumes": volumes}
+    return yaml.safe_dump({"services": {"web": base}, "volumes": {"v": {}}})
+
+
+class TestReviewFixes:
+    def test_scratch_paths_are_normalized(self) -> None:
+        for bad in ("/data/..", "/data/../..", "/."):
+            text = _with_volumes([{"type": "volume", "source": "v", "target": bad}])
+            assert "bad_value" in _codes(validate_instance_spec(text)), bad
+        text = _with_volumes([{"type": "volume", "source": "v", "target": "/data"}, "/data/../data"])
+        assert "duplicate_mount" in _codes(validate_instance_spec(text))
+        for bad in ("/data/..", "/a//b", "/a/", "/", "//", "//data"):
+            with pytest.raises(ValidationError):
+                NormalizedManifest.model_validate(
+                    {"services": [{"name": "a", "image": "i", "scratch": [{"path": bad}]}]}
+                )
+
+    def test_an_overlay_resolves_an_inherited_variable(self) -> None:
+        for env in (["KEY"], {"KEY": None}):
+            text = _compose(environment=env)
+            assert "bad_env" in _codes(validate_instance_spec(text))
+            overlay = {"web": {"KEY": "v"}}
+            assert validate_instance_spec(text, environment=overlay).ok
+            assert compile_instance_spec(text, _resources(), environment=overlay).manifest.services[0].env == {
+                "KEY": "v"
+            }
+
+
+class TestUpstreamExample:
+    """The Kadxy URL-plus-overlay case: the project's own Compose file, a URL, a pinned hash and an overlay."""
+
+    def offering(self) -> dict[str, Any]:
+        return json.loads((WEIXIN_UPSTREAM / "offering.json").read_text())
+
+    def test_it_validates(self, validator: DataValidator) -> None:
+        for name in ("offering", "listing"):
+            ok, errors = validator.validate_data_file(
+                WEIXIN_UPSTREAM / f"{name}.json", f"{name}_v1", check_name_consistency=False
+            )
+            assert ok, errors
+
+    def test_the_url_is_the_pinned_commit_and_the_hash_matches_the_fixture(self) -> None:
+        import hashlib
+
+        doc = self.offering()["documents"][INSTANCE_SPEC_TITLE]
+        assert "ad6097361b834e263247764368c15529b5cf2a39" in doc["external_url"]
+        assert (
+            doc["meta"]["sha256"]
+            == hashlib.sha256((WEIXIN_UPSTREAM / "upstream-compose.yaml").read_bytes()).hexdigest()
+        )
+
+    def test_the_overlay_and_scratch_reach_the_manifest(self) -> None:
+        offering = self.offering()
+        doc = offering["documents"][INSTANCE_SPEC_TITLE]
+        channel = ContainerChannel.model_validate(offering["upstream_access_config"]["base"])
+        compiled = compile_instance_spec(
+            (WEIXIN_UPSTREAM / "upstream-compose.yaml").read_text(),
+            channel.resources,
+            environment=doc["meta"]["environment"],
+        )
+        service = compiled.manifest.services[0]
+        assert service.env == {"DATA_DIR": "/app/data", "API_KEY": "${UNITYSVC_INSTANCE_API_KEY}"}
+        assert service.image == "ghcr.io/kadxy/weixin-ilink-gateway:latest"
+        assert [s.path for s in service.scratch or []] == ["/app/data"]
+
+
+class TestVersion0311Shapes:
+    """What 0.3.11 accepted keeps validating."""
+
+    def test_digest_pinned_images_and_the_two_examples(self, validator: DataValidator) -> None:
+        for service_dir in (ECHO, WEIXIN):
+            offering = json.loads((service_dir / "offering.json").read_text())
+            assert _errors(validator, offering, service_dir) == []
+            assert "unpinned_image" not in {w.code for w in validator.service_warnings(offering, service_dir)}
+
+    def test_the_document_form_with_a_url_and_no_overlay(self, validator: DataValidator) -> None:
+        offering = expand_instance_spec(_echo())
+        doc = offering["documents"][INSTANCE_SPEC_TITLE]
+        del doc["file_path"]
+        doc["external_url"] = "https://raw.githubusercontent.com/o/r/" + "a" * 40 + "/compose.yaml"
+        assert _errors(validator, offering) == []

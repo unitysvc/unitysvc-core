@@ -1,0 +1,32 @@
+{
+  "name": "weixin-ilink-gateway-upstream",
+  "display_name": "WeChat iLink gateway on unitysvc.app",
+  "currency": "USD",
+  "list_price": {
+    "type": "channel",
+    "default": "base",
+    "channels": {
+      "base": {
+        "type": "one_hour",
+        "price": "0.05",
+        "description": "$0.05 / hour while running (illustrative)"
+      }
+    }
+  },
+  "service_options": {
+    "default_visibility": "private",
+    "enrollment": {
+      "required": true,
+      "limit_per_customer": 1
+    }
+  },
+  "documents": {
+    "Getting started": {
+      "category": "getting_started",
+      "file_path": "README.md",
+      "mime_type": "markdown",
+      "is_public": true
+    }
+  },
+  "time_created": "2026-01-01T00:00:00Z"
+}
