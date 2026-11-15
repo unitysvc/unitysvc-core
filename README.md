@@ -237,7 +237,7 @@ A policy has three kinds of entry (unitysvc/unitysvc#2770):
 | `params` | the enrollment parameters (below) |
 | `request_rules` | `http` channels only: rules the gateway answers itself before dispatch (below) |
 | `servers` | the connection: `HttpServer`, `SmtpServer`, `S3Server` or `McpServer` (a `container` channel's are `HttpServer`s) |
-| `resources`, `entries` | `container` channels only: the tier's resources and its entries (below); `spec` is deprecated |
+| `resources`, `entries` | `container` channels only: the tier's resources and its entries (below) |
 
 The common one-server case writes the connection fields directly on the channel; they are read as `servers[0]`. When a channel has both, each server inherits the direct fields it does not set. Any string may be a template (`{{ params.X }}`, `${ secrets.X }`, `${ customer_secrets.X ?? default }`), so numeric and boolean connection fields also accept strings.
 
@@ -263,7 +263,7 @@ A `container` channel is one tier of a service that runs as instances on Kuberne
 }
 ```
 
-- There is no per-channel spec: every container channel of the offering runs the offering's one instance spec (below), so tiers differ in `resources`, not in stack. `spec`, once the title of that Document, is **deprecated**: still accepted (0.3.11) with a `deprecated_spec` warning, an error if it names a title other than the offering's single Document, and to be removed.
+- There is no per-channel spec: every container channel of the offering runs the offering's one instance spec (below), so tiers differ in `resources`, not in stack. The earlier `spec` field (a Document title) is removed in 0.3.11; a channel carrying it is refused as an unknown field.
 - `resources` is the tier total, in Kubernetes' shape: `limits`, optionally `requests`, each a map from a resource name to a quantity (`250m`, `1Gi`, `1e3`, parsed as Kubernetes parses them). The names are `cpu`, `memory`, `ephemeral-storage` and `nvidia.com/gpu`; the first three limits are required; a request is at most its limit; a GPU is a whole number with a request equal to the limit. `resources.services` is an optional per-service split (`{"web": {"limits": {...}}}`) whose sums must stay within the tier (each share names `cpu`, `memory` and `ephemeral-storage`, and a resource without a request counts at its limit, as the agent resolves it); a spec with several services needs one. Quantities are at most 64 characters with an exponent of at most 30. A Compose `deploy.resources` is ignored: the channel is authoritative.
 - The channel is always enrollable and must request `resource:container` with `create`, marked `required` (`grants.RESOURCES` knows the resource; it has no options and no limits).
 - `servers` is optional and has no container-specific meaning: each is an ordinary `HttpServer` the gateway reaches, for example `{"base_url": "https://{{ enrollment.code }}.unitysvc.app/"}`. A container-only service sets no `servers`. An enrollable channel is reached at `/e/<CODE>` on the API gateway, which the platform provides; a listing never declares it (see Canonical user access interfaces).

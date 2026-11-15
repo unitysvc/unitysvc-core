@@ -401,7 +401,7 @@ class ContainerChannel(_ChannelBase):
 
     The instance spec is the offering's single ``instance_spec`` Document (or its
     ``instance_spec`` shortcut) and every container channel runs it; ``resources``
-    is the tier total. ``spec``, once the title of that Document, is deprecated. ``servers`` is optional and
+    is the tier total. ``servers`` is optional and
     has no container-specific meaning: each is an ordinary ``HttpServer`` the
     gateway reaches, and the listing rule (an enrollable channel and a matching
     ``/e/{{ enrollment.code }}`` interface) is checked by the validator, which
@@ -411,15 +411,6 @@ class ContainerChannel(_ChannelBase):
     server_model: ClassVar[builtins.type[_Server]] = HttpServer
     access_method: Literal["container"]
     servers: list[HttpServer] = Field(default_factory=list)
-    spec: str | None = Field(
-        default=None,
-        min_length=1,
-        description=(
-            "DEPRECATED (unitysvc/unitysvc-core#107): omit it. An offering has one instance_spec Document, so "
-            "there is nothing to name; if given it must be that Document's title. Removed in a later version"
-        ),
-        json_schema_extra={"deprecated": True},
-    )
     resources: ContainerResources
     entries: list[ContainerEntry] | None = Field(
         default=None, description="PROVISIONAL (#105 open 1): the URLs the instance is reached at"

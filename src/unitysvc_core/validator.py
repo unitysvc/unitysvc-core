@@ -743,8 +743,7 @@ class DataValidator:
         ``instance_spec`` (the shortcut or a Document); its Compose content is
         checked against each container channel (entries, resource split), as each
         tier's resources differ. A spec given as a URL is not fetched here: the
-        backend validates the snapshot it takes. A channel's deprecated ``spec`` warns,
-        and errors when it names another title. Errors are shared with backend
+        backend validates the snapshot it takes. Errors are shared with backend
         ingest, through :func:`validate_instance_spec`.
         """
         from .models.channel import ContainerChannel
@@ -767,20 +766,6 @@ class DataValidator:
                 channel = ContainerChannel.model_validate(raw)
             except ValueError:
                 continue  # the channel's own errors are reported by the schema checks
-            if channel.spec is not None:
-                if channel.spec != title:
-                    errors.append(
-                        f"{at}.spec: {channel.spec!r} is not the offering's instance spec {title!r}; "
-                        "an offering has one, so omit 'spec'"
-                    )
-                warnings.append(
-                    InstanceSpecIssue(
-                        code="deprecated_spec",
-                        path=at,
-                        message="'spec' is deprecated and will be removed: an offering has one instance spec, omit it",
-                        loud=False,
-                    )
-                )
             if text is None or doc.get("external_url") is not None:
                 continue  # a URL is validated by the backend on the snapshot; a missing file by the file checks
             report = validate_instance_spec(text, format=fmt, channel=channel)

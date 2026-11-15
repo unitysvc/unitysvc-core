@@ -181,12 +181,11 @@ class TestChannel:
         assert isinstance(channel, ContainerChannel)
         assert channel.servers == []
 
-    def test_requires_resources_but_not_spec(self) -> None:
+    def test_requires_resources(self) -> None:
         data = _channel()
         del data["resources"]
         with pytest.raises(ValidationError, match="resources"):
             ContainerChannel.model_validate(data)
-        assert ContainerChannel.model_validate(_channel()).spec is None
 
     @pytest.mark.parametrize(
         "requests",
@@ -1108,36 +1107,18 @@ class TestExpand:
         assert _errors(validator, expand_instance_spec(shortcut)) == _errors(validator, shortcut) == []
 
 
-class TestDeprecatedSpec:
-    def test_the_0_3_10_shape_still_validates_with_a_warning(self, validator: DataValidator) -> None:
-        offering = _echo()
-        del offering["instance_spec"]
-        offering["documents"] = {"Application": _document(meta={"format": "compose"})}
-        for channel in offering["upstream_access_config"].values():
-            channel["spec"] = "Application"
-        assert _errors(validator, offering) == []
-        warnings = validator.service_warnings(offering, ECHO)
-        deprecated = [w for w in warnings if w.code == "deprecated_spec"]
-        assert len(deprecated) == 2 and not any(w.loud for w in deprecated)
-        assert not any(w.code == "deprecated_spec" for w in validator.service_warnings(_echo(), ECHO))
-
-    def test_a_spec_naming_another_title_is_an_error(self, validator: DataValidator) -> None:
-        offering = _echo()
-        offering["upstream_access_config"]["base"]["spec"] = "Other"
-        assert any(
-            "base.spec" in e and "'Other' is not the offering's instance spec" in e
-            for e in _errors(validator, offering)
-        )
-
-    def test_the_shortcut_title_is_accepted_as_a_spec(self, validator: DataValidator) -> None:
+class TestSpecRemoved:
+    def test_a_channel_with_spec_is_rejected_as_an_unknown_field(self, validator: DataValidator) -> None:
         offering = _echo()
         offering["upstream_access_config"]["base"]["spec"] = INSTANCE_SPEC_TITLE
-        assert _errors(validator, offering) == []
+        assert any("spec" in e and "Extra inputs are not permitted" in e for e in _errors(validator, offering))
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            ContainerChannel.model_validate(_channel(spec="Application"))
 
-    def test_the_schema_marks_spec_deprecated(self) -> None:
+    def test_the_schema_has_no_spec(self) -> None:
         schema = json.loads((SCHEMA_DIR / "offering_v1.json").read_text())
-        spec = schema["$defs"]["ContainerChannel"]["properties"]["spec"]
-        assert spec["deprecated"] is True and "instance_spec" in schema["properties"]
+        assert "spec" not in schema["$defs"]["ContainerChannel"]["properties"]
+        assert "instance_spec" in schema["properties"]
 
 
 class TestSnapshotDocument:

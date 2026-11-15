@@ -285,7 +285,7 @@
     },
     "ContainerChannel": {
       "additionalProperties": false,
-      "description": "A tier of a service that runs as instances on Kubernetes (unitysvc/unitysvc-core#105).\n\nThe instance spec is the offering's single ``instance_spec`` Document (or its\n``instance_spec`` shortcut) and every container channel runs it; ``resources``\nis the tier total. ``spec``, once the title of that Document, is deprecated. ``servers`` is optional and\nhas no container-specific meaning: each is an ordinary ``HttpServer`` the\ngateway reaches, and the listing rule (an enrollable channel and a matching\n``/e/{{ enrollment.code }}`` interface) is checked by the validator, which\nsees the listing. ``entries`` is PROVISIONAL (#105 open 1 and 2).",
+      "description": "A tier of a service that runs as instances on Kubernetes (unitysvc/unitysvc-core#105).\n\nThe instance spec is the offering's single ``instance_spec`` Document (or its\n``instance_spec`` shortcut) and every container channel runs it; ``resources``\nis the tier total. ``servers`` is optional and\nhas no container-specific meaning: each is an ordinary ``HttpServer`` the\ngateway reaches, and the listing rule (an enrollable channel and a matching\n``/e/{{ enrollment.code }}`` interface) is checked by the validator, which\nsees the listing. ``entries`` is PROVISIONAL (#105 open 1 and 2).",
       "properties": {
         "acceptable_formats": {
           "anyOf": [
@@ -737,21 +737,6 @@
           "default": null,
           "description": "Channel rank, lowest first",
           "title": "Sort Order"
-        },
-        "spec": {
-          "anyOf": [
-            {
-              "minLength": 1,
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "deprecated": true,
-          "description": "DEPRECATED (unitysvc/unitysvc-core#107): omit it. An offering has one instance_spec Document, so there is nothing to name; if given it must be that Document's title. Removed in a later version",
-          "title": "Spec"
         },
         "tls_verify": {
           "anyOf": [
