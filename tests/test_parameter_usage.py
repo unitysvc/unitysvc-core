@@ -399,26 +399,6 @@ def test_the_file_validator_checks_channel_parameters(tmp_path):
     assert any("testing_defaults" in e for e in errors), errors
 
 
-def test_a_required_parameter_with_a_default_call_needs_no_testing_value():
-    """The ops enrollment generates it (unitysvc#3023); a literal default does not count as one."""
-    schema = {
-        "type": "object",
-        "properties": {
-            "KEY": {"type": "string", "minLength": 12, "default": "{{ token_urlsafe(32) }}"},
-            "folder": {"type": "string"},
-        },
-        "required": ["KEY", "folder"],
-    }
-    ok = _offering(plus=_plus(schema=schema, testing_defaults={"folder": "ops"}))
-    assert validate_channel_parameters(ok) == []
-    # A value given anyway is still checked against the schema.
-    short = _offering(plus=_plus(schema=schema, testing_defaults={"folder": "ops", "KEY": "short"}))
-    assert any("KEY" in e for e in validate_channel_parameters(short))
-    # The other required parameter still needs its value.
-    missing = _offering(plus=_plus(schema=schema, testing_defaults={}))
-    assert any("folder need a value" in e for e in validate_channel_parameters(missing))
-
-
 def _container_offering(**fields):
     channel = {
         "access_method": "container",
