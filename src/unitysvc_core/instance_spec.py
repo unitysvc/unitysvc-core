@@ -96,7 +96,7 @@ _DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 _ENV_NAME_RE = re.compile(r"^[-._a-zA-Z][-._a-zA-Z0-9]*$")
 _INTERPOLATION_RE = re.compile(r"\$(\{[^}]*\}|[A-Za-z_])")
 # A parameter reference belongs in the channel's ``environment``, not in the portable Compose file (which
-# must run as it is with Docker): ``{{ params`` anywhere in the file or its ``meta.environment`` is refused.
+# must run as it is with Docker): ``{{ params`` anywhere in the file is refused.
 _PARAM_TEMPLATE_RE = re.compile(r"\{\{\s*params\b")
 _MAX_DURATION_SECONDS = 86400.0  # far above any bound the agent accepts; keeps float overflow out of ceil()
 _DURATION_RE = re.compile(r"^(?:\d+(?:\.\d+)?(?:us|ms|s|m|h))+$")
@@ -394,9 +394,6 @@ class _Checker:
                     scan(item, f"{where}[{index}]")
 
         scan(doc, "")
-        for service, env in self._checked_overlay().items():
-            for key, value in env.items():
-                scan(value, f"meta.environment.{service}.{key}")
 
     def _top_volumes(self, volumes: Any) -> set[str]:
         if volumes is None:

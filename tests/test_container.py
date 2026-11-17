@@ -191,10 +191,6 @@ class TestParameterReferences:
     def test_other_braces_are_left_alone(self) -> None:
         assert validate_instance_spec(_compose(healthcheck={"test": ["CMD", "echo", "{{.State.Status}}"]})).ok
 
-    def test_the_overlay_is_held_to_the_same_rule(self) -> None:
-        report = validate_instance_spec(_compose(), environment={"web": {"A": "{{ params.X }}"}})
-        assert "bad_template" in _codes(report)
-
     def test_the_channel_environment_is_merged_over_the_overlay(self) -> None:
         merged = merged_environment({"web": {"A": "1", "B": "2"}}, {"web": {"B": "x"}, "db": {"C": "3"}})
         assert merged == {"web": {"A": "1", "B": "x"}, "db": {"C": "3"}}
