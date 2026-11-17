@@ -1370,7 +1370,8 @@ class TestReviewFixes:
             text = _compose(environment=env)
             assert "bad_env" in _codes(validate_instance_spec(text))
             overlay = {"web": {"KEY": "v"}}
-            assert validate_instance_spec(text, channel=ContainerChannel.model_validate(_channel(environment=overlay))).ok
+            channel = ContainerChannel.model_validate(_channel(environment=overlay))
+            assert validate_instance_spec(text, channel=channel).ok
             assert compile_instance_spec(text, _resources(), environment=overlay).manifest.services[0].env == {
                 "KEY": "v"
             }
