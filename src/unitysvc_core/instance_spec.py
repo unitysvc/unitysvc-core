@@ -95,6 +95,9 @@ _HEALTHCHECK_KEYS = frozenset({"test", "interval", "timeout", "retries", "start_
 _DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 _ENV_NAME_RE = re.compile(r"^[-._a-zA-Z][-._a-zA-Z0-9]*$")
 _INTERPOLATION_RE = re.compile(r"\$(\{[^}]*\}|[A-Za-z_])")
+# ``{{ params.NAME }}``: the enrollment's parameter, bound by the platform when the instance starts. It is
+# allowed only inside an environment value; any other ``{{`` is a template the platform would not render.
+PARAM_REFERENCE_RE = re.compile(r"\{\{\s*params\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 _MAX_DURATION_SECONDS = 86400.0  # far above any bound the agent accepts; keeps float overflow out of ceil()
 _DURATION_RE = re.compile(r"^(?:\d+(?:\.\d+)?(?:us|ms|s|m|h))+$")
 _DURATION_PART_RE = re.compile(r"(\d+(?:\.\d+)?)(us|ms|s|m|h)")
@@ -355,7 +358,52 @@ class _Checker:
                     f"meta.environment.{service}",
                     f"{service!r} is not a service of the file; its services are {', '.join(map(str, services))}",
                 )
+        self._templates(doc)
         self._channel_context()
+
+    def _templates(self, doc: dict[str, Any]) -> None:
+        """A ``{{`` is allowed only as ``{{ params.NAME }}`` inside a service's ``environment`` value."""
+
+        def env_values(service: Any) -> list[Any]:
+            env = service.get("environment") if isinstance(service, dict) else None
+            if isinstance(env, dict):
+                return list(env.values())
+            if isinstance(env, list):
+                return [item.partition("=")[2] for item in env if isinstance(item, str)]
+            return []
+
+        def scan(value: Any, where: str, *, env: bool = False) -> None:
+            if isinstance(value, str):
+                rest = PARAM_REFERENCE_RE.sub("", value) if env else value
+                if "{{" in rest:
+                    self.error(
+                        "bad_template",
+                        where,
+                        "`{{ params.NAME }}` is the only template allowed, and only in an environment value",
+                    )
+            elif isinstance(value, dict):
+                for key, item in value.items():
+                    scan(item, f"{where}.{key}")
+            elif isinstance(value, list):
+                for index, item in enumerate(value):
+                    scan(item, f"{where}[{index}]")
+
+        services = doc.get("services")
+        for name, service in (services.items() if isinstance(services, dict) else []):
+            if not isinstance(service, dict):
+                continue
+            for key, value in service.items():
+                if key == "environment":
+                    for index, item in enumerate(env_values(service)):
+                        scan(item, f"services.{name}.environment[{index}]", env=True)
+                else:
+                    scan(value, f"services.{name}.{key}")
+        for key, value in doc.items():
+            if key != "services":
+                scan(value, key)
+        for service, env in self._checked_overlay().items():
+            for key, value in env.items():
+                scan(value, f"meta.environment.{service}.{key}", env=True)
 
     def _top_volumes(self, volumes: Any) -> set[str]:
         if volumes is None:

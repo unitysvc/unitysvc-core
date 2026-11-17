@@ -172,6 +172,36 @@ class TestResources:
         assert validate_instance_spec(_compose(healthcheck={"test": ["CMD", "x"], field: ok})).ok
 
 
+class TestParameterReferences:
+    """``{{ params.NAME }}`` is allowed only in an environment value (unitysvc#3023)."""
+
+    def test_it_is_allowed_in_an_environment_value(self) -> None:
+        for env in ({"API_KEY": "{{ params.WEIXIN_API_KEY }}"}, ["API_KEY={{params.WEIXIN_API_KEY}}"]):
+            assert validate_instance_spec(_compose(environment=env)).ok
+
+    @pytest.mark.parametrize(
+        "service",
+        [
+            {"image": "{{ params.X }}"},
+            {"command": ["run", "{{ params.X }}"]},
+            {"labels": {"a": "{{ params.X }}"}},
+            {"environment": {"A": "{{ params.X.y }}"}},
+            {"environment": {"A": "{{ other }}"}},
+            {"environment": {"A": "{{ params.X | upper }}"}},
+        ],
+    )
+    def test_anywhere_else_is_refused(self, service: dict[str, Any]) -> None:
+        report = validate_instance_spec(_compose(**service))
+        assert "bad_template" in _codes(report)
+
+    def test_the_overlay_is_held_to_the_same_rule(self) -> None:
+        assert validate_instance_spec(
+            _compose(), environment={"web": {"A": "{{ params.X }}"}}
+        ).ok
+        report = validate_instance_spec(_compose(), environment={"web": {"A": "{{ nope }}"}})
+        assert "bad_template" in _codes(report)
+
+
 # --- the channel ----------------------------------------------------------------------------------
 
 
