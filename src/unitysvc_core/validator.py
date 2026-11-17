@@ -15,8 +15,8 @@ from .grants import ExportsResolver
 from .instance_spec import (
     INSTANCE_SPEC_TITLE,
     InstanceSpecIssue,
-    expand_instance_spec,
     instance_spec_format,
+    merged_environment,
     validate_instance_spec,
 )
 from .parameter_usage import validate_channel_parameters, validate_required_parameter_usage
@@ -770,7 +770,10 @@ class DataValidator:
             if text is None or doc.get("external_url") is not None:
                 continue  # a URL is validated by the backend on the snapshot; a missing file by the file checks
             report = validate_instance_spec(
-                text, format=fmt, channel=channel, environment=(doc.get("meta") or {}).get("environment")
+                text,
+                format=fmt,
+                channel=channel,
+                environment=merged_environment((doc.get("meta") or {}).get("environment"), channel.environment),
             )
             errors.extend(f"{at}.instance_spec ({title!r}): {issue}" for issue in report.errors)
             warnings.extend(issue.model_copy(update={"path": f"{at}: {issue.path}"}) for issue in report.warnings)
@@ -1283,13 +1286,6 @@ class DataValidator:
         ``file_content``, as the seller SDK uploads it — so the seller check
         sees the same document content backend ingest does. Without a
         ``base_dir`` only documents already carrying ``file_content`` count."""
-        if data.get("instance_spec"):
-            try:
-                # The instance spec reads a container channel's parameters (``{{ params.NAME }}``), so it
-                # is a document whose text counts, like a ``.j2`` one (unitysvc#3023).
-                data = expand_instance_spec(data)
-            except ValueError:
-                pass  # reported by the offering model
         documents = data.get("documents")
         if not isinstance(documents, dict) or base_dir is None:
             return data
@@ -1297,7 +1293,7 @@ class DataValidator:
         for title, doc in documents.items():
             if isinstance(doc, dict) and "file_content" not in doc:
                 rel = doc.get("file_path")
-                if isinstance(rel, str) and (rel.endswith(".j2") or doc.get("category") == "instance_spec"):
+                if isinstance(rel, str) and rel.endswith(".j2"):
                     path = Path(rel) if Path(rel).is_absolute() else base_dir / rel
                     try:
                         doc = {**doc, "file_content": path.read_text(encoding="utf-8")}

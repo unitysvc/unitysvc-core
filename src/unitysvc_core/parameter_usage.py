@@ -214,18 +214,6 @@ def validate_required_parameter_usage(listing: dict[str, Any], offering: dict[st
     return _unused_channel_parameters(listing, offering, channel_parameter_schemas(offering))
 
 
-def _instance_spec_unread(offering: dict[str, Any]) -> bool:
-    """Whether the offering has an instance spec whose text is not in the data: a container channel's
-    parameters are read there (``{{ params.NAME }}`` in an environment value, unitysvc#3023), so with
-    the text absent they cannot be called unused. With ``file_content`` present they are checked."""
-    if offering.get("instance_spec"):
-        return True
-    docs = offering.get("documents")
-    entries = docs.values() if isinstance(docs, dict) else docs if isinstance(docs, list) else ()
-    specs = [d for d in entries if isinstance(d, dict) and d.get("category") == "instance_spec"]
-    return any(not isinstance(d.get("file_content"), str) for d in specs)
-
-
 def _unused_channel_parameters(
     listing: dict[str, Any], offering: dict[str, Any], channel_schemas: dict[str, Any]
 ) -> list[str]:
@@ -233,13 +221,10 @@ def _unused_channel_parameters(
     document content; another channel's use does not count."""
     channels = _channels(offering)
     documents = [_document_contents(listing.get("documents")), _document_contents(offering.get("documents"))]
-    spec_unread = _instance_spec_unread(offering)
     errors: list[str] = []
     for name, schema in sorted(channel_schemas.items()):
         if not isinstance(schema, dict):
             continue  # reported by validate_channel_parameters
-        if spec_unread and channels.get(name, {}).get("access_method") == "container":
-            continue  # a container channel is configured by its instance spec, whose text is not here
         try:
             unused = unused_required_params(schema, _channel_body(channels[name]), *documents)
         except TemplateSyntaxError as exc:

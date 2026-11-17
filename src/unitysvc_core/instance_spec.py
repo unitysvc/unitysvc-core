@@ -95,9 +95,9 @@ _HEALTHCHECK_KEYS = frozenset({"test", "interval", "timeout", "retries", "start_
 _DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 _ENV_NAME_RE = re.compile(r"^[-._a-zA-Z][-._a-zA-Z0-9]*$")
 _INTERPOLATION_RE = re.compile(r"\$(\{[^}]*\}|[A-Za-z_])")
-# ``{{ params.NAME }}``: the enrollment's parameter, bound by the platform when the instance starts. It is
-# allowed only inside an environment value; any other ``{{`` is a template the platform would not render.
-PARAM_REFERENCE_RE = re.compile(r"\{\{\s*params\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+# A parameter reference belongs in the channel's ``environment``, not in the portable Compose file (which
+# must run as it is with Docker): ``{{ params`` anywhere in the file or its ``meta.environment`` is refused.
+_PARAM_TEMPLATE_RE = re.compile(r"\{\{\s*params\b")
 _MAX_DURATION_SECONDS = 86400.0  # far above any bound the agent accepts; keeps float overflow out of ceil()
 _DURATION_RE = re.compile(r"^(?:\d+(?:\.\d+)?(?:us|ms|s|m|h))+$")
 _DURATION_PART_RE = re.compile(r"(\d+(?:\.\d+)?)(us|ms|s|m|h)")
@@ -226,6 +226,19 @@ def environment_overlay_error(value: Any) -> str | None:
             if not isinstance(text, str):
                 return f"{service}.{key}: the value must be a string"
     return None
+
+
+def merged_environment(*overlays: dict[str, dict[str, str]] | None) -> dict[str, dict[str, str]] | None:
+    """The overlays merged per service, a later one overriding an earlier one's value for the same name.
+
+    The instance's environment is the spec's own, overridden by the Document's ``meta.environment``, then
+    by the channel's ``environment``. ``None`` when there are none.
+    """
+    merged: dict[str, dict[str, str]] = {}
+    for overlay in overlays:
+        for service, values in (overlay or {}).items():
+            merged[service] = {**merged.get(service, {}), **values}
+    return merged or None
 
 
 def sha256_error(value: Any) -> str | None:
@@ -362,48 +375,28 @@ class _Checker:
         self._channel_context()
 
     def _templates(self, doc: dict[str, Any]) -> None:
-        """A ``{{`` is allowed only as ``{{ params.NAME }}`` inside a service's ``environment`` value."""
+        """``{{ params.NAME }}`` is not allowed in the file: the channel's ``environment`` is where it goes."""
 
-        def env_values(service: Any) -> list[Any]:
-            env = service.get("environment") if isinstance(service, dict) else None
-            if isinstance(env, dict):
-                return list(env.values())
-            if isinstance(env, list):
-                return [item.partition("=")[2] for item in env if isinstance(item, str)]
-            return []
-
-        def scan(value: Any, where: str, *, env: bool = False) -> None:
+        def scan(value: Any, where: str) -> None:
             if isinstance(value, str):
-                rest = PARAM_REFERENCE_RE.sub("", value) if env else value
-                if "{{" in rest:
+                if _PARAM_TEMPLATE_RE.search(value):
                     self.error(
                         "bad_template",
                         where,
-                        "`{{ params.NAME }}` is the only template allowed, and only in an environment value",
+                        "`{{ params.NAME }}` is not allowed in the instance spec: set the value in the channel's "
+                        "`environment`, so the file stays plain Compose",
                     )
             elif isinstance(value, dict):
                 for key, item in value.items():
-                    scan(item, f"{where}.{key}")
+                    scan(item, f"{where}.{key}" if where else str(key))
             elif isinstance(value, list):
                 for index, item in enumerate(value):
                     scan(item, f"{where}[{index}]")
 
-        services = doc.get("services")
-        for name, service in (services.items() if isinstance(services, dict) else []):
-            if not isinstance(service, dict):
-                continue
-            for key, value in service.items():
-                if key == "environment":
-                    for index, item in enumerate(env_values(service)):
-                        scan(item, f"services.{name}.environment[{index}]", env=True)
-                else:
-                    scan(value, f"services.{name}.{key}")
-        for key, value in doc.items():
-            if key != "services":
-                scan(value, key)
+        scan(doc, "")
         for service, env in self._checked_overlay().items():
             for key, value in env.items():
-                scan(value, f"meta.environment.{service}.{key}", env=True)
+                scan(value, f"meta.environment.{service}.{key}")
 
     def _top_volumes(self, volumes: Any) -> set[str]:
         if volumes is None:

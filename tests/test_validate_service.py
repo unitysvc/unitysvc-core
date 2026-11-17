@@ -147,22 +147,3 @@ def test_request_rule_boundary_errors_reach_service_validation(validator: DataVa
     channel["request_rules"] = [rule]
     errors = validator.validate_service(offering=offering)["offering"]
     assert any("request_rules" in error for error in errors)
-
-
-def test_the_instance_spec_counts_as_document_content_for_parameter_usage(
-    validator: DataValidator, tmp_path: Path
-) -> None:
-    """Unitysvc#3023: a container channel's parameter is read in its Compose file."""
-    params = {"schema": {"required": ["KEY"]}, "testing_defaults": {"KEY": "k"}}
-    offering = {
-        "instance_spec": "compose.yaml",
-        "upstream_access_config": {"base": {"access_method": "container", "params": params}},
-    }
-
-    (tmp_path / "compose.yaml").write_text("services:\n  a:\n    environment:\n      K: '{{ params.KEY }}'\n")
-    errors = validator.validate_service(offering=offering, listing={"name": "svc"}, service_dir=tmp_path)["listing"]
-    assert not any("required parameter(s) KEY" in e for e in errors)
-
-    (tmp_path / "compose.yaml").write_text("services:\n  a:\n    image: x\n")
-    errors = validator.validate_service(offering=offering, listing={"name": "svc"}, service_dir=tmp_path)["listing"]
-    assert any("required parameter(s) KEY" in e for e in errors)

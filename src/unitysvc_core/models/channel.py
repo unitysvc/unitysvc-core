@@ -46,7 +46,7 @@ from pydantic import (
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
 
-from .container import ContainerEntry, ContainerResources
+from .container import DNS_LABEL_RE, ContainerEntry, ContainerResources
 from .validators import validate_channel_name
 
 # A string field that is a value or a template rendering to one.
@@ -396,12 +396,17 @@ class McpChannel(_ChannelBase):
     servers: list[McpServer] = Field(default_factory=list)
 
 
+_ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_PARAM_REFERENCE_RE = re.compile(r"\{\{\s*params\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}")
+
+
 class ContainerChannel(_ChannelBase):
     """A tier of a service that runs as instances on Kubernetes (unitysvc/unitysvc-core#105).
 
     The instance spec is the offering's single ``instance_spec`` Document (or its
     ``instance_spec`` shortcut) and every container channel runs it; ``resources``
-    is the tier total. ``servers`` is optional and
+    is the tier total and ``environment`` this channel's environment values, which may read its
+    enrollment parameters. ``servers`` is optional and
     has no container-specific meaning: each is an ordinary ``HttpServer`` the
     gateway reaches, and the listing rule (an enrollable channel and a matching
     ``/e/{{ enrollment.code }}`` interface) is checked by the validator, which
@@ -415,6 +420,29 @@ class ContainerChannel(_ChannelBase):
     entries: list[ContainerEntry] | None = Field(
         default=None, description="PROVISIONAL (#105 open 1): the URLs the instance is reached at"
     )
+    environment: dict[str, dict[str, str]] | None = Field(
+        default=None,
+        description=(
+            "Environment values per service of the instance spec, ``{service: {NAME: value}}``. A value may "
+            "be, or contain, ``{{ params.NAME }}``: this channel's enrollment parameter, bound when the instance "
+            "starts (unitysvc/unitysvc#3023). Overrides the same name in the spec and its ``meta.environment``."
+        ),
+    )
+
+    @field_validator("environment")
+    @classmethod
+    def _check_environment(cls, value: dict[str, dict[str, str]] | None) -> dict[str, dict[str, str]] | None:
+        for service, values in (value or {}).items():
+            if not DNS_LABEL_RE.fullmatch(service):
+                raise ValueError(f"{service!r} is not a service name (a DNS label)")
+            if not values:
+                raise ValueError(f"{service}: give at least one NAME: value")
+            for key, text in values.items():
+                if not _ENV_NAME_RE.fullmatch(key):
+                    raise ValueError(f"{service}.{key}: {key!r} is not a valid environment variable name")
+                if "{{" in _PARAM_REFERENCE_RE.sub("", text):
+                    raise ValueError(f"{service}.{key}: the only template allowed is {{{{ params.NAME }}}}")
+        return value
 
     @model_validator(mode="after")
     def _check_container(self) -> "ContainerChannel":

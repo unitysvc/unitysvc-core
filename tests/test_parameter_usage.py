@@ -397,28 +397,3 @@ def test_the_file_validator_checks_channel_parameters(tmp_path):
     is_valid, errors = DataValidator(tmp_path, schema_dir).validate_data_file(service / "offering.json")
     assert not is_valid
     assert any("testing_defaults" in e for e in errors), errors
-
-
-def _container_offering(**fields):
-    channel = {
-        "access_method": "container",
-        "params": {"schema": {"type": "object", "properties": {"KEY": {}}, "required": ["KEY"]}},
-    }
-    return {"upstream_access_config": {"base": channel}, **fields}
-
-
-def test_a_container_channels_parameters_may_be_read_by_its_instance_spec():
-    """Unitysvc#3023: the spec text is not in the data, so its parameters are not called unused."""
-    assert validate_required_parameter_usage(listing(), _container_offering(instance_spec="compose.yaml")) == []
-    shortcut_doc = {"Instance spec": {"category": "instance_spec", "file_path": "compose.yaml"}}
-    assert validate_required_parameter_usage(listing(), _container_offering(documents=shortcut_doc)) == []
-
-
-def test_a_known_instance_spec_text_is_checked_for_the_reference():
-    def doc(text):
-        return {"Instance spec": {"category": "instance_spec", "file_content": text}}
-
-    used = _container_offering(documents=doc("services:\\n  a:\\n    environment:\\n      K: '{{ params.KEY }}'\\n"))
-    assert validate_required_parameter_usage(listing(), used) == []
-    unused = _container_offering(documents=doc("services: {}\\n"))
-    assert any("KEY" in e for e in validate_required_parameter_usage(listing(), unused))

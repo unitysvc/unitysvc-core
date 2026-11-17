@@ -18,6 +18,7 @@ from unitysvc_core.instance_spec import (
     InstanceSpecError,
     compile_instance_spec,
     expand_instance_spec,
+    merged_environment,
     validate_instance_spec,
 )
 from unitysvc_core.models.channel import ContainerChannel, UpstreamAccessConfig
@@ -173,33 +174,49 @@ class TestResources:
 
 
 class TestParameterReferences:
-    """``{{ params.NAME }}`` is allowed only in an environment value (unitysvc#3023)."""
-
-    def test_it_is_allowed_in_an_environment_value(self) -> None:
-        for env in ({"API_KEY": "{{ params.WEIXIN_API_KEY }}"}, ["API_KEY={{params.WEIXIN_API_KEY}}"]):
-            assert validate_instance_spec(_compose(environment=env)).ok
+    """``{{ params.NAME }}`` belongs in the channel's ``environment``, not in the Compose file (unitysvc#3023)."""
 
     @pytest.mark.parametrize(
         "service",
         [
+            {"environment": {"A": "{{ params.X }}"}},
+            {"environment": ["A={{params.X}}"]},
             {"image": "{{ params.X }}"},
             {"command": ["run", "{{ params.X }}"]},
-            {"labels": {"a": "{{ params.X }}"}},
-            {"environment": {"A": "{{ params.X.y }}"}},
-            {"environment": {"A": "{{ other }}"}},
-            {"environment": {"A": "{{ params.X | upper }}"}},
         ],
     )
-    def test_anywhere_else_is_refused(self, service: dict[str, Any]) -> None:
-        report = validate_instance_spec(_compose(**service))
-        assert "bad_template" in _codes(report)
+    def test_the_file_may_not_carry_one(self, service: dict[str, Any]) -> None:
+        assert "bad_template" in _codes(validate_instance_spec(_compose(**service)))
+
+    def test_other_braces_are_left_alone(self) -> None:
+        assert validate_instance_spec(_compose(healthcheck={"test": ["CMD", "echo", "{{.State.Status}}"]})).ok
 
     def test_the_overlay_is_held_to_the_same_rule(self) -> None:
-        assert validate_instance_spec(
-            _compose(), environment={"web": {"A": "{{ params.X }}"}}
-        ).ok
-        report = validate_instance_spec(_compose(), environment={"web": {"A": "{{ nope }}"}})
+        report = validate_instance_spec(_compose(), environment={"web": {"A": "{{ params.X }}"}})
         assert "bad_template" in _codes(report)
+
+    def test_the_channel_environment_is_merged_over_the_overlay(self) -> None:
+        merged = merged_environment({"web": {"A": "1", "B": "2"}}, {"web": {"B": "x"}, "db": {"C": "3"}})
+        assert merged == {"web": {"A": "1", "B": "x"}, "db": {"C": "3"}}
+        assert merged_environment(None, None) is None
+
+    def test_a_channel_may_set_environment_from_its_params(self) -> None:
+        channel = {**_channel(), "environment": {"web": {"API_KEY": "{{ params.KEY }}", "MODE": "x-{{params.M}}"}}}
+        assert ContainerChannel.model_validate(channel).environment == channel["environment"]
+
+    @pytest.mark.parametrize(
+        "environment",
+        [
+            {"web": {"A": "{{ other }}"}},
+            {"web": {"A": "{{ params.X | upper }}"}},
+            {"Web!": {"A": "1"}},
+            {"web": {"1A": "1"}},
+            {"web": {}},
+        ],
+    )
+    def test_a_bad_channel_environment_is_refused(self, environment: dict[str, Any]) -> None:
+        with pytest.raises(ValidationError):
+            ContainerChannel.model_validate({**_channel(), "environment": environment})
 
 
 # --- the channel ----------------------------------------------------------------------------------
