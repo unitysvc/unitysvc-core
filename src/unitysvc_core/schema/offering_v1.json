@@ -285,7 +285,7 @@
     },
     "ContainerChannel": {
       "additionalProperties": false,
-      "description": "A tier of a service that runs as instances on Kubernetes (unitysvc/unitysvc-core#105).\n\nThe instance spec is the offering's single ``instance_spec`` Document (or its\n``instance_spec`` shortcut) and every container channel runs it; ``resources``\nis the tier total. ``servers`` is optional and\nhas no container-specific meaning: each is an ordinary ``HttpServer`` the\ngateway reaches, and the listing rule (an enrollable channel and a matching\n``/e/{{ enrollment.code }}`` interface) is checked by the validator, which\nsees the listing. ``entries`` is PROVISIONAL (#105 open 1 and 2).",
+      "description": "A tier of a service that runs as instances on Kubernetes (unitysvc/unitysvc-core#105).\n\nThe instance spec is the offering's single ``instance_spec`` Document (or its\n``instance_spec`` shortcut) and every container channel runs it; ``resources``\nis the tier total and ``environment`` this channel's environment values, which may read its\nenrollment parameters. ``servers`` is optional and\nhas no container-specific meaning: each is an ordinary ``HttpServer`` the\ngateway reaches, and the listing rule (an enrollable channel and a matching\n``/e/{{ enrollment.code }}`` interface) is checked by the validator, which\nsees the listing. ``entries`` is PROVISIONAL (#105 open 1 and 2).",
       "properties": {
         "acceptable_formats": {
           "anyOf": [
@@ -423,6 +423,25 @@
           "default": null,
           "description": "PROVISIONAL (#105 open 1): the URLs the instance is reached at",
           "title": "Entries"
+        },
+        "environment": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Environment values per service of the instance spec, ``{service: {NAME: value}}``. A value may be, or contain, ``{{ params.NAME }}``: this channel's enrollment parameter, bound when the instance starts (unitysvc/unitysvc#3023). Overrides the same name in the spec.",
+          "title": "Environment"
         },
         "headers": {
           "anyOf": [

@@ -172,6 +172,43 @@ class TestResources:
         assert validate_instance_spec(_compose(healthcheck={"test": ["CMD", "x"], field: ok})).ok
 
 
+class TestParameterReferences:
+    """``{{ params.NAME }}`` belongs in the channel's ``environment``, not in the Compose file (unitysvc#3023)."""
+
+    @pytest.mark.parametrize(
+        "service",
+        [
+            {"environment": {"A": "{{ params.X }}"}},
+            {"environment": ["A={{params.X}}"]},
+            {"image": "{{ params.X }}"},
+            {"command": ["run", "{{ params.X }}"]},
+        ],
+    )
+    def test_the_file_may_not_carry_one(self, service: dict[str, Any]) -> None:
+        assert "bad_template" in _codes(validate_instance_spec(_compose(**service)))
+
+    def test_other_braces_are_left_alone(self) -> None:
+        assert validate_instance_spec(_compose(healthcheck={"test": ["CMD", "echo", "{{.State.Status}}"]})).ok
+
+    def test_a_channel_may_set_environment_from_its_params(self) -> None:
+        channel = {**_channel(), "environment": {"web": {"API_KEY": "{{ params.KEY }}", "MODE": "x-{{params.M}}"}}}
+        assert ContainerChannel.model_validate(channel).environment == channel["environment"]
+
+    @pytest.mark.parametrize(
+        "environment",
+        [
+            {"web": {"A": "{{ other }}"}},
+            {"web": {"A": "{{ params.X | upper }}"}},
+            {"Web!": {"A": "1"}},
+            {"web": {"1A": "1"}},
+            {"web": {}},
+        ],
+    )
+    def test_a_bad_channel_environment_is_refused(self, environment: dict[str, Any]) -> None:
+        with pytest.raises(ValidationError):
+            ContainerChannel.model_validate({**_channel(), "environment": environment})
+
+
 # --- the channel ----------------------------------------------------------------------------------
 
 
@@ -887,7 +924,7 @@ class TestExamples:
         loud = {w.code for w in report.warnings if w.loud}
         assert {"ignored_key", "scratch_volume"} <= loud
         env_file = next(w for w in report.warnings if w.path == "services.gateway.env_file")
-        assert env_file.loud and "meta.environment" in env_file.message and "missing" in env_file.message
+        assert env_file.loud and "environment" in env_file.message and "missing" in env_file.message
         assert "unpinned_image" in _codes(report, "warnings")
 
     def test_a_bad_spec_fails_the_offering(self, validator: DataValidator, tmp_path: Path) -> None:
@@ -1239,7 +1276,7 @@ class TestEnvFile:
         assert report.ok, report.errors
         warning = next(w for w in report.warnings if w.path == "services.web.env_file")
         assert warning.code == "ignored_key" and warning.loud
-        assert "missing" in warning.message and "meta.environment" in warning.message
+        assert "missing" in warning.message and "environment" in warning.message
         compiled = compile_instance_spec(_compose(env_file=".env"), _resources())
         assert ("web", "env_file", "ignored") in {(d.service, d.key, d.reason) for d in compiled.dropped}
 
@@ -1259,50 +1296,29 @@ class TestEnvironmentOverlay:
         assert text == self.compose()
 
     def test_it_supplies_what_env_file_would_have(self) -> None:
-        overlay = {"web": {"API_KEY": "${UNITYSVC_INSTANCE_API_KEY}"}}
+        overlay = {"web": {"API_KEY": "${SECRET_KEY}"}}
         text = _compose(env_file=".env")
         env = compile_instance_spec(text, _resources(), environment=overlay).manifest.services[0].env
-        assert env == {"API_KEY": "${UNITYSVC_INSTANCE_API_KEY}"}
-        report = validate_instance_spec(text, environment=overlay)
+        assert env == {"API_KEY": "${SECRET_KEY}"}
+        report = validate_instance_spec(text, channel=ContainerChannel.model_validate(_channel(environment=overlay)))
         assert report.ok and "interpolation" in _codes(report, "warnings")
 
     def test_a_service_the_file_lacks_is_an_error(self) -> None:
-        report = validate_instance_spec(self.compose(), environment={"ghost": {"A": "1"}})
+        ghost = ContainerChannel.model_validate(_channel(environment={"ghost": {"A": "1"}}))
+        report = validate_instance_spec(self.compose(), channel=ghost)
         assert "overlay_service" in _codes(report)
         with pytest.raises(InstanceSpecError):
             compile_instance_spec(self.compose(), _resources(), environment={"ghost": {"A": "1"}})
 
-    @pytest.mark.parametrize(
-        "overlay",
-        [
-            {"web": {"1 BAD": "x"}},
-            {"web": {"A": 1}},
-            {"web": {"A": None}},
-            {"web": ["A=1"]},
-            {"Web": {"A": "1"}},
-            {"web": {}},
-            {},
-            ["web"],
-            "A=1",
-        ],
-    )
-    def test_the_document_refuses_a_bad_overlay(self, overlay: Any) -> None:
+    def test_the_document_no_longer_takes_an_overlay(self) -> None:
         doc = {
             "category": "instance_spec",
             "mime_type": "text",
             "file_path": "c.yaml",
-            "meta": {"environment": overlay},
+            "meta": {"environment": {"web": {"A": "1"}}},
         }
-        with pytest.raises(ValidationError, match="meta.environment"):
+        with pytest.raises(ValidationError, match="channel's `environment`"):
             DocumentData.model_validate(doc)
-
-    def test_the_document_accepts_an_overlay_and_the_validator_checks_it(self, validator: DataValidator) -> None:
-        offering = expand_instance_spec(_echo())
-        doc = offering["documents"][INSTANCE_SPEC_TITLE]
-        doc["meta"]["environment"] = {"web": {"GREETING": "hi"}}
-        assert _errors(validator, offering) == []
-        doc["meta"]["environment"] = {"ghost": {"GREETING": "hi"}}
-        assert any("meta.environment.ghost" in e for e in _errors(validator, offering))
 
     def test_the_schema_describes_meta_as_open(self) -> None:
         schema = json.loads((SCHEMA_DIR / "offering_v1.json").read_text())
@@ -1354,7 +1370,8 @@ class TestReviewFixes:
             text = _compose(environment=env)
             assert "bad_env" in _codes(validate_instance_spec(text))
             overlay = {"web": {"KEY": "v"}}
-            assert validate_instance_spec(text, environment=overlay).ok
+            channel = ContainerChannel.model_validate(_channel(environment=overlay))
+            assert validate_instance_spec(text, channel=channel).ok
             assert compile_instance_spec(text, _resources(), environment=overlay).manifest.services[0].env == {
                 "KEY": "v"
             }
@@ -1383,17 +1400,16 @@ class TestUpstreamExample:
             == hashlib.sha256((WEIXIN_UPSTREAM / "upstream-compose.yaml").read_bytes()).hexdigest()
         )
 
-    def test_the_overlay_and_scratch_reach_the_manifest(self) -> None:
+    def test_the_channel_environment_and_scratch_reach_the_manifest(self) -> None:
         offering = self.offering()
-        doc = offering["documents"][INSTANCE_SPEC_TITLE]
         channel = ContainerChannel.model_validate(offering["upstream_access_config"]["base"])
         compiled = compile_instance_spec(
             (WEIXIN_UPSTREAM / "upstream-compose.yaml").read_text(),
             channel.resources,
-            environment=doc["meta"]["environment"],
+            environment=channel.environment,
         )
         service = compiled.manifest.services[0]
-        assert service.env == {"DATA_DIR": "/app/data", "API_KEY": "${UNITYSVC_INSTANCE_API_KEY}"}
+        assert service.env == {"DATA_DIR": "/app/data", "API_KEY": "change-me-at-least-12-chars"}
         assert service.image == "ghcr.io/kadxy/weixin-ilink-gateway:latest"
         assert [s.path for s in service.scratch or []] == ["/app/data"]
 

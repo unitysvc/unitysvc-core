@@ -95,6 +95,9 @@ _HEALTHCHECK_KEYS = frozenset({"test", "interval", "timeout", "retries", "start_
 _DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}$")
 _ENV_NAME_RE = re.compile(r"^[-._a-zA-Z][-._a-zA-Z0-9]*$")
 _INTERPOLATION_RE = re.compile(r"\$(\{[^}]*\}|[A-Za-z_])")
+# A parameter reference belongs in the channel's ``environment``, not in the portable Compose file (which
+# must run as it is with Docker): ``{{ params`` anywhere in the file is refused.
+_PARAM_TEMPLATE_RE = re.compile(r"\{\{\s*params\b")
 _MAX_DURATION_SECONDS = 86400.0  # far above any bound the agent accepts; keeps float overflow out of ceil()
 _DURATION_RE = re.compile(r"^(?:\d+(?:\.\d+)?(?:us|ms|s|m|h))+$")
 _DURATION_PART_RE = re.compile(r"(\d+(?:\.\d+)?)(us|ms|s|m|h)")
@@ -202,26 +205,6 @@ def snapshot_url_error(url: Any) -> str | None:
         return None
     if not address.is_global or address.is_multicast:
         return f"{url!r}: host {host!r} is a private, loopback or link-local address"
-    return None
-
-
-def environment_overlay_error(value: Any) -> str | None:
-    """Why ``value`` is not a ``meta.environment`` overlay (``{service: {NAME: "value"}}``), or ``None``.
-
-    Shape only: that each service exists in the file is checked with the file.
-    """
-    if not isinstance(value, dict) or not value:
-        return "must be a mapping of service name to a mapping of NAME to a string value"
-    for service, values in value.items():
-        if not isinstance(service, str) or not DNS_LABEL_RE.fullmatch(service):
-            return f"{service!r} is not a service name (a DNS label)"
-        if not isinstance(values, dict) or not values:
-            return f"{service}: must be a non-empty mapping of NAME to a string value"
-        for key, text in values.items():
-            if not isinstance(key, str) or not _ENV_NAME_RE.fullmatch(key):
-                return f"{service}.{key}: {key!r} is not a valid environment variable name"
-            if not isinstance(text, str):
-                return f"{service}.{key}: the value must be a string"
     return None
 
 
@@ -352,10 +335,32 @@ class _Checker:
             if str(service) not in services:
                 self.error(
                     "overlay_service",
-                    f"meta.environment.{service}",
+                    f"environment.{service}",
                     f"{service!r} is not a service of the file; its services are {', '.join(map(str, services))}",
                 )
+        self._templates(doc)
         self._channel_context()
+
+    def _templates(self, doc: dict[str, Any]) -> None:
+        """``{{ params.NAME }}`` is not allowed in the file: the channel's ``environment`` is where it goes."""
+
+        def scan(value: Any, where: str) -> None:
+            if isinstance(value, str):
+                if _PARAM_TEMPLATE_RE.search(value):
+                    self.error(
+                        "bad_template",
+                        where,
+                        "`{{ params.NAME }}` is not allowed in the instance spec: set the value in the channel's "
+                        "`environment`, so the file stays plain Compose",
+                    )
+            elif isinstance(value, dict):
+                for key, item in value.items():
+                    scan(item, f"{where}.{key}" if where else str(key))
+            elif isinstance(value, list):
+                for index, item in enumerate(value):
+                    scan(item, f"{where}[{index}]")
+
+        scan(doc, "")
 
     def _top_volumes(self, volumes: Any) -> set[str]:
         if volumes is None:
@@ -418,8 +423,8 @@ class _Checker:
                     "ignored_key",
                     f"{at}.env_file",
                     "`env_file` is ignored: the values it would supply are missing from the instance, so the "
-                    "service may not start. Provide them with `meta.environment` on the instance_spec Document "
-                    f"(meta.environment.{name}.NAME)",
+                    "service may not start. Provide them with `environment` on the container channel "
+                    f"(environment.{name}.NAME)",
                     loud=True,
                 )
                 self.drop(name, "env_file")
@@ -591,8 +596,8 @@ class _Checker:
             return None, None
         return number, published
 
-    def _overlay(self, where: str = "meta.environment") -> dict[str, dict[str, str]]:
-        """The ``meta.environment`` overlay, checked: ``{service: {NAME: "value"}}`` of strings."""
+    def _overlay(self, where: str = "environment") -> dict[str, dict[str, str]]:
+        """The channel's ``environment``, checked: ``{service: {NAME: "value"}}`` of strings."""
         overlay = self.overlay
         if overlay is None:
             return {}
@@ -617,8 +622,8 @@ class _Checker:
                         self.warn(
                             "interpolation",
                             f"{at}.{key}",
-                            "contains a variable reference, kept as written; only ${UNITYSVC_INSTANCE_API_KEY} is "
-                            "bound per instance, how any other secret is bound is not decided yet "
+                            "contains a variable reference, kept as written; only {{ params.NAME }} is bound per "
+                            "instance, how any other secret is bound is not decided yet "
                             "(unitysvc-core#105, open 4)",
                         )
             result[str(service)] = clean
@@ -967,18 +972,18 @@ def validate_instance_spec(
     *,
     format: str = DEFAULT_FORMAT,
     channel: ContainerChannel | None = None,
-    environment: dict[str, dict[str, str]] | None = None,
+    # (the channel's ``environment`` is read from ``channel``)
 ) -> InstanceSpecReport:
     """Validate an instance spec's content, with the channel that runs it when known.
 
     Checks the Compose allowlist and the static rules (literal digests,
     container-side ports, health checks, volumes, networks, service names). With
     ``channel``, also that every entry targets a declared service and port and
-    that ``resources.services`` names the spec's services. ``environment`` is the
-    Document's ``meta.environment`` overlay: each service in it must exist in the
-    file. Never raises on bad input: the problems are in the report.
+    that ``resources.services`` names the spec's services, and that each service in the
+    channel's ``environment`` exists in the file. Never raises on bad input: the problems
+    are in the report.
     """
-    return _check(text, format, channel, environment).report
+    return _check(text, format, channel, channel.environment if channel else None).report
 
 
 def compile_instance_spec(
@@ -994,9 +999,8 @@ def compile_instance_spec(
     are split by ``resources.services``. Raises :class:`InstanceSpecError`
     (carrying the report) if the spec is not valid for these resources.
 
-    ``environment`` is the Document's ``meta.environment`` overlay, merged here
-    and only here: a value overrides the file's own ``environment`` for that
-    name, and the Compose bytes are never edited.
+    ``environment`` is the channel's ``environment``, merged here and only here: a value
+    overrides the file's own ``environment`` for that name, and the Compose bytes are never edited.
 
     PROPOSAL (unitysvc-core#105, open 3): that core compiles, rather than the
     agent, is not decided.
