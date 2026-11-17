@@ -254,18 +254,14 @@ A `container` channel is one tier of a service that runs as instances on Kuberne
   "base": {
     "access_method": "container",
     "resources": {"limits": {"cpu": "250m", "memory": "256Mi", "ephemeral-storage": "1Gi"}},
-    "entries": [{"name": "web", "service": "web", "port": 5678, "auth": "key"}],
-    "customer_access_requests": [
-      {"object": "resource:container", "permissions": ["create"], "required": true,
-       "justification": "Run a disposable application instance for this enrollment"}
-    ]
+    "entries": [{"name": "web", "service": "web", "port": 5678, "auth": "key"}]
   }
 }
 ```
 
 - There is no per-channel spec: every container channel of the offering runs the offering's one instance spec (below), so tiers differ in `resources`, not in stack. The earlier `spec` field (a Document title) is removed in 0.3.11; a channel carrying it is refused as an unknown field.
 - `resources` is the tier total, in Kubernetes' shape: `limits`, optionally `requests`, each a map from a resource name to a quantity (`250m`, `1Gi`, `1e3`, parsed as Kubernetes parses them). The names are `cpu`, `memory`, `ephemeral-storage` and `nvidia.com/gpu`; the first three limits are required; a request is at most its limit; a GPU is a whole number with a request equal to the limit. `resources.services` is an optional per-service split (`{"web": {"limits": {...}}}`) whose sums must stay within the tier (each share names `cpu`, `memory` and `ephemeral-storage`, and a resource without a request counts at its limit, as the agent resolves it); a spec with several services needs one. Quantities are at most 64 characters with an exponent of at most 30. A Compose `deploy.resources` is ignored: the channel is authoritative.
-- The channel is always enrollable and must request `resource:container` with `create`, marked `required` (`grants.RESOURCES` knows the resource; it has no options and no limits).
+- The channel is always enrollable and needs no `customer_access_requests`: the customer runs their own instance, which grants the seller nothing (a request is for the seller to call the customer's services). A channel that does declare one is `me_bound` instead of `enrollable`.
 - `servers` is optional and has no container-specific meaning: each is an ordinary `HttpServer` the gateway reaches, for example `{"base_url": "https://{{ enrollment.code }}.unitysvc.app/"}`. A container-only service sets no `servers`. An enrollable channel is reached at `/e/<CODE>` on the API gateway, which the platform provides; a listing never declares it (see Canonical user access interfaces).
 - `entries` (`name`, `service`, `port`, optional `path`, `auth` of `login`, `key` or `app`) is **provisional** (open question 1 of #105: whether instances need URLs beyond `servers`, and which `auth` values apply; `gateway` is deliberately not accepted).
 - `params` and `customer_access_requests` are as on the other channels.

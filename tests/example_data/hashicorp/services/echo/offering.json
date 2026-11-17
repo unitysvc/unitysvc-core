@@ -26,16 +26,6 @@
           "port": 5678,
           "auth": "key"
         }
-      ],
-      "customer_access_requests": [
-        {
-          "object": "resource:container",
-          "permissions": [
-            "create"
-          ],
-          "required": true,
-          "justification": "Run a disposable application instance for this enrollment"
-        }
       ]
     },
     "medium": {
@@ -54,16 +44,6 @@
           "service": "web",
           "port": 5678,
           "auth": "key"
-        }
-      ],
-      "customer_access_requests": [
-        {
-          "object": "resource:container",
-          "permissions": [
-            "create"
-          ],
-          "required": true,
-          "justification": "Run a disposable application instance for this enrollment"
         }
       ]
     }

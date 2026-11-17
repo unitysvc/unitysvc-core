@@ -48,7 +48,6 @@ def _channel(**changes: Any) -> dict[str, Any]:
     channel: dict[str, Any] = {
         "access_method": "container",
         "resources": {"limits": dict(LIMITS)},
-        "customer_access_requests": [dict(REQUEST)],
     }
     channel.update(changes)
     return channel
@@ -225,25 +224,15 @@ class TestChannel:
         with pytest.raises(ValidationError, match="resources"):
             ContainerChannel.model_validate(data)
 
-    @pytest.mark.parametrize(
-        "requests",
-        [
-            None,
-            [],
-            [{**REQUEST, "required": False}],
-            [{**REQUEST, "permissions": ["join"]}],
-            [{"object": "service:x", "permissions": ["invoke"], "required": True, "justification": "x"}],
-        ],
-    )
-    def test_requires_the_container_create_request(self, requests: Any) -> None:
-        data = _channel(customer_access_requests=requests)
-        with pytest.raises(ValidationError, match="resource:container"):
-            ContainerChannel.model_validate(data)
+    def test_a_container_channel_needs_no_access_request(self) -> None:
+        """The customer runs their own instance and grants the seller nothing (unitysvc#3023)."""
+        channel = ContainerChannel.model_validate(_channel())
+        assert not channel.customer_access_requests
 
     def test_the_request_passes_the_grants_checks(self, tmp_path: Path) -> None:
         (tmp_path / "compose.yaml").write_text(_compose())
         errors = DataValidator(EXAMPLES, SCHEMA_DIR).validate_service(
-            offering=_offering({"base": _channel()}), service_dir=tmp_path
+            offering=_offering({"base": _channel(customer_access_requests=[REQUEST])}), service_dir=tmp_path
         )
         assert errors["offering"] == []
 
