@@ -448,18 +448,6 @@ class ContainerChannel(_ChannelBase):
     def _check_container(self) -> "ContainerChannel":
         if self.type not in (None, "enrollable"):
             raise ValueError("a container channel is always enrollable: omit 'type' or set it to 'enrollable'")
-        requests = self.customer_access_requests or []
-        if not any(
-            r.get("object") == "resource:container"
-            and "create" in (r.get("permissions") or [])
-            and r.get("required") is True
-            for r in requests
-        ):
-            raise ValueError(
-                "a container channel must request resource:container with the create permission, and mark it "
-                'required: customer_access_requests: [{"object": "resource:container", "permissions": ["create"], '
-                '"required": true, "justification": "..."}]'
-            )
         names = [entry.name for entry in self.entries or []]
         if duplicates := sorted({n for n in names if names.count(n) > 1}):
             raise ValueError(f"entry names must be unique: {', '.join(duplicates)}")
