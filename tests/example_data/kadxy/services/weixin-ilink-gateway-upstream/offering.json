@@ -8,12 +8,7 @@
       "mime_type": "text",
       "meta": {
         "format": "compose",
-        "sha256": "b8f6f581b51f2fb43075f7efccff2bac414296eec6b267ffdab6a81a911704e8",
-        "environment": {
-          "gateway": {
-            "API_KEY": "${UNITYSVC_INSTANCE_API_KEY}"
-          }
-        }
+        "sha256": "b8f6f581b51f2fb43075f7efccff2bac414296eec6b267ffdab6a81a911704e8"
       },
       "is_public": false
     }
@@ -71,7 +66,12 @@
           "required": true,
           "justification": "Run one gateway instance for this enrollment"
         }
-      ]
+      ],
+      "environment": {
+        "gateway": {
+          "API_KEY": "change-me-at-least-12-chars"
+        }
+      }
     }
   },
   "time_created": "2026-01-01T00:00:00Z",

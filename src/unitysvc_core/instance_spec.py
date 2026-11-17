@@ -208,39 +208,6 @@ def snapshot_url_error(url: Any) -> str | None:
     return None
 
 
-def environment_overlay_error(value: Any) -> str | None:
-    """Why ``value`` is not a ``meta.environment`` overlay (``{service: {NAME: "value"}}``), or ``None``.
-
-    Shape only: that each service exists in the file is checked with the file.
-    """
-    if not isinstance(value, dict) or not value:
-        return "must be a mapping of service name to a mapping of NAME to a string value"
-    for service, values in value.items():
-        if not isinstance(service, str) or not DNS_LABEL_RE.fullmatch(service):
-            return f"{service!r} is not a service name (a DNS label)"
-        if not isinstance(values, dict) or not values:
-            return f"{service}: must be a non-empty mapping of NAME to a string value"
-        for key, text in values.items():
-            if not isinstance(key, str) or not _ENV_NAME_RE.fullmatch(key):
-                return f"{service}.{key}: {key!r} is not a valid environment variable name"
-            if not isinstance(text, str):
-                return f"{service}.{key}: the value must be a string"
-    return None
-
-
-def merged_environment(*overlays: dict[str, dict[str, str]] | None) -> dict[str, dict[str, str]] | None:
-    """The overlays merged per service, a later one overriding an earlier one's value for the same name.
-
-    The instance's environment is the spec's own, overridden by the Document's ``meta.environment``, then
-    by the channel's ``environment``. ``None`` when there are none.
-    """
-    merged: dict[str, dict[str, str]] = {}
-    for overlay in overlays:
-        for service, values in (overlay or {}).items():
-            merged[service] = {**merged.get(service, {}), **values}
-    return merged or None
-
-
 def sha256_error(value: Any) -> str | None:
     if not isinstance(value, str) or not _SHA256_RE.fullmatch(value):
         return "must be 64 lowercase hexadecimal characters"
@@ -368,7 +335,7 @@ class _Checker:
             if str(service) not in services:
                 self.error(
                     "overlay_service",
-                    f"meta.environment.{service}",
+                    f"environment.{service}",
                     f"{service!r} is not a service of the file; its services are {', '.join(map(str, services))}",
                 )
         self._templates(doc)
@@ -456,8 +423,8 @@ class _Checker:
                     "ignored_key",
                     f"{at}.env_file",
                     "`env_file` is ignored: the values it would supply are missing from the instance, so the "
-                    "service may not start. Provide them with `meta.environment` on the instance_spec Document "
-                    f"(meta.environment.{name}.NAME)",
+                    "service may not start. Provide them with `environment` on the container channel "
+                    f"(environment.{name}.NAME)",
                     loud=True,
                 )
                 self.drop(name, "env_file")
@@ -629,8 +596,8 @@ class _Checker:
             return None, None
         return number, published
 
-    def _overlay(self, where: str = "meta.environment") -> dict[str, dict[str, str]]:
-        """The ``meta.environment`` overlay, checked: ``{service: {NAME: "value"}}`` of strings."""
+    def _overlay(self, where: str = "environment") -> dict[str, dict[str, str]]:
+        """The channel's ``environment``, checked: ``{service: {NAME: "value"}}`` of strings."""
         overlay = self.overlay
         if overlay is None:
             return {}
@@ -655,8 +622,8 @@ class _Checker:
                         self.warn(
                             "interpolation",
                             f"{at}.{key}",
-                            "contains a variable reference, kept as written; only ${UNITYSVC_INSTANCE_API_KEY} is "
-                            "bound per instance, how any other secret is bound is not decided yet "
+                            "contains a variable reference, kept as written; only {{ params.NAME }} is bound per "
+                            "instance, how any other secret is bound is not decided yet "
                             "(unitysvc-core#105, open 4)",
                         )
             result[str(service)] = clean
@@ -1005,18 +972,18 @@ def validate_instance_spec(
     *,
     format: str = DEFAULT_FORMAT,
     channel: ContainerChannel | None = None,
-    environment: dict[str, dict[str, str]] | None = None,
+    # (the channel's ``environment`` is read from ``channel``)
 ) -> InstanceSpecReport:
     """Validate an instance spec's content, with the channel that runs it when known.
 
     Checks the Compose allowlist and the static rules (literal digests,
     container-side ports, health checks, volumes, networks, service names). With
     ``channel``, also that every entry targets a declared service and port and
-    that ``resources.services`` names the spec's services. ``environment`` is the
-    Document's ``meta.environment`` overlay: each service in it must exist in the
-    file. Never raises on bad input: the problems are in the report.
+    that ``resources.services`` names the spec's services, and that each service in the
+    channel's ``environment`` exists in the file. Never raises on bad input: the problems
+    are in the report.
     """
-    return _check(text, format, channel, environment).report
+    return _check(text, format, channel, channel.environment if channel else None).report
 
 
 def compile_instance_spec(
@@ -1032,9 +999,8 @@ def compile_instance_spec(
     are split by ``resources.services``. Raises :class:`InstanceSpecError`
     (carrying the report) if the spec is not valid for these resources.
 
-    ``environment`` is the Document's ``meta.environment`` overlay, merged here
-    and only here: a value overrides the file's own ``environment`` for that
-    name, and the Compose bytes are never edited.
+    ``environment`` is the channel's ``environment``, merged here and only here: a value
+    overrides the file's own ``environment`` for that name, and the Compose bytes are never edited.
 
     PROPOSAL (unitysvc-core#105, open 3): that core compiles, rather than the
     agent, is not decided.

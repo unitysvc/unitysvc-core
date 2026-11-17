@@ -425,7 +425,7 @@ class ContainerChannel(_ChannelBase):
         description=(
             "Environment values per service of the instance spec, ``{service: {NAME: value}}``. A value may "
             "be, or contain, ``{{ params.NAME }}``: this channel's enrollment parameter, bound when the instance "
-            "starts (unitysvc/unitysvc#3023). Overrides the same name in the spec and its ``meta.environment``."
+            "starts (unitysvc/unitysvc#3023). Overrides the same name in the spec."
         ),
     )
 
