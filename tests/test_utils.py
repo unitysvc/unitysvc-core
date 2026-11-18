@@ -99,9 +99,7 @@ def test_a_media_type_resolves_to_its_extension(value: str, expected: str) -> No
         ("url", "url"),
     ],
 )
-def test_a_document_kind_token_resolves_to_its_extension(
-    value: str, expected: str
-) -> None:
+def test_a_document_kind_token_resolves_to_its_extension(value: str, expected: str) -> None:
     """``Document.mime_type`` is a ``MimeTypeEnum``, whose values are kinds
     rather than media types. A kind that fell through to ``txt`` meant a PNG
     stored under a ``.txt`` key and served as ``text/plain``."""

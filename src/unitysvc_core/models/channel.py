@@ -46,7 +46,7 @@ from pydantic import (
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
 
-from .container import DNS_LABEL_RE, ContainerEntry, ContainerResources
+from .container import DNS_LABEL_RE, ContainerEntry, Sizes, check_sizes
 from .validators import validate_channel_name
 
 # A string field that is a value or a template rendering to one.
@@ -405,7 +405,9 @@ class ContainerChannel(_ChannelBase):
 
     The instance spec is the offering's single ``instance_spec`` Document (or its
     ``instance_spec`` shortcut) and every container channel runs it; ``resources``
-    is the tier total and ``environment`` this channel's environment values, which may read its
+    names the size the instance runs on (``"nano"`` for a one-service spec, or
+    ``{"web": "small", "redis": "nano"}``, the platform maps a size to Kubernetes resources and its
+    price) and ``environment`` this channel's environment values, which may read its
     enrollment parameters. ``servers`` is optional and
     has no container-specific meaning: each is an ordinary ``HttpServer`` the
     gateway reaches, and the listing rule (an enrollable channel and a matching
@@ -416,7 +418,12 @@ class ContainerChannel(_ChannelBase):
     server_model: ClassVar[builtins.type[_Server]] = HttpServer
     access_method: Literal["container"]
     servers: list[HttpServer] = Field(default_factory=list)
-    resources: ContainerResources
+    resources: Sizes = Field(
+        description=(
+            "The size an instance runs on: one size name for a one-service spec, or a map from each service "
+            "name to its size. The platform maps a size to Kubernetes resources and a price."
+        )
+    )
     entries: list[ContainerEntry] | None = Field(
         default=None, description="PROVISIONAL (#105 open 1): the URLs the instance is reached at"
     )
@@ -428,6 +435,11 @@ class ContainerChannel(_ChannelBase):
             "starts (unitysvc/unitysvc#3023). Overrides the same name in the spec."
         ),
     )
+
+    @field_validator("resources", mode="before")
+    @classmethod
+    def _check_resources(cls, value: Any) -> Sizes:
+        return check_sizes(value)
 
     @field_validator("environment")
     @classmethod
@@ -451,10 +463,10 @@ class ContainerChannel(_ChannelBase):
         names = [entry.name for entry in self.entries or []]
         if duplicates := sorted({n for n in names if names.count(n) > 1}):
             raise ValueError(f"entry names must be unique: {', '.join(duplicates)}")
-        split = self.resources.services
+        sized = self.resources
         for entry in self.entries or []:
-            if split and entry.service not in split:
-                raise ValueError(f"entry {entry.name!r}: service {entry.service!r} has no share in resources.services")
+            if isinstance(sized, dict) and entry.service not in sized:
+                raise ValueError(f"entry {entry.name!r}: service {entry.service!r} has no size in resources")
         return self
 
 

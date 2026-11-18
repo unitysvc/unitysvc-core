@@ -44,7 +44,7 @@ from .channel import (
     SmtpServer,
     UpstreamAccessConfig,
 )
-from .container import ContainerEntry, ContainerResources, ServiceResources, parse_quantity
+from .container import ContainerEntry, ResourceSet, check_resolved, check_sizes, parse_quantity, service_sizes
 from .documents import DocumentData
 from .listing_data import ServiceListingData
 from .listing_v1 import ListingV1
@@ -135,8 +135,10 @@ __all__ = [
     "McpChannel",
     "ContainerChannel",
     "ContainerEntry",
-    "ContainerResources",
-    "ServiceResources",
+    "ResourceSet",
+    "check_resolved",
+    "check_sizes",
+    "service_sizes",
     "parse_quantity",
     "NormalizedManifest",
     "ManifestService",

@@ -1,20 +1,23 @@
-"""The parts of a ``container`` channel: its resources and its entries (unitysvc/unitysvc-core#105).
+"""The parts of a ``container`` channel: its sizes and its entries (unitysvc/unitysvc-core#105).
 
-A container channel is one tier of a service that runs as instances on
-Kubernetes. ``resources`` is the tier's total, written the way Kubernetes writes
-it (``limits``, optionally ``requests``; each a map from a resource name to a
-quantity), and matches what the compute agent accepts. Core holds no Kubernetes
-client: it only parses quantities and checks the arithmetic, so a seller finds
-out at ``specs validate`` rather than when an instance fails to schedule.
+A container channel is one tier of a service that runs as instances on Kubernetes. A seller does not
+write Kubernetes resources: ``resources`` names a *size* (``"nano"``) for a one-service spec, or the
+size of each service (``{"web": "small", "redis": "nano"}``). The platform owns what a size is
+(its table, which changes without a release of core), resolves each size to a :class:`ResourceSet`
+(``limits``, optionally ``requests``, in Kubernetes' own shape) and compiles the spec with those.
+Core holds no Kubernetes client and no size table: it checks the form of a size name and parses and
+checks the quantities the platform resolved, so a mistake is found at ``specs validate`` rather
+than when an instance fails to schedule.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from fractions import Fraction
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # The resource names a tier may name. Anything else is refused: a new resource
 # is a decision of the platform, not a seller's free text.
@@ -116,54 +119,66 @@ class ResourceSet(BaseModel):
         return requests, limits
 
 
-class ServiceResources(ResourceSet):
-    """One service's share of the tier: all of ``cpu``, ``memory`` and ``ephemeral-storage``.
-
-    The agent fills a missing limit with its own default, which could take the
-    instance past the tier, so a share names every native resource.
-    """
-
-    @model_validator(mode="after")
-    def _check_names(self) -> ServiceResources:
-        _, limits = self.parsed("resources.services.<name>")
-        if missing := [name for name in REQUIRED_RESOURCES if name not in limits]:
-            raise ValueError(f"a service's share must set the limits of {', '.join(missing)}")
-        return self
+def check_resolved(resources: ResourceSet, where: str = "resources") -> ResourceSet:
+    """Check what the platform resolved a size to before an instance runs on it: every quantity
+    parses and is positive, ``cpu``, ``memory`` and ``ephemeral-storage`` limits are all set (the
+    instance's quota is built from them), a request is at most its limit. Raises ``ValueError``."""
+    _, limits = resources.parsed(where)
+    if missing := [name for name in REQUIRED_RESOURCES if name not in limits]:
+        raise ValueError(f"{where}.limits must set {', '.join(missing)}")
+    return resources
 
 
-class ContainerResources(ResourceSet):
-    """A tier's total resources (unitysvc/unitysvc-core#105, decided 3).
+# A size is a descriptive name the platform maps to resources: ``nano``, ``small-2x``,
+# ``small-largedisk``. Core checks the form only; which sizes exist, and what each is, is the
+# platform's table (it changes without a release of core).
+SIZE_RE = re.compile(r"^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$")
 
-    ``cpu``, ``memory`` and ``ephemeral-storage`` limits are required (the
-    instance's quota is built from them); ``nvidia.com/gpu`` is optional. A spec
-    with several services needs ``services``, the split, which must sum within
-    the tier total; a single service gets the whole tier.
-    """
+Sizes = str | dict[str, str]
 
-    services: dict[str, ServiceResources] | None = Field(
-        default=None,
-        description="Optional per-service split, by Compose service name; each resource's sum stays within the tier",
-    )
 
-    @model_validator(mode="after")
-    def _check_tier(self) -> ContainerResources:
-        requests, limits = self.effective()
-        if missing := [name for name in REQUIRED_RESOURCES if name not in limits]:
-            raise ValueError(f"resources.limits must set {', '.join(missing)}")
-        for service in self.services or {}:
-            if not DNS_LABEL_RE.fullmatch(service):
-                raise ValueError(f"resources.services.{service}: not a valid service name (a DNS label)")
-        if self.services:
-            for side, total in (("limits", limits), ("requests", requests)):
-                sums: dict[str, Fraction] = {}
-                for share in self.services.values():
-                    share_requests, share_limits = share.effective()
-                    for name, amount in (share_limits if side == "limits" else share_requests).items():
-                        sums[name] = sums.get(name, Fraction(0)) + amount
-                for name, amount in sums.items():
-                    if amount > total.get(name, Fraction(0)):
-                        raise ValueError(f"resources.services: the {side} of {name} add up to more than the tier total")
-        return self
+def check_size(where: str, value: object) -> str:
+    if not isinstance(value, str) or not SIZE_RE.fullmatch(value):
+        raise ValueError(
+            f"{where}: {value!r} is not a size name "
+            "(lowercase letters, digits and '-', at most 32, like nano or small-2x)"
+        )
+    return value
+
+
+def check_sizes(value: object) -> Sizes:
+    """Validate a channel's ``resources``: one size name, or a map from each service name to its size."""
+    if isinstance(value, str):
+        return check_size("resources", value)
+    if not isinstance(value, dict) or not value:
+        raise ValueError(
+            'resources is a size name ("nano") for a one-service spec, or a map from each service '
+            'name to its size ({"web": "small", "redis": "nano"})'
+        )
+    for service, size in value.items():
+        if not isinstance(service, str) or not DNS_LABEL_RE.fullmatch(service):
+            raise ValueError(f"resources.{service}: not a valid service name (a DNS label)")
+        check_size(f"resources.{service}", size)
+    return dict(value)
+
+
+def service_sizes(resources: Sizes, services: Sequence[str]) -> dict[str, str]:
+    """The size of each service of a spec whose services are ``services``: the one size of a
+    one-service spec, or the map as given. Raises ``ValueError`` when the form does not fit
+    (a size name for several services, a service without a size, a size for a service that is not
+    in the spec)."""
+    if isinstance(resources, str):
+        if len(services) != 1:
+            raise ValueError(
+                f"the spec has {len(services)} services ({', '.join(services)}): resources must name "
+                'each service\'s size, like {"web": "small", "redis": "nano"}'
+            )
+        return {services[0]: resources}
+    if extra := [name for name in resources if name not in services]:
+        raise ValueError(f"resources names {', '.join(extra)}, which is not a service of the spec")
+    if missing := [name for name in services if name not in resources]:
+        raise ValueError(f"resources has no size for {', '.join(missing)}")
+    return dict(resources)
 
 
 class ContainerEntry(BaseModel):
