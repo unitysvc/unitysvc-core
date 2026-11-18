@@ -21,7 +21,7 @@ from unitysvc_core.instance_spec import (
     validate_instance_spec,
 )
 from unitysvc_core.models.channel import ContainerChannel, UpstreamAccessConfig
-from unitysvc_core.models.container import ContainerResources, parse_quantity
+from unitysvc_core.models.container import ResourceSet, check_resolved, check_sizes, parse_quantity, service_sizes
 from unitysvc_core.models.documents import DocumentData
 from unitysvc_core.models.manifest import NormalizedManifest
 from unitysvc_core.models.probes import validate_probes_text
@@ -47,7 +47,7 @@ LIMITS = {"cpu": "250m", "memory": "256Mi", "ephemeral-storage": "1Gi"}
 def _channel(**changes: Any) -> dict[str, Any]:
     channel: dict[str, Any] = {
         "access_method": "container",
-        "resources": {"limits": dict(LIMITS)},
+        "resources": "nano",
     }
     channel.update(changes)
     return channel
@@ -91,73 +91,109 @@ class TestQuantities:
             parse_quantity(text)
 
 
+def _resolved(**changes: Any) -> ResourceSet:
+    """What the platform resolves a size to, checked as compile checks it."""
+    return check_resolved(ResourceSet.model_validate({"limits": dict(LIMITS), **changes}))
+
+
+def _res(**changes: Any) -> dict[str, ResourceSet]:
+    """The resolved resources of ``_compose``'s one service, ``web``."""
+    return {"web": _resolved(**changes)}
+
+
+# What the tests' platform maps each size to: the table is the platform's, core never sees it.
+SIZES = {
+    "nano": {"limits": {"cpu": "250m", "memory": "256Mi", "ephemeral-storage": "1Gi"}},
+    "small": {"limits": {"cpu": "1", "memory": "1Gi", "ephemeral-storage": "2Gi"}},
+}
+
+
+def _resolve(sizes: Any, text: str) -> dict[str, ResourceSet]:
+    """Resolve a channel's ``resources`` for a spec, the way the platform does."""
+    services = list(yaml.safe_load(text)["services"])
+    return {name: ResourceSet.model_validate(SIZES[size]) for name, size in service_sizes(sizes, services).items()}
+
+
 class TestResources:
-    def test_the_tier_needs_cpu_memory_and_storage(self) -> None:
-        with pytest.raises(ValidationError, match="must set ephemeral-storage"):
-            ContainerResources.model_validate({"limits": {"cpu": "1", "memory": "1Gi"}})
+    """The resources the platform resolves a size to: Kubernetes' own shape, checked by core."""
+
+    def test_the_size_needs_cpu_memory_and_storage(self) -> None:
+        with pytest.raises(ValueError, match="must set ephemeral-storage"):
+            check_resolved(ResourceSet.model_validate({"limits": {"cpu": "1", "memory": "1Gi"}}))
 
     def test_only_the_reserved_names(self) -> None:
-        with pytest.raises(ValidationError, match="unknown resource"):
-            ContainerResources.model_validate({"limits": {**LIMITS, "hugepages-2Mi": "1Gi"}})
+        with pytest.raises(ValueError, match="unknown resource"):
+            _resolved(limits={**LIMITS, "hugepages-2Mi": "1Gi"})
 
     def test_gpu_is_whole_and_its_request_equals_the_limit(self) -> None:
-        ContainerResources.model_validate({"limits": {**LIMITS, "nvidia.com/gpu": "1"}})
-        with pytest.raises(ValidationError, match="whole number"):
-            ContainerResources.model_validate({"limits": {**LIMITS, "nvidia.com/gpu": "500m"}})
-        with pytest.raises(ValidationError, match="must equal the limit"):
-            ContainerResources.model_validate(
-                {"limits": {**LIMITS, "nvidia.com/gpu": "2"}, "requests": {"nvidia.com/gpu": "1"}}
-            )
+        _resolved(limits={**LIMITS, "nvidia.com/gpu": "1"})
+        with pytest.raises(ValueError, match="whole number"):
+            _resolved(limits={**LIMITS, "nvidia.com/gpu": "500m"})
+        with pytest.raises(ValueError, match="must equal the limit"):
+            _resolved(limits={**LIMITS, "nvidia.com/gpu": "2"}, requests={"nvidia.com/gpu": "1"})
 
     def test_a_request_is_at_most_its_limit(self) -> None:
-        with pytest.raises(ValidationError, match="above the limit"):
-            ContainerResources.model_validate({"limits": LIMITS, "requests": {"cpu": "1"}})
-        ContainerResources.model_validate({"limits": LIMITS, "requests": {"cpu": "100m"}})
+        with pytest.raises(ValueError, match="above the limit"):
+            _resolved(requests={"cpu": "1"})
+        _resolved(requests={"cpu": "100m"})
 
     def test_quantities_must_be_positive_and_valid(self) -> None:
-        with pytest.raises(ValidationError, match="not a Kubernetes quantity"):
-            ContainerResources.model_validate({"limits": {**LIMITS, "memory": "1KB"}})
-        with pytest.raises(ValidationError, match="positive"):
-            ContainerResources.model_validate({"limits": {**LIMITS, "cpu": "0"}})
+        with pytest.raises(ValueError, match="not a Kubernetes quantity"):
+            _resolved(limits={**LIMITS, "memory": "1KB"})
+        with pytest.raises(ValueError, match="positive"):
+            _resolved(limits={**LIMITS, "cpu": "0"})
 
-    def test_the_split_sums_within_the_tier(self) -> None:
-        split = {
-            "a": {"limits": {"cpu": "100m", "memory": "128Mi", "ephemeral-storage": "512Mi"}},
-            "b": {"limits": {"cpu": "150m", "memory": "128Mi", "ephemeral-storage": "512Mi"}},
-        }
-        ContainerResources.model_validate({"limits": LIMITS, "services": split})
-        split["b"]["limits"]["cpu"] = "200m"
-        with pytest.raises(ValidationError, match="limits of cpu add up to more than the tier"):
-            ContainerResources.model_validate({"limits": LIMITS, "services": split})
 
-    def test_a_share_names_every_native_resource(self) -> None:
-        tier = {"limits": LIMITS}
-        full = {"limits": {"cpu": "100m", "memory": "128Mi", "ephemeral-storage": "100Mi"}}
-        for share in ({"limits": {}}, {"limits": {"cpu": "100m", "memory": "128Mi"}}):
-            with pytest.raises(ValidationError, match="must set the limits of"):
-                ContainerResources.model_validate({**tier, "services": {"web": full, "worker": share}})
+class TestSizes:
+    """A channel's ``resources`` names sizes; core checks the form, the platform owns the table."""
 
-    def test_a_partial_request_counts_at_its_limit(self) -> None:
-        # worker requests only memory: its cpu request is its limit (the agent's rule), so the cpu requests sum to 200m.
-        full = {"cpu": "100m", "memory": "100Mi", "ephemeral-storage": "100Mi"}
-        services = {
-            "web": {"limits": {**full, "cpu": "200m"}, "requests": {"cpu": "100m"}},
-            "worker": {"limits": full, "requests": {"memory": "50Mi"}},
-        }
-        tier = {"limits": {**LIMITS, "cpu": "300m"}}
-        with pytest.raises(ValidationError, match="requests of cpu add up"):
-            ContainerResources.model_validate({**tier, "requests": {"cpu": "150m"}, "services": services})
-        ContainerResources.model_validate({**tier, "requests": {"cpu": "200m"}, "services": services})
+    @pytest.mark.parametrize("name", ["nano", "small", "small-2x", "small-largedisk", "a", "c-4"])
+    def test_a_descriptive_name_is_a_size(self, name: str) -> None:
+        assert check_sizes(name) == name
+        ContainerChannel.model_validate(_channel(resources=name))
 
-    def test_the_split_requests_count_too(self) -> None:
-        split = {
-            "a": {"limits": {"cpu": "1", "memory": "100Mi", "ephemeral-storage": "100Mi"}, "requests": {"cpu": "200m"}},
-            "b": {"limits": {"cpu": "1", "memory": "100Mi", "ephemeral-storage": "100Mi"}, "requests": {"cpu": "100m"}},
-        }
-        tier = {"limits": {"cpu": "2", "memory": "1Gi", "ephemeral-storage": "1Gi"}}
-        with pytest.raises(ValidationError, match="requests of cpu add up"):
-            ContainerResources.model_validate({**tier, "requests": {"cpu": "250m"}, "services": split})
-        ContainerResources.model_validate({**tier, "requests": {"cpu": "300m"}, "services": split})
+    @pytest.mark.parametrize("name", ["", "Nano", "-small", "small-", "has space", "a" * 33, "small_2x"])
+    def test_anything_else_is_not(self, name: str) -> None:
+        with pytest.raises(ValueError, match="not a size name"):
+            check_sizes(name)
+
+    def test_a_map_gives_each_service_its_size(self) -> None:
+        sizes = {"web": "small", "redis": "nano"}
+        assert check_sizes(sizes) == sizes
+        assert ContainerChannel.model_validate(_channel(resources=sizes)).resources == sizes
+
+    @pytest.mark.parametrize(
+        "value", [{}, [], None, 3, {"Web": "small"}, {"web": ""}, {"web": 1}, {"web": {"cpu": "1"}}]
+    )
+    def test_other_forms_are_refused(self, value: Any) -> None:
+        with pytest.raises(ValueError):
+            check_sizes(value)
+        with pytest.raises(ValidationError):
+            ContainerChannel.model_validate(_channel(resources=value))
+
+    def test_the_old_kubernetes_block_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="size name"):
+            ContainerChannel.model_validate(_channel(resources={"limits": dict(LIMITS)}))
+
+    def test_one_size_is_the_size_of_the_only_service(self) -> None:
+        assert service_sizes("nano", ["web"]) == {"web": "nano"}
+
+    def test_one_size_does_not_fit_several_services(self) -> None:
+        with pytest.raises(ValueError, match="2 services .*web, redis"):
+            service_sizes("nano", ["web", "redis"])
+
+    def test_a_map_names_every_service_and_no_other(self) -> None:
+        assert service_sizes({"web": "small", "redis": "nano"}, ["web", "redis"]) == {"web": "small", "redis": "nano"}
+        with pytest.raises(ValueError, match="no size for redis"):
+            service_sizes({"web": "small"}, ["web", "redis"])
+        with pytest.raises(ValueError, match="ghost, which is not a service"):
+            service_sizes({"web": "small", "ghost": "nano"}, ["web"])
+
+    def test_an_entry_needs_a_size_when_sizes_are_a_map(self) -> None:
+        entry = {"name": "api", "service": "worker", "port": 80, "auth": "key"}
+        with pytest.raises(ValidationError, match="service 'worker' has no size"):
+            ContainerChannel.model_validate(_channel(resources={"web": "small"}, entries=[entry]))
+        ContainerChannel.model_validate(_channel(resources="nano", entries=[entry]))
 
     @pytest.mark.parametrize(
         ("field", "value"),
@@ -322,7 +358,7 @@ class TestHonor:
                 "start_period": "0s",
             },
         )
-        compiled = compile_instance_spec(text, ContainerResources.model_validate({"limits": LIMITS}))
+        compiled = compile_instance_spec(text, _res())
         (service,) = compiled.manifest.services
         assert service.command == ["/bin/app"]
         assert service.args == ["--serve"]
@@ -348,7 +384,7 @@ class TestHonor:
     def test_environment_as_a_list_and_a_string_command(self) -> None:
         compiled = compile_instance_spec(
             _compose(environment=["A=1", "B=x=y"], command="run --flag 'two words'"),
-            ContainerResources.model_validate({"limits": LIMITS}),
+            _res(),
         )
         (service,) = compiled.manifest.services
         assert service.env == {"A": "1", "B": "x=y"}
@@ -368,7 +404,7 @@ class TestHonor:
     def test_ports_are_container_side(self, port: Any, expected: int) -> None:
         report = validate_instance_spec(_compose(ports=[port]))
         assert report.ok, report.errors
-        compiled = compile_instance_spec(_compose(ports=[port]), ContainerResources.model_validate({"limits": LIMITS}))
+        compiled = compile_instance_spec(_compose(ports=[port]), _res())
         assert compiled.manifest.services[0].ports == [expected]
 
     def test_a_host_port_is_a_warning(self) -> None:
@@ -418,9 +454,7 @@ class TestIgnore:
         report = validate_instance_spec(_compose(**{key: values[key]}))
         assert report.ok, report.errors
         assert any(w.path.endswith(key) and not w.loud for w in report.warnings)
-        compiled = compile_instance_spec(
-            _compose(**{key: values[key]}), ContainerResources.model_validate({"limits": LIMITS})
-        )
+        compiled = compile_instance_spec(_compose(**{key: values[key]}), _res())
         assert key in {d.key for d in compiled.dropped}
 
     def test_deploy_resources_is_ignored_in_favour_of_the_channel(self) -> None:
@@ -466,12 +500,9 @@ class TestLoudWarnings:
         scratch = [w for w in report.warnings if w.code == "scratch_volume"]
         assert len(scratch) == 2 and all(w.loud for w in scratch)
         assert "survives a container restart" in scratch[0].message
-        manifest = compile_instance_spec(text, ContainerResources.model_validate({"limits": LIMITS})).manifest
+        manifest = compile_instance_spec(text, _res()).manifest
         assert [s.path for s in manifest.services[0].scratch or []] == ["/data", "/cache"]
-        assert not any(
-            d.key == "volumes"
-            for d in compile_instance_spec(text, ContainerResources.model_validate({"limits": LIMITS})).dropped
-        )
+        assert not any(d.key == "volumes" for d in compile_instance_spec(text, _res()).dropped)
 
     def test_a_path_mounted_twice_is_an_error(self) -> None:
         text = yaml.safe_dump(
@@ -533,20 +564,13 @@ class TestReject:
         assert report.ok, report.errors
         note = next(w for w in report.warnings if w.code == "unpinned_image")
         assert not note.loud and "runs it as written" in note.message and "reports the digest" in note.message
-        assert (
-            compile_instance_spec(_compose(image=image), ContainerResources.model_validate({"limits": LIMITS}))
-            .manifest.services[0]
-            .image
-            == image
-        )
+        assert compile_instance_spec(_compose(image=image), _res()).manifest.services[0].image == image
 
     def test_a_digest_written_by_the_seller_is_honored_as_written(self) -> None:
         image = "ghcr.io/o/app:v1" + DIGEST
         report = validate_instance_spec(_compose(image=image))
         assert report.ok and "unpinned_image" not in _codes(report, "warnings")
-        manifest = compile_instance_spec(
-            _compose(image=image), ContainerResources.model_validate({"limits": LIMITS})
-        ).manifest
+        manifest = compile_instance_spec(_compose(image=image), _res()).manifest
         assert manifest.services[0].image == image
 
     def test_a_tag_with_a_digest_is_accepted(self) -> None:
@@ -637,7 +661,7 @@ class TestReject:
                 "networks": {"public": {}, "private": {}},
             }
         )
-        report = validate_instance_spec(text, channel=_container(resources_split=("front", "back")))
+        report = validate_instance_spec(text, channel=_container(sizes=("front", "back")))
         assert report.ok, report.errors
 
     def test_an_undeclared_network(self) -> None:
@@ -721,40 +745,47 @@ class TestSiblings:
             }
         )
 
-    def test_siblings_are_allowed_and_need_a_split(self) -> None:
+    def test_siblings_are_allowed_and_need_a_size_each(self) -> None:
         assert validate_instance_spec(self.two()).ok
         report = validate_instance_spec(self.two(), channel=_container())
-        assert "split_required" in _codes(report)
-        report = validate_instance_spec(self.two(), channel=_container(resources_split=("web", "redis")))
+        assert "size_needs_map" in _codes(report)
+        assert "web" in report.errors[0].message and "redis" in report.errors[0].message
+        report = validate_instance_spec(self.two(), channel=_container(sizes=("web", "redis")))
         assert report.ok, report.errors
 
-    def test_the_split_must_name_the_services(self) -> None:
-        report = validate_instance_spec(self.two(), channel=_container(resources_split=("web", "ghost")))
-        assert {"split_service", "split_missing"} <= _codes(report)
+    def test_the_sizes_must_name_the_services(self) -> None:
+        report = validate_instance_spec(self.two(), channel=_container(sizes=("web", "ghost")))
+        assert {"size_service", "size_missing"} <= _codes(report)
 
-    def test_compile_with_a_split(self) -> None:
-        resources = ContainerResources.model_validate(
-            {
-                "limits": {"cpu": "1", "memory": "1Gi", "ephemeral-storage": "2Gi"},
-                "services": {
-                    "web": {"limits": {"cpu": "750m", "memory": "768Mi", "ephemeral-storage": "1Gi"}},
-                    "redis": {"limits": {"cpu": "250m", "memory": "256Mi", "ephemeral-storage": "1Gi"}},
-                },
-            }
-        )
+    def test_a_one_service_spec_takes_a_size_or_a_map(self) -> None:
+        text = _compose()
+        assert validate_instance_spec(text, channel=_container()).ok
+        assert validate_instance_spec(text, channel=_container(sizes=("web",))).ok
+        assert "size_service" in _codes(validate_instance_spec(text, channel=_container(sizes=("ghost",))))
+
+    def test_compile_with_a_size_each(self) -> None:
+        resources = {
+            "web": ResourceSet.model_validate(SIZES["small"]),
+            "redis": ResourceSet.model_validate(SIZES["nano"]),
+        }
         manifest = compile_instance_spec(self.two(), resources).manifest
         by_name = {s.name: s for s in manifest.services}
-        assert by_name["web"].resources is not None and by_name["web"].resources.limits == {
-            "cpu": "750m",
-            "memory": "768Mi",
-            "ephemeral-storage": "1Gi",
-        }
-        assert by_name["redis"].resources is not None and by_name["redis"].resources.limits is not None
-        assert by_name["redis"].resources.limits["cpu"] == "250m"
+        assert by_name["web"].resources is not None
+        assert by_name["web"].resources.limits == SIZES["small"]["limits"]
+        assert by_name["redis"].resources is not None
+        assert by_name["redis"].resources.limits == SIZES["nano"]["limits"]
 
-    def test_compile_without_a_split_is_refused(self) -> None:
-        with pytest.raises(InstanceSpecError, match="split the tier"):
-            compile_instance_spec(self.two(), ContainerResources.model_validate({"limits": LIMITS}))
+    def test_compile_needs_resources_for_every_service_and_no_other(self) -> None:
+        with pytest.raises(InstanceSpecError, match="no resources for redis"):
+            compile_instance_spec(self.two(), _res())
+        with pytest.raises(InstanceSpecError, match="not a service of the spec"):
+            compile_instance_spec(_compose(), {**_res(), "ghost": _resolved()})
+
+    def test_compile_checks_what_the_platform_resolved(self) -> None:
+        with pytest.raises(InstanceSpecError, match="must set ephemeral-storage"):
+            compile_instance_spec(
+                _compose(), {"web": ResourceSet.model_validate({"limits": {"cpu": "1", "memory": "1Gi"}})}
+            )
 
 
 class TestEntries:
@@ -767,11 +798,9 @@ class TestEntries:
         assert "entry_port" in _codes(validate_instance_spec(_compose(), channel=self.entry(port=9090)))
 
 
-def _container(*, resources_split: tuple[str, ...] = (), **changes: Any) -> ContainerChannel:
-    resources: dict[str, Any] = {"limits": {"cpu": "1", "memory": "1Gi", "ephemeral-storage": "2Gi"}}
-    if resources_split:
-        share = {"cpu": "100m", "memory": "100Mi", "ephemeral-storage": "100Mi"}
-        resources["services"] = {name: {"limits": dict(share)} for name in resources_split}
+def _container(*, sizes: tuple[str, ...] = (), **changes: Any) -> ContainerChannel:
+    """A container channel: one size, or (with ``sizes``) a size for each named service."""
+    resources: Any = {name: "nano" for name in sizes} if sizes else "nano"
     return ContainerChannel.model_validate(_channel(resources=resources, **changes))
 
 
@@ -830,7 +859,10 @@ class TestCompileGolden:
     def test_compile_output(self, service_dir: Path, golden: str) -> None:
         offering = json.loads((service_dir / "offering.json").read_text())
         channel = ContainerChannel.model_validate(offering["upstream_access_config"]["base"])
-        compiled = compile_instance_spec((service_dir / "compose.yaml").read_text(), channel.resources)
+        compiled = compile_instance_spec(
+            (service_dir / "compose.yaml").read_text(),
+            _resolve(channel.resources, (service_dir / "compose.yaml").read_text()),
+        )
         expected = json.loads((FIXTURES / "manifest" / golden).read_text())
         assert compiled.manifest.model_dump(exclude_none=True) == expected
         assert list(Draft7Validator(MANIFEST_SCHEMA).iter_errors(expected)) == []
@@ -838,7 +870,9 @@ class TestCompileGolden:
     def test_dropped_keys_are_recorded(self) -> None:
         offering = json.loads((WEIXIN / "offering.json").read_text())
         channel = ContainerChannel.model_validate(offering["upstream_access_config"]["base"])
-        compiled = compile_instance_spec((WEIXIN / "compose.yaml").read_text(), channel.resources)
+        compiled = compile_instance_spec(
+            (WEIXIN / "compose.yaml").read_text(), _resolve(channel.resources, (WEIXIN / "compose.yaml").read_text())
+        )
         assert {(d.service, d.key, d.reason) for d in compiled.dropped} == {
             ("gateway", "deploy.resources", "ignored"),
         }
@@ -849,23 +883,21 @@ class TestCompileGolden:
         text = (ECHO / "compose.yaml").read_text()
         limits = {}
         for name, raw in offering["upstream_access_config"].items():
-            manifest = compile_instance_spec(text, ContainerChannel.model_validate(raw).resources).manifest
+            sizes = ContainerChannel.model_validate(raw).resources
+            manifest = compile_instance_spec(text, _resolve(sizes, text)).manifest
             resources = manifest.services[0].resources
             assert resources is not None
             limits[name] = resources.limits
         assert limits["base"]["cpu"] == "250m" and limits["medium"]["cpu"] == "1"
 
     def test_requests_are_carried(self) -> None:
-        resources = ContainerResources.model_validate({"limits": LIMITS, "requests": {"cpu": "100m"}})
-        manifest = compile_instance_spec(_compose(), resources).manifest
+        manifest = compile_instance_spec(_compose(), _res(requests={"cpu": "100m"})).manifest
         assert manifest.services[0].resources is not None
         assert manifest.services[0].resources.requests == {"cpu": "100m"}
 
     def test_an_invalid_spec_does_not_compile(self) -> None:
         with pytest.raises(InstanceSpecError) as caught:
-            compile_instance_spec(
-                _compose(image="nginx@sha256:abc"), ContainerResources.model_validate({"limits": LIMITS})
-            )
+            compile_instance_spec(_compose(image="nginx@sha256:abc"), _res())
         assert "bad_digest" in {e.code for e in caught.value.report.errors}
 
 
@@ -1101,8 +1133,7 @@ class TestOneInstanceSpec:
 
     def test_every_tier_runs_the_one_file(self, validator: DataValidator) -> None:
         offering = _echo()
-        share = {"limits": {"cpu": "100m", "memory": "64Mi", "ephemeral-storage": "100Mi"}}
-        offering["upstream_access_config"]["medium"]["resources"]["services"] = {"web": share, "ghost": share}
+        offering["upstream_access_config"]["medium"]["resources"] = {"web": "small", "ghost": "nano"}
         errors = _errors(validator, offering)
         assert any("medium.instance_spec" in e and "ghost" in e for e in errors)
         assert not any("base." in e for e in errors)
@@ -1255,8 +1286,8 @@ class TestSnapshotDocument:
 # --- addenda of #107: env_file, meta.environment, scratch ---------------------------------------------
 
 
-def _resources() -> ContainerResources:
-    return ContainerResources.model_validate({"limits": LIMITS})
+def _resources() -> dict[str, ResourceSet]:
+    return _res()
 
 
 class TestEnvFile:
@@ -1392,9 +1423,10 @@ class TestUpstreamExample:
     def test_the_channel_environment_and_scratch_reach_the_manifest(self) -> None:
         offering = self.offering()
         channel = ContainerChannel.model_validate(offering["upstream_access_config"]["base"])
+        text = (WEIXIN_UPSTREAM / "upstream-compose.yaml").read_text()
         compiled = compile_instance_spec(
-            (WEIXIN_UPSTREAM / "upstream-compose.yaml").read_text(),
-            channel.resources,
+            text,
+            _resolve(channel.resources, text),
             environment=channel.environment,
         )
         service = compiled.manifest.services[0]

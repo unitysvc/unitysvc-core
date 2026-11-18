@@ -28,6 +28,7 @@ import math
 import posixpath
 import re
 import shlex
+from collections.abc import Mapping
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -35,7 +36,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from .models.channel import ContainerChannel
-from .models.container import DNS_LABEL_RE, ContainerResources
+from .models.container import DNS_LABEL_RE, ResourceSet, check_resolved
 from .models.manifest import (
     ManifestHealth,
     ManifestResources,
@@ -919,19 +920,21 @@ class _Checker:
                     f"targets port {entry.port} of {entry.service!r}, which declares "
                     f"{self.ports[entry.service] or 'no ports'}",
                 )
-        split = channel.resources.services
-        if split:
-            for service in split:
-                if service not in self.ports:
-                    self.error("split_service", f"resources.services.{service}", "is not a service of the spec")
-            if missing := [n for n in names if n not in split]:
-                self.error("split_missing", "resources.services", f"has no share for {', '.join(missing)}")
-        elif len(names) > 1:
-            self.error(
-                "split_required",
-                "resources.services",
-                f"the spec has {len(names)} services: say how the tier is shared between them in resources.services",
-            )
+        sized = channel.resources
+        if isinstance(sized, str):
+            if len(names) != 1:
+                self.error(
+                    "size_needs_map",
+                    "resources",
+                    f"the spec has {len(names)} services ({', '.join(names)}): name each service's size, "
+                    'like {"web": "small", "redis": "nano"}',
+                )
+            return
+        for service in sized:
+            if service not in self.ports:
+                self.error("size_service", f"resources.{service}", "is not a service of the spec")
+        if missing := [n for n in names if n not in sized]:
+            self.error("size_missing", "resources", f"has no size for {', '.join(missing)}")
 
 
 def _check(text: str, fmt: str, channel: ContainerChannel | None, overlay: Any = None) -> _Checker:
@@ -979,7 +982,7 @@ def validate_instance_spec(
     Checks the Compose allowlist and the static rules (literal digests,
     container-side ports, health checks, volumes, networks, service names). With
     ``channel``, also that every entry targets a declared service and port and
-    that ``resources.services`` names the spec's services, and that each service in the
+    that ``resources`` gives each service of the spec a size, and that each service in the
     channel's ``environment`` exists in the file. Never raises on bad input: the problems
     are in the report.
     """
@@ -988,15 +991,17 @@ def validate_instance_spec(
 
 def compile_instance_spec(
     text: str,
-    resources: ContainerResources,
+    resources: Mapping[str, ResourceSet],
     *,
     format: str = DEFAULT_FORMAT,
     environment: dict[str, dict[str, str]] | None = None,
 ) -> CompiledInstanceSpec:
-    """Compile a valid spec and the channel's ``resources`` into the agent's normalized manifest.
+    """Compile a valid spec and the resources of each of its services into the agent's normalized manifest.
 
-    The tier ``resources`` go to the single service of a one-service spec, or
-    are split by ``resources.services``. Raises :class:`InstanceSpecError`
+    ``resources`` is what the platform resolved each service's size to (see
+    :func:`~unitysvc_core.models.container.service_sizes` for the sizes a channel names): a
+    :class:`~unitysvc_core.models.container.ResourceSet` per service, keyed by service name, covering
+    every service of the spec and no other. Raises :class:`InstanceSpecError`
     (carrying the report) if the spec is not valid for these resources.
 
     ``environment`` is the channel's ``environment``, merged here and only here: a value
@@ -1008,25 +1013,22 @@ def compile_instance_spec(
     checker = _check(text, format, None, environment)
     report = checker.report
     names = list(checker.ports)
-    split = resources.services
-    if split:
-        for service in split:
-            if service not in names:
-                checker.error("split_service", f"resources.services.{service}", "is not a service of the spec")
-        for service in names:
-            if service not in split:
-                checker.error("split_missing", "resources.services", f"has no share for {service}")
-    elif len(names) > 1:
-        checker.error(
-            "split_required",
-            "resources.services",
-            f"the spec has {len(names)} services: split the tier in resources.services",
-        )
+    for service in resources:
+        if service not in names:
+            checker.error("size_service", f"resources.{service}", "is not a service of the spec")
+    for service in names:
+        if service not in resources:
+            checker.error("size_missing", "resources", f"has no resources for {service}")
+    for service, share in resources.items():
+        try:
+            check_resolved(share, f"resources.{service}")
+        except ValueError as exc:
+            checker.error("bad_resources", f"resources.{service}", str(exc))
     if not report.ok:
         raise InstanceSpecError(report)
     services = []
     for compiled_service in checker.services:
-        share = split[compiled_service.name] if split else resources
+        share = resources[compiled_service.name]
         compiled = compiled_service.model_copy(
             update={
                 "resources": ManifestResources(

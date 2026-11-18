@@ -285,7 +285,7 @@
     },
     "ContainerChannel": {
       "additionalProperties": false,
-      "description": "A tier of a service that runs as instances on Kubernetes (unitysvc/unitysvc-core#105).\n\nThe instance spec is the offering's single ``instance_spec`` Document (or its\n``instance_spec`` shortcut) and every container channel runs it; ``resources``\nis the tier total and ``environment`` this channel's environment values, which may read its\nenrollment parameters. ``servers`` is optional and\nhas no container-specific meaning: each is an ordinary ``HttpServer`` the\ngateway reaches, and the listing rule (an enrollable channel and a matching\n``/e/{{ enrollment.code }}`` interface) is checked by the validator, which\nsees the listing. ``entries`` is PROVISIONAL (#105 open 1 and 2).",
+      "description": "A tier of a service that runs as instances on Kubernetes (unitysvc/unitysvc-core#105).\n\nThe instance spec is the offering's single ``instance_spec`` Document (or its\n``instance_spec`` shortcut) and every container channel runs it; ``resources``\nnames the size the instance runs on (``\"nano\"`` for a one-service spec, or\n``{\"web\": \"small\", \"redis\": \"nano\"}``, the platform maps a size to Kubernetes resources and its\nprice) and ``environment`` this channel's environment values, which may read its\nenrollment parameters. ``servers`` is optional and\nhas no container-specific meaning: each is an ordinary ``HttpServer`` the\ngateway reaches, and the listing rule (an enrollable channel and a matching\n``/e/{{ enrollment.code }}`` interface) is checked by the validator, which\nsees the listing. ``entries`` is PROVISIONAL (#105 open 1 and 2).",
       "properties": {
         "acceptable_formats": {
           "anyOf": [
@@ -607,7 +607,19 @@
           "default": null
         },
         "resources": {
-          "$ref": "#/$defs/ContainerResources"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            }
+          ],
+          "description": "The size an instance runs on: one size name for a one-service spec, or a map from each service name to its size. The platform maps a size to Kubernetes resources and a price.",
+          "title": "Resources"
         },
         "routing_key": {
           "anyOf": [
@@ -877,57 +889,6 @@
         "auth"
       ],
       "title": "ContainerEntry",
-      "type": "object"
-    },
-    "ContainerResources": {
-      "additionalProperties": false,
-      "description": "A tier's total resources (unitysvc/unitysvc-core#105, decided 3).\n\n``cpu``, ``memory`` and ``ephemeral-storage`` limits are required (the\ninstance's quota is built from them); ``nvidia.com/gpu`` is optional. A spec\nwith several services needs ``services``, the split, which must sum within\nthe tier total; a single service gets the whole tier.",
-      "properties": {
-        "limits": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "description": "Most each resource may use: resource name to quantity",
-          "title": "Limits",
-          "type": "object"
-        },
-        "requests": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "What is reserved; each at most its limit. Absent: the limits are reserved",
-          "title": "Requests"
-        },
-        "services": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "$ref": "#/$defs/ServiceResources"
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional per-service split, by Compose service name; each resource's sum stays within the tier",
-          "title": "Services"
-        }
-      },
-      "required": [
-        "limits"
-      ],
-      "title": "ContainerResources",
       "type": "object"
     },
     "CountPriceData": {
@@ -3715,41 +3676,6 @@
         "bucket"
       ],
       "title": "S3Server",
-      "type": "object"
-    },
-    "ServiceResources": {
-      "additionalProperties": false,
-      "description": "One service's share of the tier: all of ``cpu``, ``memory`` and ``ephemeral-storage``.\n\nThe agent fills a missing limit with its own default, which could take the\ninstance past the tier, so a share names every native resource.",
-      "properties": {
-        "limits": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "description": "Most each resource may use: resource name to quantity",
-          "title": "Limits",
-          "type": "object"
-        },
-        "requests": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "What is reserved; each at most its limit. Absent: the limits are reserved",
-          "title": "Requests"
-        }
-      },
-      "required": [
-        "limits"
-      ],
-      "title": "ServiceResources",
       "type": "object"
     },
     "ServiceTypeEnum": {

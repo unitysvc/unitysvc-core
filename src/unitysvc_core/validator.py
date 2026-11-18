@@ -741,8 +741,8 @@ class DataValidator:
 
         Returns ``(errors, warnings)``. The spec is the offering's one
         ``instance_spec`` (the shortcut or a Document); its Compose content is
-        checked against each container channel (entries, resource split), as each
-        tier's resources differ. A spec given as a URL is not fetched here: the
+        checked against each container channel (entries, sizes), as each
+        tier's sizes differ. A spec given as a URL is not fetched here: the
         backend validates the snapshot it takes. Errors are shared with backend
         ingest, through :func:`validate_instance_spec`.
         """
