@@ -61,9 +61,14 @@ def is_container_only(offering: dict[str, Any] | None) -> bool:
 
 
 def priced_channel(position: Position) -> str | None:
-    """The channel a ``base_cost`` at ``position`` prices: the entry it sits under in a
-    channel-keyed price, or ``None`` when it prices every channel of the offering."""
-    return position[1] if len(position) >= 2 and position[0] == "channels" else None
+    """The outermost channel entry containing a ``base_cost``, even through composites.
+
+    ``None`` means no channel selector encloses it, so it prices every channel of the offering.
+    """
+    for index, part in enumerate(position[:-1]):
+        if part == "channels":
+            return position[index + 1]
+    return None
 
 
 def validate_base_cost_list_price(listing: dict[str, Any], offering: dict[str, Any] | None) -> list[str]:

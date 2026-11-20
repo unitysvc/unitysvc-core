@@ -144,6 +144,46 @@ class TestValidator:
         }
         assert _base_cost_text(_errors(listing, offering, tmp_path)) == ""
 
+    @pytest.mark.parametrize("wrapper", ["multiply", "add"])
+    @pytest.mark.parametrize("cost_channel", ["container", "http"])
+    def test_channel_selection_survives_an_enclosing_composite(
+        self, wrapper: str, cost_channel: str, tmp_path: Path
+    ) -> None:
+        listing, offering = _service()
+        channel = next(iter(offering["upstream_access_config"]))
+        offering["upstream_access_config"]["http"] = {
+            "access_method": "http",
+            "base_url": "https://example.com",
+            "api_key": None,
+        }
+        (tmp_path / "http-test.sh").write_text("exit 0\n")
+        listing["documents"]["HTTP connectivity"] = {
+            "category": "connectivity_test",
+            "mime_type": "bash",
+            "file_path": "http-test.sh",
+        }
+        selected = channel if cost_channel == "container" else "http"
+        keyed = {
+            "type": "channel",
+            "default": "http",
+            "channels": {
+                name: copy.deepcopy(AT_COST) if name == selected else {"type": "constant", "price": "1"}
+                for name in (channel, "http")
+            },
+        }
+        listing["list_price"] = (
+            {"type": "multiply", "factor": "1.2", "base": keyed}
+            if wrapper == "multiply"
+            else {"type": "add", "prices": [keyed, {"type": "constant", "price": "1"}]}
+        )
+
+        errors = _errors(listing, offering, tmp_path)
+        assert errors["offering"] == []
+        if cost_channel == "container":
+            assert errors["listing"] == []
+        else:
+            assert "only to a container channel" in _base_cost_text(errors)
+
     def test_a_channel_price_must_name_a_container_channel(self, tmp_path: Path) -> None:
         listing, offering = _service()
         channel = next(iter(offering["upstream_access_config"]))
@@ -175,6 +215,8 @@ class TestRules:
         [position] = base_cost_positions(channel)
         assert position == ("channels", "a", "base")
         assert priced_channel(position) == "a"
+        assert priced_channel(("base", *position)) == "a"
+        assert priced_channel(("base", *position, "channels", "b")) == "a"
         assert priced_channel(("base",)) is None and priced_channel(()) is None
         assert base_cost_positions({"type": "one_hour", "price": "1"}) == []
         assert base_cost_positions(None) == []
