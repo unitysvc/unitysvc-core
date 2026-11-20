@@ -225,7 +225,7 @@ class PricingTypeEnum(StrEnum):
     revenue_share = "revenue_share"
     # Composite pricing types
     constant = "constant"  # Fixed amount (fee or discount)
-    # list_price of a container service offered at the platform's cost (plus an optional fixed markup)
+    # the platform's cost of a container channel, as a list_price leaf (composed for a margin)
     base_cost = "base_cost"
     add = "add"  # Sum of multiple prices
     multiply = "multiply"  # Base price multiplied by factor

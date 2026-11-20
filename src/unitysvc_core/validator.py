@@ -812,11 +812,11 @@ class DataValidator:
     def validate_base_cost_pricing(
         data: dict[str, Any], schema_name: str, offering: dict[str, Any] | None
     ) -> list[str]:
-        """The rules of the ``base_cost`` list price (``unitysvc_core.base_cost``), for one data file.
+        """The rule of the ``base_cost`` list price (``unitysvc_core.base_cost``), for one data file.
 
-        An offering's ``payout_price`` may not be one; a listing's ``list_price`` may carry it only
-        as the whole price or one channel's, on a container channel of ``offering`` (when given),
-        beside a payout that pays the author nothing. Backend ingest runs the same two functions.
+        An offering's ``payout_price`` may not contain one; each ``base_cost`` in a listing's
+        ``list_price`` must price a container channel of ``offering`` (when given). Backend ingest
+        runs the same two functions.
         """
         if schema_name == "offering_v1":
             return validate_base_cost_payout_price(data)
