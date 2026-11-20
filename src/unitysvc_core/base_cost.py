@@ -1,21 +1,21 @@
-"""``base_cost``: the list price of a container service offered at the platform's cost.
+"""``base_cost``: the platform's cost of a container channel, as a price.
 
-The rules of the type, shared by seller validation (``DataValidator``) and backend
-ingest, which runs the same checks on an upload:
+A leaf price type like ``constant``: ``{"type": "base_cost"}`` is what the platform
+pays to run the channel's size for the metered runtime, and nothing more. A seller
+who wants a margin composes it like any other price, ``{"type": "multiply",
+"factor": "1.2", "base": {"type": "base_cost"}}`` or an ``add`` with a time price;
+a seller who takes nothing lists the bare type (a developer seller is held to
+exactly that by the platform).
 
-- ``base_cost`` is a ``list_price`` type, never a ``payout_price``, and only as the
-  whole list price or as the price of one channel in a channel-keyed price, not a
-  part of a composite price;
-- it needs a container channel: the whole list price needs a container-only
-  offering, and a channel's price must be a ``container`` channel of the offering;
-- the author takes no payment: ``payout_price`` is a zero revenue share (or a zero
-  constant), so the platform's markup, if any, stays with the platform.
-
-Core holds the shape only. The platform resolves the figure from the size the
-channel names (``BaseCostPriceData``).
+The one rule, shared by seller validation (``DataValidator``) and backend ingest,
+which runs the same check on an upload: ``base_cost`` prices a container channel,
+so it is a ``list_price`` type, never a ``payout_price``, and wherever it sits in a
+listing's ``list_price`` (the whole price, a leaf of a composite, a channel's entry
+or a leaf inside one) the channel it prices must be a ``container`` channel of the
+offering. Core holds the shape only: the platform resolves the figure from the
+size the channel names (``BaseCostPriceData``).
 """
 
-from decimal import Decimal, InvalidOperation
 from typing import Any
 
 Position = tuple[str, ...]
@@ -23,7 +23,7 @@ Position = tuple[str, ...]
 
 def base_cost_positions(price: Any, path: Position = ()) -> list[Position]:
     """Where ``base_cost`` prices sit in a pricing object: ``()`` for the whole price,
-    ``("channels", name)`` for a channel's price, deeper paths for anything else."""
+    ``("channels", name, ...)`` under a channel's entry, other paths inside a composite."""
     if not isinstance(price, dict):
         return []
     if price.get("type") == "base_cost":
@@ -40,29 +40,6 @@ def base_cost_positions(price: Any, path: Position = ()) -> list[Position]:
             for i, item in enumerate(value):
                 found.extend(base_cost_positions(item, (*path, key, str(i))))
     return found
-
-
-def is_zero_payout(payout: Any, channel: str | None = None) -> bool:
-    """Whether a payout price pays the seller nothing (a zero share or a zero constant).
-
-    A channel-keyed payout is read for ``channel``, falling back to its ``default``.
-    """
-    if not isinstance(payout, dict):
-        return False
-    kind = payout.get("type")
-    try:
-        if kind == "revenue_share":
-            return Decimal(str(payout.get("percentage"))) == 0
-        if kind == "constant":
-            return Decimal(str(payout.get("price"))) == 0
-    except InvalidOperation:
-        return False
-    if kind == "channel" and isinstance(payout.get("channels"), dict):
-        channels = payout["channels"]
-        child = channels.get(channel) if channel is not None else None
-        child = child if child is not None else channels.get(payout.get("default"))
-        return is_zero_payout(child)
-    return False
 
 
 def container_channels(offering: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
@@ -83,52 +60,47 @@ def is_container_only(offering: dict[str, Any] | None) -> bool:
     )
 
 
-def validate_base_cost_list_price(listing: dict[str, Any], offering: dict[str, Any] | None) -> list[str]:
-    """The rules of a ``base_cost`` in a listing's ``list_price``, as error messages.
+def priced_channel(position: Position) -> str | None:
+    """The outermost channel entry containing a ``base_cost``, even through composites.
 
-    Without the offering only the listing's own shape is checked (where the type sits);
-    with it, that each ``base_cost`` prices a container channel and that the offering's
-    ``payout_price`` pays the author nothing. An empty list when the listing has none.
+    ``None`` means no channel selector encloses it, so it prices every channel of the offering.
+    """
+    for index, part in enumerate(position[:-1]):
+        if part == "channels":
+            return position[index + 1]
+    return None
+
+
+def validate_base_cost_list_price(listing: dict[str, Any], offering: dict[str, Any] | None) -> list[str]:
+    """The rule of ``base_cost`` in a listing's ``list_price``, as error messages.
+
+    Each ``base_cost`` must price a container channel: one under a channel's entry needs that
+    channel to be a ``container`` channel of the offering; one anywhere else prices every channel,
+    so the offering must be container-only. Without the offering there is nothing to check. An
+    empty list when the listing has none.
     """
     errors: list[str] = []
-    positions = base_cost_positions(listing.get("list_price"))
-    if not positions:
+    if offering is None:
         return errors
-    channel_names: list[str | None] = []
-    for position in positions:
-        if position == ():
-            channel_names.append(None)
-            if offering is not None and not is_container_only(offering):
+    for position in base_cost_positions(listing.get("list_price")):
+        channel = priced_channel(position)
+        where = "list_price" + "".join(f".{part}" for part in position)
+        if channel is None:
+            if not is_container_only(offering):
                 errors.append(
-                    "list_price: base_cost needs a container service (every channel of the offering "
+                    f"{where}: base_cost prices a container channel (every channel of the offering "
                     "must be a container channel); price other channels with a channel-keyed list_price"
                 )
-        elif len(position) == 2 and position[0] == "channels":
-            channel_names.append(position[1])
-            if offering is not None and position[1] not in container_channels(offering):
-                errors.append(
-                    f"list_price.channels.{position[1]}: base_cost applies only to a container channel "
-                    f"of the offering ({sorted(container_channels(offering)) or 'it has none'})"
-                )
-        else:
+        elif channel not in container_channels(offering):
             errors.append(
-                f"list_price.{'.'.join(position)}: base_cost must be the whole list_price or the price "
-                "of one channel, not a part of a composite price"
+                f"{where}: base_cost applies only to a container channel of the offering "
+                f"({sorted(container_channels(offering)) or 'it has none'})"
             )
-    if isinstance(offering, dict) and offering.get("payout_price") is not None:
-        for name in channel_names:
-            if not is_zero_payout(offering["payout_price"], name):
-                where = "" if name is None else f" for channel {name!r}"
-                errors.append(
-                    f"A base_cost list_price is for an author who takes no payment: payout_price{where} "
-                    'must be {"type": "revenue_share", "percentage": "0"} (or a zero constant)'
-                )
-                break
     return errors
 
 
 def validate_base_cost_payout_price(offering: dict[str, Any]) -> list[str]:
-    """``base_cost`` is a list price: an offering's ``payout_price`` may not be one."""
+    """``base_cost`` is a list price: an offering's ``payout_price`` may not contain one."""
     if base_cost_positions(offering.get("payout_price")):
         return ["payout_price: base_cost is a list_price type; a payout is a revenue_share or a price"]
     return []

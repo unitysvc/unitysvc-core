@@ -19,7 +19,7 @@ from collections.abc import Callable, Iterable
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from pydantic.functional_validators import BeforeValidator
 
 
@@ -981,52 +981,38 @@ class ConstantPriceData(BasePriceData):
 
 class BaseCostPriceData(BasePriceData):
     """
-    ``list_price`` of a container service that is offered at the platform's cost.
+    The platform's cost of running a container channel, as a price.
 
-    For authors who do not or cannot take payment (open-source authors giving
-    visitors a way to preview or run their software), the customer pays what
-    the platform pays for the instance, plus an optional fixed markup, and the
-    author earns nothing. The platform derives the figure from the compute size
-    the channel names, so it follows the platform's size table and the author
-    never copies a number that goes stale.
+    A leaf type like ``constant``: ``{"type": "base_cost"}`` is what the
+    platform pays for the size the channel names (``resources``) over the
+    metered runtime, billed by the instance minute, and nothing more. The
+    platform derives the figure from its size table, so a seller never copies
+    a number that goes stale.
 
-    ``markup`` is a fixed amount added to the base cost of a month of continuous
-    runtime (the unit of the platform's size table), charged pro rata by the
-    instance minute. The default ``"0"`` is "at cost". The platform keeps the
-    markup, so the matching ``payout_price`` is a zero share (the rules are in
-    ``unitysvc_core.base_cost``, shared with backend ingest).
+    Listed bare, it is a service at cost, for an author who takes nothing
+    (an open-source author letting visitors preview or run their software).
+    A margin is composed like any other price: ``{"type": "multiply",
+    "factor": "1.2", "base": {"type": "base_cost"}}``, or an ``add`` of the
+    cost and a time price.
 
     ``price``, the summary figure used to sort and compare listings, is not an
-    input: the platform computes it (the resolved price of a month of
-    continuous runtime, the dearest channel's when the whole list price is
-    ``base_cost``) and replaces whatever is written. ``effective_price()`` reads
-    it when it is there, so a stored listing sorts and displays like a monthly
-    price; without it the figure is unknown.
+    input: the platform computes it (the cost of a month of continuous
+    runtime, the dearest channel's when the price covers several) and replaces
+    whatever is written. ``effective_price()`` reads it when it is there, so a
+    stored listing sorts and displays like a monthly price; without it the
+    figure is unknown.
 
     Only a container channel has a base cost, so this type is valid only in a
-    listing's ``list_price`` (alone for a container-only offering, or as the
-    value of a container channel in a channel-keyed price), never in
-    ``payout_price``.
+    listing's ``list_price``, wherever that prices a container channel of the
+    offering (the rule is in ``unitysvc_core.base_cost``, shared with backend
+    ingest), never in ``payout_price``.
 
     Example:
         {"type": "base_cost"}
-        {"type": "base_cost", "markup": "1.00"}
+        {"type": "multiply", "factor": "1.2", "base": {"type": "base_cost"}}
     """
 
     type: Literal["base_cost"] = "base_cost"
-
-    markup: AmountStr = Field(
-        default="0",
-        description="Fixed amount added to the platform's base cost of a month of continuous "
-        "runtime, never negative. '0' prices the service at cost.",
-    )
-
-    @field_validator("markup")
-    @classmethod
-    def _markup_not_negative(cls, v: str) -> str:
-        if Decimal(v) < 0:
-            raise ValueError(f"markup must not be negative, got '{v}'")
-        return v
 
     def effective_price(self) -> EffectivePrice | None:
         """The platform's summary ``price``, per month, when it has filled it in; else unknown.
