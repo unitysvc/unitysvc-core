@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedError
 from jsonschema.validators import Draft7Validator
 
+from .base_cost import validate_base_cost_list_price, validate_base_cost_payout_price
 from .grants import ExportsResolver
 from .instance_spec import (
     INSTANCE_SPEC_TITLE,
@@ -807,6 +808,22 @@ class DataValidator:
                 errors.extend(f"documents.{title}: {e}" for e in validate_probes_text(text, entries))
         return errors
 
+    @staticmethod
+    def validate_base_cost_pricing(
+        data: dict[str, Any], schema_name: str, offering: dict[str, Any] | None
+    ) -> list[str]:
+        """The rules of the ``base_cost`` list price (``unitysvc_core.base_cost``), for one data file.
+
+        An offering's ``payout_price`` may not be one; a listing's ``list_price`` may carry it only
+        as the whole price or one channel's, on a container channel of ``offering`` (when given),
+        beside a payout that pays the author nothing. Backend ingest runs the same two functions.
+        """
+        if schema_name == "offering_v1":
+            return validate_base_cost_payout_price(data)
+        if schema_name == "listing_v1":
+            return validate_base_cost_list_price(data, offering)
+        return []
+
     def validate_external_app_listing(self, data: dict[str, Any], offering: dict[str, Any] | None) -> list[str]:
         """A listing whose offering declares no channel is an external app
         (unitysvc/unitysvc#2873): reached at its homepage, so it has nothing to
@@ -1199,6 +1216,7 @@ class DataValidator:
             errors.extend(validate_channel_parameters(data))
             # The Compose file each container channel runs (unitysvc/unitysvc-core#105).
             errors.extend(self.check_instance_specs(data, service_dir)[0])
+            errors.extend(self.validate_base_cost_pricing(data, schema_name, None))
 
         # Validate service_options keys and value types (listing_v1 only)
         service_options_errors = self.validate_service_options_keys(data, schema_name)
@@ -1230,6 +1248,7 @@ class DataValidator:
             errors.extend(validate_listing_interfaces_are_canonical(uai))
             errors.extend(self.validate_external_app_listing(data, offering))
             errors.extend(self.validate_container_probes(data, offering, service_dir))
+            errors.extend(self.validate_base_cost_pricing(data, schema_name, offering))
             if offering is not None:
                 errors.extend(
                     validate_required_parameter_usage(

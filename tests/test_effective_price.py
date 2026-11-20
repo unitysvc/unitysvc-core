@@ -33,7 +33,7 @@ NO_AMOUNT = {"type": "constant", "price": "0", "description": "Bring your own ke
 
 def test_every_pricing_type_defines_its_own_effective_price() -> None:
     members = typing.get_args(typing.get_args(Pricing)[0])
-    assert len(members) == 18
+    assert len(members) == 19
     for cls in members:
         assert "effective_price" in vars(cls), f"{cls.__name__} does not define effective_price()"
     assert BasePriceData().effective_price() is None
