@@ -53,6 +53,7 @@ from .offering_data import ServiceOfferingData
 from .offering_v1 import OfferingV1
 from .pricing import (
     AddPriceData,
+    BaseCostPriceData,
     BasePriceData,
     ChannelPriceData,
     ConstantPriceData,
@@ -211,6 +212,7 @@ __all__ = [
     "ImagePriceData",
     "StepPriceData",
     "RevenueSharePriceData",
+    "BaseCostPriceData",
     "ConstantPriceData",
     # Pricing — composite types
     "AddPriceData",

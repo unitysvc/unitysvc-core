@@ -66,6 +66,65 @@
       "title": "AddPriceData",
       "type": "object"
     },
+    "BaseCostPriceData": {
+      "additionalProperties": false,
+      "description": "``list_price`` of a container service that is offered at the platform's cost.\n\nFor authors who do not or cannot take payment (open-source authors giving\nvisitors a way to preview or run their software), the customer pays what\nthe platform pays for the instance, plus an optional fixed markup, and the\nauthor earns nothing. The platform derives the figure from the compute size\nthe channel names, so it follows the platform's size table and the author\nnever copies a number that goes stale.\n\n``markup`` is a fixed amount added to the base cost of a month of continuous\nruntime (the unit of the platform's size table), charged pro rata by the\ninstance minute. The default ``\"0\"`` is \"at cost\". The platform keeps the\nmarkup, so the matching ``payout_price`` is a zero share (see\n``validate_base_cost_pricing`` in the validator).\n\n``price``, the summary figure used to sort and compare listings, is not an\ninput: the platform computes it and replaces whatever is written.\n\nOnly a container channel has a base cost, so this type is valid only in a\nlisting's ``list_price`` (alone for a container-only offering, or as the\nvalue of a container channel in a channel-keyed price), never in\n``payout_price``.\n\nExample:\n    {\"type\": \"base_cost\"}\n    {\"type\": \"base_cost\", \"markup\": \"1.00\"}",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable description of the pricing model",
+          "title": "Description"
+        },
+        "markup": {
+          "default": "0",
+          "description": "Fixed amount added to the platform's base cost of a month of continuous runtime, never negative. '0' prices the service at cost.",
+          "title": "Markup",
+          "type": "string"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Summary price for marketplace comparison and sorting. For simple pricing types this is the billing rate. For composite types (add, multiply, tiered, graduated) this is a seller-provided nominal value for marketplace display.",
+          "title": "Price"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URL to upstream provider's pricing page",
+          "title": "Reference"
+        },
+        "type": {
+          "const": "base_cost",
+          "default": "base_cost",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "BaseCostPriceData",
+      "type": "object"
+    },
     "ChannelParams": {
       "additionalProperties": false,
       "description": "The enrollment parameters a channel asks the customer for (unitysvc/unitysvc#2726).\n\nThe channel's templates read them as ``{{ params.NAME }}``.",
@@ -4500,6 +4559,7 @@
           "discriminator": {
             "mapping": {
               "add": "#/$defs/AddPriceData",
+              "base_cost": "#/$defs/BaseCostPriceData",
               "channel": "#/$defs/ChannelPriceData",
               "constant": "#/$defs/ConstantPriceData",
               "expr": "#/$defs/ExprPriceData",
@@ -4559,6 +4619,9 @@
             },
             {
               "$ref": "#/$defs/ConstantPriceData"
+            },
+            {
+              "$ref": "#/$defs/BaseCostPriceData"
             },
             {
               "$ref": "#/$defs/AddPriceData"

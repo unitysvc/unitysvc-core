@@ -19,7 +19,7 @@ from collections.abc import Callable, Iterable
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 
 
@@ -979,6 +979,73 @@ class ConstantPriceData(BasePriceData):
         return Decimal(self.price)
 
 
+class BaseCostPriceData(BasePriceData):
+    """
+    ``list_price`` of a container service that is offered at the platform's cost.
+
+    For authors who do not or cannot take payment (open-source authors giving
+    visitors a way to preview or run their software), the customer pays what
+    the platform pays for the instance, plus an optional fixed markup, and the
+    author earns nothing. The platform derives the figure from the compute size
+    the channel names, so it follows the platform's size table and the author
+    never copies a number that goes stale.
+
+    ``markup`` is a fixed amount added to the base cost of a month of continuous
+    runtime (the unit of the platform's size table), charged pro rata by the
+    instance minute. The default ``"0"`` is "at cost". The platform keeps the
+    markup, so the matching ``payout_price`` is a zero share (see
+    ``validate_base_cost_pricing`` in the validator).
+
+    ``price``, the summary figure used to sort and compare listings, is not an
+    input: the platform computes it and replaces whatever is written.
+
+    Only a container channel has a base cost, so this type is valid only in a
+    listing's ``list_price`` (alone for a container-only offering, or as the
+    value of a container channel in a channel-keyed price), never in
+    ``payout_price``.
+
+    Example:
+        {"type": "base_cost"}
+        {"type": "base_cost", "markup": "1.00"}
+    """
+
+    type: Literal["base_cost"] = "base_cost"
+
+    markup: AmountStr = Field(
+        default="0",
+        description="Fixed amount added to the platform's base cost of a month of continuous "
+        "runtime, never negative. '0' prices the service at cost.",
+    )
+
+    @field_validator("markup")
+    @classmethod
+    def _markup_not_negative(cls, v: str) -> str:
+        if Decimal(v) < 0:
+            raise ValueError(f"markup must not be negative, got '{v}'")
+        return v
+
+    def effective_price(self) -> EffectivePrice | None:
+        """The figure depends on the platform's size table, which core does not have: unknown."""
+        return None
+
+    def calculate_cost(
+        self,
+        usage: UsageData,
+        customer_charge: Decimal | None = None,
+        request_count: int | None = None,
+        channel: str | None = None,
+    ) -> Decimal:
+        """Not computed here: the platform resolves the base cost from the channel's size.
+
+        Raises:
+            ValueError: always; a consumer that needs the figure must resolve ``base_cost`` first.
+        """
+        raise ValueError(
+            "base_cost pricing is resolved by the platform from the channel's compute size; "
+            "resolve it to a time price before calculating a cost"
+        )
+
+
 def _extract_nominal_price(price_data: dict[str, Any]) -> str | None:
     """Extract the nominal ``price`` from a nested pricing dict.
 
@@ -1864,6 +1931,7 @@ Pricing = Annotated[
     | StepPriceData
     | RevenueSharePriceData
     | ConstantPriceData
+    | BaseCostPriceData
     | AddPriceData
     | MultiplyPriceData
     | MaxPriceData
@@ -1905,6 +1973,7 @@ def validate_pricing(
     | StepPriceData
     | RevenueSharePriceData
     | ConstantPriceData
+    | BaseCostPriceData
     | AddPriceData
     | MultiplyPriceData
     | MaxPriceData
