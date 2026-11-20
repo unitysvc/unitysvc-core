@@ -5,12 +5,19 @@ from __future__ import annotations
 import copy
 import json
 import shutil
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
+from unitysvc_core.base_cost import (
+    base_cost_positions,
+    is_zero_payout,
+    validate_base_cost_list_price,
+    validate_base_cost_payout_price,
+)
 from unitysvc_core.models.pricing import BaseCostPriceData, UsageData, validate_pricing
 from unitysvc_core.validator import DataValidator
 
@@ -47,6 +54,15 @@ class TestPrice:
         assert price.effective_price() is None
         with pytest.raises(ValueError, match="resolved by the platform"):
             price.calculate_cost(UsageData(one_minute=60))
+
+    def test_the_platforms_summary_price_is_the_effective_price(self) -> None:
+        # Per month, as the platform writes it; compared per hour over core's 30-day month.
+        figure = validate_pricing({"type": "base_cost", "price": "7.20"}).effective_price()
+        assert figure is not None
+        assert (figure.amount, figure.unit) == (Decimal("0.01"), "one_hour")
+        # Still not a figure core computes: the platform resolves the cost.
+        with pytest.raises(ValueError, match="resolved by the platform"):
+            validate_pricing({"type": "base_cost", "price": "7.20"}).calculate_cost(UsageData(one_minute=60))
 
     def test_a_channel_price_may_be_base_cost(self) -> None:
         price = validate_pricing(
@@ -172,6 +188,63 @@ class TestValidator:
         listing, offering = _service()
         offering["payout_price"] = {"type": "base_cost"}
         assert "list_price type" in _base_cost_text(_errors(listing, offering, tmp_path))
+
+
+class TestRules:
+    """The rule functions backend ingest shares with the validator (``unitysvc_core.base_cost``)."""
+
+    def test_where_the_type_sits(self) -> None:
+        assert base_cost_positions({"type": "base_cost"}) == [()]
+        channel = {
+            "type": "channel",
+            "default": "a",
+            "channels": {"a": {"type": "base_cost"}, "b": {"type": "constant", "price": "1"}},
+        }
+        assert base_cost_positions(channel) == [("channels", "a")]
+        composite = {"type": "add", "prices": [{"type": "constant", "price": "1"}, {"type": "base_cost"}]}
+        assert base_cost_positions(composite) == [("prices", "1")]
+        assert base_cost_positions({"type": "one_hour", "price": "1"}) == []
+        assert base_cost_positions(None) == []
+
+    def test_what_pays_the_author_nothing(self) -> None:
+        assert is_zero_payout(ZERO_SHARE)
+        assert is_zero_payout({"type": "constant", "price": "0.00"})
+        assert not is_zero_payout({"type": "revenue_share", "percentage": "80"})
+        assert not is_zero_payout({"type": "one_hour", "price": "0"})
+        assert not is_zero_payout(None)
+        keyed = {
+            "type": "channel",
+            "default": "a",
+            "channels": {"a": ZERO_SHARE, "b": {"type": "constant", "price": "1"}},
+        }
+        assert is_zero_payout(keyed, "a")
+        assert is_zero_payout(keyed, "ghost")  # falls back to the default
+        assert not is_zero_payout(keyed, "b")
+
+    def test_a_listing_alone_is_checked_for_shape_only(self) -> None:
+        assert validate_base_cost_list_price({"list_price": {"type": "base_cost"}}, None) == []
+        composite = {
+            "list_price": {"type": "multiply", "prices": [{"type": "base_cost"}, {"type": "constant", "price": "2"}]}
+        }
+        assert any("composite" in e for e in validate_base_cost_list_price(composite, None))
+        assert validate_base_cost_list_price({"list_price": {"type": "one_hour", "price": "1"}}, None) == []
+
+    def test_with_the_offering_the_channel_and_the_payout_are_checked(self) -> None:
+        listing = {"list_price": {"type": "base_cost"}}
+        container = {"upstream_access_config": {"base": {"access_method": "container", "resources": "nano"}}}
+        assert validate_base_cost_list_price(listing, {**container, "payout_price": ZERO_SHARE}) == []
+        assert validate_base_cost_list_price(listing, container) == []  # no payout at all
+        errors = validate_base_cost_list_price(
+            listing, {**container, "payout_price": {"type": "revenue_share", "percentage": "10"}}
+        )
+        assert any("takes no payment" in e for e in errors)
+        proxy = {"upstream_access_config": {"http": {"access_method": "http", "base_url": "https://x"}}}
+        assert any("container service" in e for e in validate_base_cost_list_price(listing, proxy))
+
+    def test_a_payout_price_is_never_base_cost(self) -> None:
+        assert "list_price type" in validate_base_cost_payout_price({"payout_price": {"type": "base_cost"}})[0]
+        assert validate_base_cost_payout_price({"payout_price": ZERO_SHARE}) == []
+        assert validate_base_cost_payout_price({}) == []
 
 
 def test_the_bundled_schemas_know_the_type() -> None:

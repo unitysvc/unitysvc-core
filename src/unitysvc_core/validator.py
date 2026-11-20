@@ -4,7 +4,6 @@ import hashlib
 import json
 import re
 import warnings
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -12,6 +11,7 @@ from urllib.parse import urlparse
 from jinja2 import Environment, StrictUndefined, TemplateSyntaxError, UndefinedError
 from jsonschema.validators import Draft7Validator
 
+from .base_cost import validate_base_cost_list_price, validate_base_cost_payout_price
 from .grants import ExportsResolver
 from .instance_spec import (
     INSTANCE_SPEC_TITLE,
@@ -809,100 +809,20 @@ class DataValidator:
         return errors
 
     @staticmethod
-    def _base_cost_positions(price: Any, path: tuple[str, ...] = ()) -> list[tuple[str, ...]]:
-        """Where ``base_cost`` prices sit in a pricing object: ``()`` for the whole price,
-        ``("channels", name)`` for a channel's price, deeper paths for anything else."""
-        if not isinstance(price, dict):
-            return []
-        if price.get("type") == "base_cost":
-            return [path]
-        found: list[tuple[str, ...]] = []
-        for key, value in price.items():
-            if isinstance(value, dict):
-                if key == "channels":
-                    for name, child in value.items():
-                        found.extend(DataValidator._base_cost_positions(child, (*path, "channels", str(name))))
-                else:
-                    found.extend(DataValidator._base_cost_positions(value, (*path, key)))
-            elif isinstance(value, list):
-                for i, item in enumerate(value):
-                    found.extend(DataValidator._base_cost_positions(item, (*path, key, str(i))))
-        return found
-
-    @staticmethod
-    def _is_zero_payout(payout: Any, channel: str | None = None) -> bool:
-        """Whether a payout price pays the seller nothing (a zero share or a zero constant)."""
-        if not isinstance(payout, dict):
-            return False
-        kind = payout.get("type")
-        try:
-            if kind == "revenue_share":
-                return Decimal(str(payout.get("percentage"))) == 0
-            if kind == "constant":
-                return Decimal(str(payout.get("price"))) == 0
-        except InvalidOperation:
-            return False
-        if kind == "channel" and isinstance(payout.get("channels"), dict):
-            channels = payout["channels"]
-            child = channels.get(channel) if channel is not None else None
-            child = child if child is not None else channels.get(payout.get("default"))
-            return DataValidator._is_zero_payout(child)
-        return False
-
     def validate_base_cost_pricing(
-        self, data: dict[str, Any], schema_name: str, offering: dict[str, Any] | None
+        data: dict[str, Any], schema_name: str, offering: dict[str, Any] | None
     ) -> list[str]:
-        """The rules of the ``base_cost`` list price: a container service offered at the platform's cost.
+        """The rules of the ``base_cost`` list price (``unitysvc_core.base_cost``), for one data file.
 
-        * ``base_cost`` is a ``list_price`` type: never a ``payout_price``, and only as the whole
-          list price or as the price of one channel in a channel-keyed price.
-        * It needs a container channel: the whole list price needs a container-only offering, and a
-          channel's price must be a ``container`` channel of the offering.
-        * The author takes no payment: ``payout_price`` is a zero revenue share (or a zero constant),
-          so the platform's markup, if any, stays with the platform.
+        An offering's ``payout_price`` may not be one; a listing's ``list_price`` may carry it only
+        as the whole price or one channel's, on a container channel of ``offering`` (when given),
+        beside a payout that pays the author nothing. Backend ingest runs the same two functions.
         """
-        errors: list[str] = []
         if schema_name == "offering_v1":
-            if self._base_cost_positions(data.get("payout_price")):
-                errors.append("payout_price: base_cost is a list_price type; a payout is a revenue_share or a price")
-            return errors
-        if schema_name != "listing_v1":
-            return errors
-
-        positions = self._base_cost_positions(data.get("list_price"))
-        if not positions:
-            return errors
-        channel_names: list[str | None] = []
-        for position in positions:
-            if position == ():
-                channel_names.append(None)
-                if offering is not None and not self._is_container_only(offering):
-                    errors.append(
-                        "list_price: base_cost needs a container service (every channel of the offering "
-                        "must be a container channel); price other channels with a channel-keyed list_price"
-                    )
-            elif len(position) == 2 and position[0] == "channels":
-                channel_names.append(position[1])
-                if offering is not None and position[1] not in self._container_channels(offering):
-                    errors.append(
-                        f"list_price.channels.{position[1]}: base_cost applies only to a container channel "
-                        f"of the offering ({sorted(self._container_channels(offering)) or 'it has none'})"
-                    )
-            else:
-                errors.append(
-                    f"list_price.{'.'.join(position)}: base_cost must be the whole list_price or the price "
-                    "of one channel, not a part of a composite price"
-                )
-        if isinstance(offering, dict) and offering.get("payout_price") is not None:
-            for name in channel_names:
-                if not self._is_zero_payout(offering["payout_price"], name):
-                    where = "" if name is None else f" for channel {name!r}"
-                    errors.append(
-                        f"A base_cost list_price is for an author who takes no payment: payout_price{where} "
-                        'must be {"type": "revenue_share", "percentage": "0"} (or a zero constant)'
-                    )
-                    break
-        return errors
+            return validate_base_cost_payout_price(data)
+        if schema_name == "listing_v1":
+            return validate_base_cost_list_price(data, offering)
+        return []
 
     def validate_external_app_listing(self, data: dict[str, Any], offering: dict[str, Any] | None) -> list[str]:
         """A listing whose offering declares no channel is an external app

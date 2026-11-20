@@ -993,11 +993,15 @@ class BaseCostPriceData(BasePriceData):
     ``markup`` is a fixed amount added to the base cost of a month of continuous
     runtime (the unit of the platform's size table), charged pro rata by the
     instance minute. The default ``"0"`` is "at cost". The platform keeps the
-    markup, so the matching ``payout_price`` is a zero share (see
-    ``validate_base_cost_pricing`` in the validator).
+    markup, so the matching ``payout_price`` is a zero share (the rules are in
+    ``unitysvc_core.base_cost``, shared with backend ingest).
 
     ``price``, the summary figure used to sort and compare listings, is not an
-    input: the platform computes it and replaces whatever is written.
+    input: the platform computes it (the resolved price of a month of
+    continuous runtime, the dearest channel's when the whole list price is
+    ``base_cost``) and replaces whatever is written. ``effective_price()`` reads
+    it when it is there, so a stored listing sorts and displays like a monthly
+    price; without it the figure is unknown.
 
     Only a container channel has a base cost, so this type is valid only in a
     listing's ``list_price`` (alone for a container-only offering, or as the
@@ -1025,8 +1029,13 @@ class BaseCostPriceData(BasePriceData):
         return v
 
     def effective_price(self) -> EffectivePrice | None:
-        """The figure depends on the platform's size table, which core does not have: unknown."""
-        return None
+        """The platform's summary ``price``, per month, when it has filled it in; else unknown.
+
+        The figure depends on the platform's size table, which core does not have.
+        """
+        if self.price is None:
+            return None
+        return _per_normalized_unit("one_month", Decimal(self.price))
 
     def calculate_cost(
         self,
