@@ -157,10 +157,19 @@ ROUTABLE_GROUP_TYPES = frozenset({GroupTypeEnum.open, GroupTypeEnum.keyed})
 
 
 class SellerTypeEnum(StrEnum):
+    """What kind of entity a seller is.
+
+    The first four describe a business that sells to customers. ``developer``
+    is different in kind: a seller that only publishes software and does not
+    intend to profit from customers. The platform fast-tracks its application
+    and never pays it out (no Stripe Connect, no payout settings or requests).
+    """
+
     individual = "individual"
     organization = "organization"
     partnership = "partnership"
     corporation = "corporation"
+    developer = "developer"
 
 
 class ListingStatusEnum(StrEnum):
