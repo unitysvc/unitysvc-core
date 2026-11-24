@@ -404,12 +404,11 @@ _PARAM_REFERENCE_RE = re.compile(r"\{\{\s*params\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}"
 
 
 class ChannelPersist(BaseModel):
-    """What a channel persists of one named volume of the instance spec (unitysvc/unitysvc#3098).
+    """How the files of a volume outlive the instance (unitysvc/unitysvc#3098).
 
     The file only says a directory is a volume (``volumes: [home:/home/app]``); whether its files outlive the
     instance is the channel's offer, so one file can back a channel that persists (production) and one that
-    does not (a demo). The key of ``ContainerChannel.persist`` is the volume's name, which the file must
-    declare and some service must mount.
+    does not (a demo). They are copied to and from the customer's storage.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -469,6 +468,26 @@ class ChannelPersist(BaseModel):
         }
 
 
+class ChannelVolume(BaseModel):
+    """How the channel backs one named volume of the instance spec.
+
+    A volume the channel does not name, or names without a kind, is scratch (an ``emptyDir``: it survives a
+    container restart, not a replacement of the instance). ``persist`` is the one kind so far; another (a block
+    volume, say) would be a sibling key, and a volume has at most one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    persist: ChannelPersist | None = Field(
+        default=None,
+        description=(
+            "Copy the volume's files to and from the customer's storage, so they outlive the instance. Needs "
+            "the customer's ``service:storage`` (or ``service:home``) grant, requested in "
+            "``customer_access_requests``, and a service of the spec that mounts the volume."
+        ),
+    )
+
+
 class ContainerChannel(_ChannelBase):
     """A tier of a service that runs as instances on Kubernetes (unitysvc/unitysvc-core#105).
 
@@ -504,13 +523,12 @@ class ContainerChannel(_ChannelBase):
             "starts (unitysvc/unitysvc#3023). Overrides the same name in the spec."
         ),
     )
-    persist: dict[str, ChannelPersist] | None = Field(
+    volumes: dict[str, ChannelVolume] | None = Field(
         default=None,
         description=(
-            "The volumes of the instance spec whose files outlive the instance, ``{volume: {source, mode, "
-            "exclude, uid, gid}}`` (unitysvc/unitysvc#3098). Each key must be a top-level volume of the spec that "
-            "a service mounts; a volume not named here is scratch. Needs the customer's ``service:storage`` "
-            "(or ``service:home``) grant, requested in ``customer_access_requests``."
+            "How each named volume of the instance spec is backed, ``{volume: {persist: {...}}}`` "
+            "(unitysvc/unitysvc#3098). Each key must be a top-level volume of the spec. A volume not named "
+            "here is scratch, so one file can back a channel that persists a volume and one that does not."
         ),
     )
 
@@ -534,9 +552,9 @@ class ContainerChannel(_ChannelBase):
                     raise ValueError(f"{service}.{key}: the only template allowed is {{{{ params.NAME }}}}")
         return value
 
-    @field_validator("persist")
+    @field_validator("volumes")
     @classmethod
-    def _check_persist(cls, value: dict[str, ChannelPersist] | None) -> dict[str, ChannelPersist] | None:
+    def _check_volumes(cls, value: dict[str, ChannelVolume] | None) -> dict[str, ChannelVolume] | None:
         for volume in value or {}:
             if not _VOLUME_NAME_RE.fullmatch(volume):
                 raise ValueError(f"{volume!r} is not a volume name")

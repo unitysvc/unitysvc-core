@@ -166,7 +166,7 @@
     },
     "ChannelPersist": {
       "additionalProperties": false,
-      "description": "What a channel persists of one named volume of the instance spec (unitysvc/unitysvc#3098).\n\nThe file only says a directory is a volume (``volumes: [home:/home/app]``); whether its files outlive the\ninstance is the channel's offer, so one file can back a channel that persists (production) and one that\ndoes not (a demo). The key of ``ContainerChannel.persist`` is the volume's name, which the file must\ndeclare and some service must mount.",
+      "description": "How the files of a volume outlive the instance (unitysvc/unitysvc#3098).\n\nThe file only says a directory is a volume (``volumes: [home:/home/app]``); whether its files outlive the\ninstance is the channel's offer, so one file can back a channel that persists (production) and one that\ndoes not (a demo). They are copied to and from the customer's storage.",
       "properties": {
         "exclude": {
           "anyOf": [
@@ -308,6 +308,26 @@
         "channels"
       ],
       "title": "ChannelPriceData",
+      "type": "object"
+    },
+    "ChannelVolume": {
+      "additionalProperties": false,
+      "description": "How the channel backs one named volume of the instance spec.\n\nA volume the channel does not name, or names without a kind, is scratch (an ``emptyDir``: it survives a\ncontainer restart, not a replacement of the instance). ``persist`` is the one kind so far; another (a block\nvolume, say) would be a sibling key, and a volume has at most one.",
+      "properties": {
+        "persist": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ChannelPersist"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Copy the volume's files to and from the customer's storage, so they outlive the instance. Needs the customer's ``service:storage`` (or ``service:home``) grant, requested in ``customer_access_requests``, and a service of the spec that mounts the volume."
+        }
+      },
+      "title": "ChannelVolume",
       "type": "object"
     },
     "CharacterPriceData": {
@@ -678,22 +698,6 @@
           "description": "Body format sent upstream, e.g. msg",
           "title": "Payload Format"
         },
-        "persist": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "$ref": "#/$defs/ChannelPersist"
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "The volumes of the instance spec whose files outlive the instance, ``{volume: {source, mode, exclude, uid, gid}}`` (unitysvc/unitysvc#3098). Each key must be a top-level volume of the spec that a service mounts; a volume not named here is scratch. Needs the customer's ``service:storage`` (or ``service:home``) grant, requested in ``customer_access_requests``.",
-          "title": "Persist"
-        },
         "rate_limit_refs": {
           "anyOf": [
             {
@@ -958,6 +962,22 @@
           "default": null,
           "description": "The request format the upstream speaks",
           "title": "Upstream Format"
+        },
+        "volumes": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/ChannelVolume"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How each named volume of the instance spec is backed, ``{volume: {persist: {...}}}`` (unitysvc/unitysvc#3098). Each key must be a top-level volume of the spec. A volume not named here is scratch, so one file can back a channel that persists a volume and one that does not.",
+          "title": "Volumes"
         },
         "weight": {
           "anyOf": [
