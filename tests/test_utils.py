@@ -315,7 +315,13 @@ def test_expand_presets_sibling_meta_is_shallow_merged() -> None:
 def test_expand_presets_sibling_form_equivalent_to_nested() -> None:
     sibling = expand_presets({"$doc_preset": "s3_connectivity", "meta": {"sleep_after_test": 5}})
     nested = expand_presets({"$doc_preset": {"name": "s3_connectivity", "meta": {"sleep_after_test": 5}}})
-    assert sibling == nested
+
+    # unitysvc-data 0.2.x stamps `meta["preset"]` with what the preset was called with, and the two forms call it
+    # with different overrides (the nested form passes the meta in); the records are otherwise the same.
+    def without_provenance(record: dict) -> dict:
+        return {**record, "meta": {k: v for k, v in record["meta"].items() if k != "preset"}}
+
+    assert without_provenance(sibling) == without_provenance(nested)
 
 
 def test_expand_presets_sibling_values_are_expanded() -> None:
