@@ -47,7 +47,7 @@ from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
 
 from .container import DNS_LABEL_RE, ContainerEntry, Sizes, check_sizes
-from .manifest import MAX_EXCLUDES, check_exclude, parse_persist_source
+from .manifest import MAX_EXCLUDES, MAX_OWNER, check_exclude, parse_persist_source
 from .validators import validate_channel_name
 
 # A string field that is a value or a template rendering to one.
@@ -441,9 +441,9 @@ class PersistVolume(BaseModel):
         default=None, description="Globs, relative to the directory, that are neither restored nor copied back"
     )
     uid: int | None = Field(
-        default=None, ge=0, strict=True, description="Owner of the restored files; with gid, or neither"
+        default=None, ge=0, le=MAX_OWNER, strict=True, description="Owner of the restored files; with gid, or neither"
     )
-    gid: int | None = Field(default=None, ge=0, strict=True)
+    gid: int | None = Field(default=None, ge=0, le=MAX_OWNER, strict=True)
 
     @field_validator("source")
     @classmethod

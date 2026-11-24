@@ -45,6 +45,7 @@ from .models.manifest import (
     ManifestScratch,
     ManifestService,
     NormalizedManifest,
+    folders_overlap,
 )
 
 DEFAULT_FORMAT = "compose"
@@ -429,20 +430,22 @@ class _Checker:
 
         Both stores are the customer's, so the channel's ``customer_access_requests`` must hold a required
         ``service:storage`` (the enrollment's own folder) or ``service:home`` (with a ``path`` covering the
-        folder) request with ``read``, and ``write`` too unless the directory is ``ro``. Without it the
-        customer is never asked, and every start would be refused for lack of the grant.
+        folder) request with ``read`` (the restore lists and gets), and ``write`` too unless the directory is
+        ``ro``. Without it the customer is never asked, and every start would be refused for lack of the grant.
         """
         if self.channel is None:
             return
         service = "service:home" if decl["store"] == "home" else "service:storage"
-        permission = "read" if decl.get("mode") == "ro" else "write"
+        # Restoring reads the customer's files (home's read and write are separate permissions), so every persisted
+        # volume needs `read`; copying back writes, so `rw` needs `write` too.
+        needed = ["read"] if decl.get("mode") == "ro" else ["read", "write"]
         requests = self.channel.customer_access_requests or []
         for entry in requests:
             if (
                 not isinstance(entry, dict)
                 or entry.get("object") != service
                 or entry.get("required") is False
-                or permission not in (entry.get("permissions") or [])
+                or any(p not in (entry.get("permissions") or []) for p in needed)
             ):
                 continue
             if decl["store"] != "home":
@@ -458,7 +461,7 @@ class _Checker:
             "persist_not_requested",
             where,
             f"the volume persists to {decl['store']}:{decl['folder']}, so the channel's `customer_access_requests` "
-            f"must ask the customer for a required {service} with `{permission}`{covered}",
+            f"must ask the customer for a required {service} with {' and '.join(f'`{p}`' for p in needed)}{covered}",
         )
 
     def _volumes_overlay(self, declared: set[str]) -> None:
@@ -495,15 +498,22 @@ class _Checker:
                 continue
             if decl is None:
                 continue
-            if other := places.setdefault((decl["store"], decl["folder"]), str(volume)):
-                if other != volume:
-                    self.error(
-                        "duplicate_mount",
-                        at,
-                        f"volumes {other!r} and {volume!r} persist to the same folder "
-                        f"({decl['store']}: {decl['folder']})",
-                    )
-                    continue
+            if clash := next(
+                (
+                    (name, folder)
+                    for (store, folder), name in places.items()
+                    if store == decl["store"] and folders_overlap(folder, decl["folder"])
+                ),
+                None,
+            ):
+                self.error(
+                    "duplicate_mount",
+                    at,
+                    f"volumes {clash[0]!r} and {volume!r} persist to folders of {decl['store']} that overlap "
+                    f"({clash[1]!r}, {decl['folder']!r}): their files would be the same objects",
+                )
+                continue
+            places[(decl["store"], decl["folder"])] = str(volume)
             self.persisted[str(volume)] = decl
 
     # -- a service

@@ -1495,6 +1495,12 @@ def _persisted_errors(declaration: Any, requests: list[dict[str, Any]] | None) -
     return [e.code for e in validate_instance_spec(_persisting(), channel=channel).errors]
 
 
+def _persisted_all(text: str, volumes: Any) -> list[Any]:
+    """Every persisted directory of every service."""
+    manifest = compile_instance_spec(text, _res(), volumes=volumes).manifest
+    return [p for service in manifest.services for p in service.persist or []]
+
+
 def _compile_errors(text: str, volumes: Any) -> list[Any]:
     with pytest.raises(InstanceSpecError) as raised:
         compile_instance_spec(text, _res(), volumes=volumes)
@@ -1510,6 +1516,16 @@ class TestPersistedVolumesAreRequested:
         read = {**STORAGE_REQUEST, "permissions": ["read"]}
         assert _persisted_errors({}, [read]) == ["persist_not_requested"]
         assert _persisted_errors({"mode": "ro"}, [read]) == []
+
+    def test_read_is_always_needed_because_the_restore_reads(self) -> None:
+        write_only = {**STORAGE_REQUEST, "permissions": ["write"]}
+        assert _persisted_errors({}, [write_only]) == ["persist_not_requested"]
+        assert _persisted_errors({"mode": "ro"}, [write_only]) == ["persist_not_requested"]
+        home_write = {**HOME_REQUEST, "permissions": ["write"]}
+        source = {"source": "{{ home.path }}/projects/a"}
+        assert _persisted_errors(source, [home_write]) == ["persist_not_requested"]
+        assert _persisted_errors({**source, "mode": "ro"}, [home_write]) == ["persist_not_requested"]
+        assert _persisted_errors(source, [HOME_REQUEST]) == []
 
     def test_an_optional_request_does_not_count(self) -> None:
         assert _persisted_errors({}, [{**STORAGE_REQUEST, "required": False}]) == ["persist_not_requested"]
@@ -1689,6 +1705,65 @@ class TestPersistedVolumes:
         assert [e.code for e in report.errors] == ["persist_in_file"]
         assert "volumes.home" in report.errors[0].message and "type: persist" in report.errors[0].message
 
+    # -- folders, globs and owners the agent would refuse or mix up
+
+    def test_a_folder_inside_another_would_share_objects_and_is_refused(self) -> None:
+        text = yaml.safe_dump(
+            {
+                "services": {"web": {"image": f"example/app{DIGEST}", "volumes": ["a:/a", "b:/b"]}},
+                "volumes": {"a": {}, "b": {}},
+            }
+        )
+
+        def storage(folder: str) -> dict[str, Any]:
+            return _vol({"source": "{{ storage.path }}/" + folder})
+
+        for outer, inner in (("shared", "shared/db"), ("shared/db", "shared"), ("shared", "shared")):
+            errors = _compile_errors(text, {"a": storage(outer), "b": storage(inner)})
+            assert [e.code for e in errors] == ["duplicate_mount"], (outer, inner)
+        # siblings with a common prefix of characters, and the same folder in another store, are different places
+        ok = {"a": storage("shared"), "b": storage("shared-old")}
+        assert len(_persisted_all(text, ok)) == 2
+        assert len(_persisted_all(text, {"a": storage("shared"), "b": _vol({"source": "{{ home.path }}/shared"})})) == 2
+
+    def test_the_manifest_refuses_overlapping_folders_too(self) -> None:
+        def service(name: str, *folders: str) -> dict[str, Any]:
+            persist = [{"path": f"/d{i}", "store": "storage", "folder": f} for i, f in enumerate(folders)]
+            return {"name": name, "image": "i", "persist": persist}
+
+        NormalizedManifest.model_validate({"services": [service("a", "x", "y")]})
+        for services in (
+            [service("a", "shared", "shared/db")],
+            [service("a", "shared"), service("b", "shared/db")],  # across services
+            [service("a", "shared"), service("b", "shared")],
+        ):
+            with pytest.raises(ValidationError, match="overlap"):
+                NormalizedManifest.model_validate({"services": services})
+
+    @pytest.mark.parametrize("pattern", ["[]", "[^]", "[a", "[a-]", "[-a]", "a\\", "[\\", "x/[", "[]a]"])
+    def test_a_glob_the_agent_would_refuse_is_refused(self, pattern: str) -> None:
+        with pytest.raises(ValidationError):
+            ContainerChannel.model_validate(_channel(volumes={"home": _vol({"exclude": [pattern]})}))
+        assert _compile_errors(_persisting(), {"home": _vol({"exclude": [pattern]})})
+
+    @pytest.mark.parametrize("pattern", ["*.tmp", "cache/**", "[a-z]*", "[^0-9]x", "\\*", "**/*.log", "[a\\]]"])
+    def test_a_valid_glob_is_accepted(self, pattern: str) -> None:
+        assert _persisted(_persisting(), {"home": _vol({"exclude": [pattern]})})[0]["exclude"] == [pattern]
+
+    def test_the_owner_fits_the_agents_int64(self) -> None:
+        top = 2**63 - 1
+        assert _persisted(_persisting(), {"home": _vol({"uid": top, "gid": top})})[0]["uid"] == top
+        too_big = {"uid": 2**63, "gid": 0}
+        with pytest.raises(ValidationError):
+            ContainerChannel.model_validate(_channel(volumes={"home": _vol(too_big)}))
+        assert _compile_errors(_persisting(), {"home": _vol({"uid": 0, "gid": 2**63})})
+        entry = {"path": "/d", "store": "storage", "folder": "x"}
+        for owner in ({"uid": 2**63, "gid": 0}, {"uid": 0, "gid": 2**63}):
+            with pytest.raises(ValidationError):
+                NormalizedManifest.model_validate(
+                    {"services": [{"name": "a", "image": "i", "persist": [{**entry, **owner}]}]}
+                )
+
     # -- mounts
 
     def test_a_persistent_volume_cannot_be_mounted_twice(self) -> None:
@@ -1708,7 +1783,7 @@ class TestPersistedVolumes:
         )
         same = {"source": "{{ storage.path }}/same"}
         errors = _compile_errors(text, {"a": _vol(same), "b": _vol(same)})
-        assert [e.code for e in errors] == ["duplicate_mount"] and "same folder" in errors[0].message
+        assert [e.code for e in errors] == ["duplicate_mount"] and "overlap" in errors[0].message
 
     def test_other_extensions_are_still_ignored_and_other_keys_still_rejected(self) -> None:
         ok = yaml.safe_dump({"services": {"web": {"image": f"example/app{DIGEST}"}}, "volumes": {"v": {"x-other": 1}}})
@@ -1780,7 +1855,7 @@ class TestPersistedVolumes:
                     ]
                 }
             )
-        with pytest.raises(ValidationError, match="share a folder"):
+        with pytest.raises(ValidationError, match="overlap"):
             NormalizedManifest.model_validate(
                 {
                     "services": [

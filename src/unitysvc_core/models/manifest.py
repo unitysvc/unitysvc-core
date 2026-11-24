@@ -106,6 +106,8 @@ class ManifestScratch(BaseModel):
 _FOLDER_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,254}$")
 MAX_FOLDER_LENGTH = 512
 MAX_EXCLUDES = 32
+# The agent decodes uid and gid as int64.
+MAX_OWNER = 2**63 - 1
 MAX_EXCLUDE_LENGTH = 256
 
 
@@ -138,15 +140,79 @@ def parse_persist_source(source: object) -> tuple[str, str]:
     return match.group(1), check_folder(match.group(2))
 
 
+def _glob_error(pattern: str) -> str | None:
+    """Why ``pattern`` is not valid for Go's ``path.Match`` (which the agent validates every exclude with), or None.
+
+    The grammar: ``*`` and ``?`` match, ``\\c`` is the character ``c``, and ``[^]``-classes hold characters and
+    ``lo-hi`` ranges, each character or range at least one and the class closed; ``[]``, ``[^]``, ``[a-]``,
+    ``[a`` and a trailing backslash are malformed.
+    """
+    n = len(pattern)
+
+    def escaped(i: int) -> int | None:
+        """The index after one (possibly backslash-escaped) class character at ``i``, or None if it is malformed."""
+        if i >= n or pattern[i] in "-]":
+            return None
+        if pattern[i] == "\\":
+            i += 1
+            if i >= n:
+                return None
+        return i + 1 if i + 1 < n else None  # the class must still be closed
+
+    i = 0
+    while i < n:
+        c = pattern[i]
+        if c == "\\":
+            if i + 1 >= n:
+                return "it ends in a backslash"
+            i += 2
+        elif c == "[":
+            i += 1
+            if i < n and pattern[i] == "^":
+                i += 1
+            ranges = 0
+            while True:
+                if i < n and pattern[i] == "]" and ranges > 0:
+                    i += 1
+                    break
+                nxt = escaped(i)
+                if nxt is None:
+                    return "it has a malformed '[...]' class (empty, unclosed or a bad range)"
+                i = nxt
+                if i < n and pattern[i] == "-":
+                    nxt = escaped(i + 1)
+                    if nxt is None:
+                        return "it has a malformed '[...]' class (empty, unclosed or a bad range)"
+                    i = nxt
+                ranges += 1
+        else:
+            i += 1
+    return None
+
+
 def check_exclude(pattern: str) -> str:
     """An exclude glob, relative to the persisted directory: ``*``, ``?``, ``[...]`` and ``**`` across folders."""
     if not pattern or len(pattern) > MAX_EXCLUDE_LENGTH or pattern.startswith("/") or ".." in pattern:
         raise ValueError(
             f"exclude {pattern!r} must be a relative pattern of 1 to {MAX_EXCLUDE_LENGTH} characters, with no '..'"
         )
-    if pattern.count("[") != pattern.count("]"):
-        raise ValueError(f"exclude {pattern!r} has an unbalanced '['")
+    if problem := _glob_error(pattern):
+        raise ValueError(f"exclude {pattern!r} is not a valid pattern: {problem}")
     return pattern
+
+
+def folders_overlap(a: str, b: str) -> bool:
+    """Whether two folders of one store are the same, or one is inside the other: their files would share objects."""
+    return a == b or a.startswith(b + "/") or b.startswith(a + "/")
+
+
+def check_folders_disjoint(places: list[tuple[str, str]]) -> None:
+    """Refuse two ``(store, folder)`` places of which one is the other or inside it: ``shared`` and ``shared/db``
+    map ``/a/db/state`` and ``/b/state`` to the same object, and each overwrites the other."""
+    for index, (store, folder) in enumerate(places):
+        for other_store, other in places[index + 1 :]:
+            if store == other_store and folders_overlap(folder, other):
+                raise ValueError(f"persisted folders {folder!r} and {other!r} of {store!r} overlap")
 
 
 class ManifestPersist(BaseModel):
@@ -170,8 +236,10 @@ class ManifestPersist(BaseModel):
         default="rw", description="`rw`: restored and copied back; `ro`: restored only, never copied back"
     )
     exclude: list[str] | None = Field(default=None, description="Globs, relative to the directory, left out both ways")
-    uid: int | None = Field(default=None, ge=0, description="Owner of the restored files; with gid, or neither")
-    gid: int | None = Field(default=None, ge=0)
+    uid: int | None = Field(
+        default=None, ge=0, le=MAX_OWNER, description="Owner of the restored files; with gid, or neither"
+    )
+    gid: int | None = Field(default=None, ge=0, le=MAX_OWNER)
 
     @field_validator("path")
     @classmethod
@@ -256,9 +324,7 @@ class ManifestService(BaseModel):
         paths = [p.path for p in self.persist]
         if len(set(paths)) != len(paths) or set(paths) & {s.path for s in self.scratch or []}:
             raise ValueError("persist paths must be distinct, and not also scratch")
-        places = [(p.store, p.folder) for p in self.persist]
-        if len(set(places)) != len(places):
-            raise ValueError("two persisted paths cannot share a folder")
+        check_folders_disjoint([(p.store, p.folder) for p in self.persist])
         return self
 
     @model_validator(mode="after")
@@ -284,4 +350,5 @@ class NormalizedManifest(BaseModel):
         names = [s.name for s in value]
         if duplicates := sorted({n for n in names if names.count(n) > 1}):
             raise ValueError(f"service names must be unique: {', '.join(duplicates)}")
+        check_folders_disjoint([(p.store, p.folder) for s in value for p in s.persist or []])
         return value
