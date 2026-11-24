@@ -47,6 +47,7 @@ from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
 
 from .container import DNS_LABEL_RE, ContainerEntry, Sizes, check_sizes
+from .manifest import MAX_EXCLUDES, MAX_OWNER, check_exclude, parse_persist_source
 from .validators import validate_channel_name
 
 # A string field that is a value or a template rendering to one.
@@ -397,7 +398,106 @@ class McpChannel(_ChannelBase):
 
 
 _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# A Compose volume name.
+_VOLUME_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 _PARAM_REFERENCE_RE = re.compile(r"\{\{\s*params\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}")
+
+
+class ScratchVolume(BaseModel):
+    """A volume that is temporary space (the default): an ``emptyDir`` that survives a container restart, not a
+    replacement of the instance. A volume the channel does not name is this too."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["scratch"] = "scratch"
+
+
+class PersistVolume(BaseModel):
+    """A volume whose files outlive the instance (unitysvc/unitysvc#3098).
+
+    The file only says a directory is a volume (``volumes: [home:/home/app]``); whether its files outlive the
+    instance is the channel's offer, so one file can back a channel that persists (production) and one that
+    does not (a demo). They are copied to and from the customer's storage: restored before the service starts,
+    copied back while it runs and when it stops. Needs the customer's ``service:storage`` (or ``service:home``)
+    grant, requested in ``customer_access_requests``, and a service of the spec that mounts the volume.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["persist"]
+
+    source: str | None = Field(
+        default=None,
+        description=(
+            "Where the files live: ``{{ storage.path }}/<folder>`` (the instance's own folder in the "
+            "customer's storage; default: a folder named like the volume) or ``{{ home.path }}/<folder>`` "
+            "(a folder of the customer's home, which the customer must grant). Nothing else is accepted."
+        ),
+    )
+    mode: Literal["rw", "ro"] = Field(
+        default="rw", description="``rw``: restored and copied back; ``ro``: restored only, never copied back"
+    )
+    exclude: list[str] | None = Field(
+        default=None, description="Globs, relative to the directory, that are neither restored nor copied back"
+    )
+    uid: int | None = Field(
+        default=None, ge=0, le=MAX_OWNER, strict=True, description="Owner of the restored files; with gid, or neither"
+    )
+    gid: int | None = Field(default=None, ge=0, le=MAX_OWNER, strict=True)
+
+    @field_validator("source")
+    @classmethod
+    def _check_source(cls, value: str | None) -> str | None:
+        if value is not None:
+            parse_persist_source(value)
+        return value
+
+    @field_validator("exclude")
+    @classmethod
+    def _check_exclude(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None:
+            if len(value) > MAX_EXCLUDES:
+                raise ValueError(f"at most {MAX_EXCLUDES} exclude patterns")
+            for pattern in value:
+                check_exclude(pattern)
+        return value
+
+    @model_validator(mode="after")
+    def _check_owner(self) -> "PersistVolume":
+        if (self.uid is None) != (self.gid is None):
+            raise ValueError("give both uid and gid, or neither")
+        return self
+
+    def resolve(self, volume: str) -> dict[str, Any]:
+        """The manifest's ``persist`` fields, minus the mount path: the store and folder ``source`` names."""
+        store, folder = parse_persist_source(self.source or "{{ storage.path }}/" + volume)
+        return {
+            "store": store,
+            "folder": folder,
+            "mode": self.mode,
+            "exclude": self.exclude,
+            "uid": self.uid,
+            "gid": self.gid,
+        }
+
+
+def _volume_type(value: Any) -> str:
+    """``type`` of a volume entry; scratch when it is not written."""
+    if isinstance(value, dict):
+        kind = value.get("type", "scratch")
+        return kind if isinstance(kind, str) else ""
+    return getattr(value, "type", "")
+
+
+ChannelVolume = Annotated[
+    Annotated[ScratchVolume, Tag("scratch")] | Annotated[PersistVolume, Tag("persist")],
+    Discriminator(
+        _volume_type,
+        custom_error_type="invalid_volume_type",
+        custom_error_message="a volume's type must be one of 'scratch', 'persist'",
+    ),
+]
+"""How the channel backs one named volume of the instance spec; ``type`` (default ``scratch``) selects it."""
 
 
 class ContainerChannel(_ChannelBase):
@@ -435,6 +535,15 @@ class ContainerChannel(_ChannelBase):
             "starts (unitysvc/unitysvc#3023). Overrides the same name in the spec."
         ),
     )
+    volumes: dict[str, ChannelVolume] | None = Field(
+        default=None,
+        description=(
+            "How each named volume of the instance spec is backed, ``{volume: {type: persist, ...}}`` "
+            "(unitysvc/unitysvc#3098); ``type`` is ``scratch`` (the default) or ``persist``. Each key must be "
+            "a top-level volume of the spec. A volume not named here is scratch, so one file can back a channel "
+            "that persists a volume and one that does not."
+        ),
+    )
 
     @field_validator("resources", mode="before")
     @classmethod
@@ -454,6 +563,14 @@ class ContainerChannel(_ChannelBase):
                     raise ValueError(f"{service}.{key}: {key!r} is not a valid environment variable name")
                 if "{{" in _PARAM_REFERENCE_RE.sub("", text):
                     raise ValueError(f"{service}.{key}: the only template allowed is {{{{ params.NAME }}}}")
+        return value
+
+    @field_validator("volumes")
+    @classmethod
+    def _check_volumes(cls, value: dict[str, ChannelVolume] | None) -> dict[str, ChannelVolume] | None:
+        for volume in value or {}:
+            if not _VOLUME_NAME_RE.fullmatch(volume):
+                raise ValueError(f"{volume!r} is not a volume name")
         return value
 
     @model_validator(mode="after")

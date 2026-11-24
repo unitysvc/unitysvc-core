@@ -869,6 +869,29 @@
           "description": "The request format the upstream speaks",
           "title": "Upstream Format"
         },
+        "volumes": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/ScratchVolume"
+                  },
+                  {
+                    "$ref": "#/$defs/PersistVolume"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How each named volume of the instance spec is backed, ``{volume: {type: persist, ...}}`` (unitysvc/unitysvc#3098); ``type`` is ``scratch`` (the default) or ``persist``. Each key must be a top-level volume of the spec. A volume not named here is scratch, so one file can back a channel that persists a volume and one that does not.",
+          "title": "Volumes"
+        },
         "weight": {
           "anyOf": [
             {
@@ -2991,6 +3014,90 @@
       "title": "OfferingStatusEnum",
       "type": "string"
     },
+    "PersistVolume": {
+      "additionalProperties": false,
+      "description": "A volume whose files outlive the instance (unitysvc/unitysvc#3098).\n\nThe file only says a directory is a volume (``volumes: [home:/home/app]``); whether its files outlive the\ninstance is the channel's offer, so one file can back a channel that persists (production) and one that\ndoes not (a demo). They are copied to and from the customer's storage: restored before the service starts,\ncopied back while it runs and when it stops. Needs the customer's ``service:storage`` (or ``service:home``)\ngrant, requested in ``customer_access_requests``, and a service of the spec that mounts the volume.",
+      "properties": {
+        "exclude": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Globs, relative to the directory, that are neither restored nor copied back",
+          "title": "Exclude"
+        },
+        "gid": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gid"
+        },
+        "mode": {
+          "default": "rw",
+          "description": "``rw``: restored and copied back; ``ro``: restored only, never copied back",
+          "enum": [
+            "rw",
+            "ro"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Where the files live: ``{{ storage.path }}/<folder>`` (the instance's own folder in the customer's storage; default: a folder named like the volume) or ``{{ home.path }}/<folder>`` (a folder of the customer's home, which the customer must grant). Nothing else is accepted.",
+          "title": "Source"
+        },
+        "type": {
+          "const": "persist",
+          "title": "Type",
+          "type": "string"
+        },
+        "uid": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Owner of the restored files; with gid, or neither",
+          "title": "Uid"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "PersistVolume",
+      "type": "object"
+    },
     "PriceTier": {
       "additionalProperties": false,
       "description": "A single tier in tiered pricing.",
@@ -3729,6 +3836,20 @@
         "bucket"
       ],
       "title": "S3Server",
+      "type": "object"
+    },
+    "ScratchVolume": {
+      "additionalProperties": false,
+      "description": "A volume that is temporary space (the default): an ``emptyDir`` that survives a container restart, not a\nreplacement of the instance. A volume the channel does not name is this too.",
+      "properties": {
+        "type": {
+          "const": "scratch",
+          "default": "scratch",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "ScratchVolume",
       "type": "object"
     },
     "ServiceTypeEnum": {

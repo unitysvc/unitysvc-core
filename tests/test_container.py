@@ -1450,3 +1450,428 @@ class TestVersion0311Shapes:
         del doc["file_path"]
         doc["external_url"] = "https://raw.githubusercontent.com/o/r/" + "a" * 40 + "/compose.yaml"
         assert _errors(validator, offering) == []
+
+
+# --- persisted volumes (unitysvc/unitysvc#3098) ----------------------------------------------------------
+# The file only mounts a plain named volume; the channel's `persist` says which of its volumes outlive the instance.
+
+
+def _persisting(volumes: list[Any] | None = None, *, extra: dict[str, Any] | None = None) -> str:
+    """A one-service file mounting the plain volume ``home`` (as it would run under Docker)."""
+    base = {"image": f"example/app{DIGEST}", "ports": ["8080"], "volumes": volumes or ["home:/home/app"]}
+    base.update(extra or {})
+    return yaml.safe_dump({"services": {"web": base}, "volumes": {"home": {}}})
+
+
+STORAGE_REQUEST = {"object": "service:storage", "permissions": ["read", "write"], "required": True}
+HOME_REQUEST = {
+    "object": "service:home",
+    "permissions": ["read", "write"],
+    "options": "path=projects/",
+    "required": True,
+}
+GRANTS = [STORAGE_REQUEST, {**HOME_REQUEST, "options": "path=*"}]
+
+
+def _vol(options: dict[str, Any] | None = None) -> dict[str, Any]:
+    """A channel's ``volumes`` entry that persists the volume with these options."""
+    return {"type": "persist", **(options or {})}
+
+
+def _persist_channel(volumes: Any, requests: list[dict[str, Any]] | None = None) -> ContainerChannel:
+    return ContainerChannel.model_validate(
+        _channel(volumes=volumes, customer_access_requests=GRANTS if requests is None else requests)
+    )
+
+
+def _persisted(text: str, volumes: Any) -> list[dict[str, Any]]:
+    """The manifest's ``persist`` of the one service, compiled with the channel's ``volumes``."""
+    manifest = compile_instance_spec(text, _res(), volumes=volumes).manifest
+    return [p.model_dump(exclude_none=True) for p in manifest.services[0].persist or []]
+
+
+def _persisted_errors(declaration: Any, requests: list[dict[str, Any]] | None) -> list[str]:
+    channel = _persist_channel({"home": _vol(declaration)}, requests)
+    return [e.code for e in validate_instance_spec(_persisting(), channel=channel).errors]
+
+
+def _persisted_all(text: str, volumes: Any) -> list[Any]:
+    """Every persisted directory of every service."""
+    manifest = compile_instance_spec(text, _res(), volumes=volumes).manifest
+    return [p for service in manifest.services for p in service.persist or []]
+
+
+def _compile_errors(text: str, volumes: Any) -> list[Any]:
+    with pytest.raises(InstanceSpecError) as raised:
+        compile_instance_spec(text, _res(), volumes=volumes)
+    return raised.value.report.errors
+
+
+class TestPersistedVolumesAreRequested:
+    def test_the_channel_must_ask_for_the_enrollments_storage(self) -> None:
+        assert _persisted_errors({}, [REQUEST]) == ["persist_not_requested"]
+        assert _persisted_errors({}, [STORAGE_REQUEST]) == []
+
+    def test_write_is_needed_unless_the_directory_is_read_only(self) -> None:
+        read = {**STORAGE_REQUEST, "permissions": ["read"]}
+        assert _persisted_errors({}, [read]) == ["persist_not_requested"]
+        assert _persisted_errors({"mode": "ro"}, [read]) == []
+
+    def test_read_is_always_needed_because_the_restore_reads(self) -> None:
+        write_only = {**STORAGE_REQUEST, "permissions": ["write"]}
+        assert _persisted_errors({}, [write_only]) == ["persist_not_requested"]
+        assert _persisted_errors({"mode": "ro"}, [write_only]) == ["persist_not_requested"]
+        home_write = {**HOME_REQUEST, "permissions": ["write"]}
+        source = {"source": "{{ home.path }}/projects/a"}
+        assert _persisted_errors(source, [home_write]) == ["persist_not_requested"]
+        assert _persisted_errors({**source, "mode": "ro"}, [home_write]) == ["persist_not_requested"]
+        assert _persisted_errors(source, [HOME_REQUEST]) == []
+
+    def test_an_optional_request_does_not_count(self) -> None:
+        assert _persisted_errors({}, [{**STORAGE_REQUEST, "required": False}]) == ["persist_not_requested"]
+
+    def test_a_home_folder_needs_a_request_whose_path_covers_it(self) -> None:
+        source = {"source": "{{ home.path }}/projects/a"}
+        assert _persisted_errors(source, [HOME_REQUEST]) == []
+        assert _persisted_errors(source, [{**HOME_REQUEST, "options": "path=*"}]) == []
+        assert _persisted_errors(source, [{**HOME_REQUEST, "options": "path=other/"}]) == ["persist_not_requested"]
+        assert _persisted_errors(source, [{**HOME_REQUEST, "options": ""}]) == ["persist_not_requested"]
+        assert _persisted_errors(source, [STORAGE_REQUEST]) == ["persist_not_requested"]
+
+    def test_a_channel_that_persists_nothing_asks_for_nothing(self) -> None:
+        channel = ContainerChannel.model_validate(_channel())
+        assert validate_instance_spec(_persisting(), channel=channel).ok
+
+    def test_without_a_channel_nothing_is_checked(self) -> None:
+        assert validate_instance_spec(_persisting()).ok
+
+
+class TestPersistedVolumes:
+    def test_the_same_file_is_scratch_for_one_channel_and_persistent_for_another(self) -> None:
+        text = _persisting()
+        demo = _persist_channel(None)
+        production = _persist_channel({"home": _vol({})})
+        demo_report = validate_instance_spec(text, channel=demo)
+        assert demo_report.ok and "scratch_volume" in _codes(demo_report, "warnings")
+        assert "persistent_volume" not in _codes(demo_report, "warnings")
+        prod_report = validate_instance_spec(text, channel=production)
+        assert prod_report.ok, prod_report.errors
+        assert "persistent_volume" in _codes(prod_report, "warnings")
+        assert "scratch_volume" not in _codes(prod_report, "warnings")
+
+        scratch = compile_instance_spec(text, _res()).manifest.services[0]
+        assert scratch.persist is None and [s.path for s in scratch.scratch or []] == ["/home/app"]
+        persisted = compile_instance_spec(text, _res(), volumes=production.volumes).manifest.services[0]
+        assert persisted.scratch is None
+        assert [p.path for p in persisted.persist or []] == ["/home/app"]
+
+    def test_the_declaration_defaults_to_the_enrollments_folder_named_like_the_volume(self) -> None:
+        assert _persisted(_persisting(), {"home": _vol({})}) == [
+            {"path": "/home/app", "store": "storage", "folder": "home", "mode": "rw"}
+        ]
+
+    def test_a_persisted_volume_is_not_scratch(self) -> None:
+        text = _persisting()
+        report = validate_instance_spec(text, channel=_persist_channel({"home": _vol({})}))
+        assert not [w for w in report.warnings if w.code == "scratch_volume"]
+        warning = next(w for w in report.warnings if w.code == "persistent_volume")
+        assert not warning.loud and "outlive the instance" in warning.message
+
+    def test_every_field(self) -> None:
+        persist = {
+            "source": "{{ home.path }}/projects/a",
+            "mode": "ro",
+            "exclude": ["cache/**", "*.tmp"],
+            "uid": 1000,
+            "gid": 1000,
+        }
+        assert _persisted(_persisting(), {"home": _vol(persist)}) == [
+            {
+                "path": "/home/app",
+                "store": "home",
+                "folder": "projects/a",
+                "mode": "ro",
+                "exclude": ["cache/**", "*.tmp"],
+                "uid": 1000,
+                "gid": 1000,
+            }
+        ]
+
+    def test_the_source_may_be_spaced_and_names_a_subfolder_of_the_enrollment(self) -> None:
+        volumes = {"home": _vol({"source": "{{storage.path}}/state/db"})}
+        assert _persisted(_persisting(), volumes)[0]["folder"] == "state/db"
+
+    def test_the_other_volumes_of_a_service_stay_scratch(self) -> None:
+        text = _persisting(["home:/home/app", "/cache"])
+        manifest = compile_instance_spec(text, _res(), volumes={"home": _vol({})}).manifest
+        assert [p.path for p in manifest.services[0].persist or []] == ["/home/app"]
+        assert [s.path for s in manifest.services[0].scratch or []] == ["/cache"]
+
+    BAD = [
+        ({"source": "s3://bucket/x"}, "source"),
+        ({"source": "{{ storage.path }}"}, "source"),  # a folder is required
+        ({"source": "{{ storage.path }}/"}, "source"),
+        ({"source": "{{ storage.path }}/../other"}, "source"),
+        ({"source": "{{ storage.path }}/a//b"}, "source"),
+        ({"source": "{{ storage.path }}/a b"}, "source"),
+        ({"source": "{{ storage.path }}/.hidden"}, "source"),
+        ({"source": "{{ storage.path }}/a..b"}, "source"),
+        ({"source": "{{ enrollment.path }}/x"}, "source"),  # it is `storage`, as the service:storage grant
+        ({"source": "{{ service_name }}/x"}, "source"),
+        ({"source": "{{ params.X }}/x"}, "source"),
+        ({"source": 5}, "source"),
+        ({"mode": "wo"}, "mode"),
+        ({"exclude": "cache"}, "exclude"),
+        ({"exclude": ["/etc"]}, "exclude"),
+        ({"exclude": ["../x"]}, "exclude"),
+        ({"exclude": ["[a"]}, "exclude"),
+        ({"exclude": [f"p{i}" for i in range(33)]}, "exclude"),
+        ({"uid": 1000}, ""),
+        ({"uid": -1, "gid": 0}, ""),
+        ({"uid": True, "gid": 1}, ""),
+        ({"colour": "red"}, "colour"),
+    ]
+
+    @pytest.mark.parametrize(("declaration", "path"), BAD)
+    def test_a_bad_declaration_is_refused_by_the_channel(self, declaration: dict[str, Any], path: str) -> None:
+        with pytest.raises(ValidationError):
+            ContainerChannel.model_validate(_channel(volumes={"home": _vol(declaration)}))
+
+    @pytest.mark.parametrize(("declaration", "path"), BAD)
+    def test_a_bad_declaration_is_an_error_when_compiling(self, declaration: dict[str, Any], path: str) -> None:
+        errors = _compile_errors(_persisting(), {"home": _vol(declaration)})
+        assert all(i.path == "volumes.home" for i in errors), errors
+        assert any(path in i.message for i in errors), errors
+
+    def test_the_overlay_must_be_a_mapping_of_volumes(self) -> None:
+        assert [e.code for e in _compile_errors(_persisting(), ["home"])] == ["bad_volumes"]
+
+    # -- the channel must match the file's volumes
+
+    def test_a_volume_without_a_kind_is_scratch(self) -> None:
+        text = _persisting()
+        for volumes in ({"home": {}}, {"home": None}, {"home": {"type": "scratch"}}, {}):
+            manifest = compile_instance_spec(text, _res(), volumes=volumes).manifest.services[0]
+            assert manifest.persist is None and [s.path for s in manifest.scratch or []] == ["/home/app"]
+
+    def test_the_channel_refuses_a_kind_it_does_not_know(self) -> None:
+        with pytest.raises(ValidationError):
+            ContainerChannel.model_validate(_channel(volumes={"home": {"type": "block", "size": "10Gi"}}))
+        errors = _compile_errors(_persisting(), {"home": {"type": "block", "size": "10Gi"}})
+        assert errors and all(e.path == "volumes.home" for e in errors)
+        with pytest.raises(ValidationError):  # persist options on a scratch volume
+            ContainerChannel.model_validate(_channel(volumes={"home": {"type": "scratch", "mode": "ro"}}))
+        with pytest.raises(ValidationError):  # the old nested form
+            ContainerChannel.model_validate(_channel(volumes={"home": {"persist": {}}}))
+
+    def test_a_persisted_name_must_be_a_volume_of_the_file(self) -> None:
+        errors = _compile_errors(_persisting(), {"data": _vol({})})
+        assert [e.code for e in errors] == ["overlay_volume"] and "home" in errors[0].message
+        channel = _persist_channel({"data": _vol({})})
+        assert "overlay_volume" in _codes(validate_instance_spec(_persisting(), channel=channel))
+
+    def test_a_persisted_volume_must_be_mounted_by_a_service(self) -> None:
+        text = yaml.safe_dump(
+            {"services": {"web": {"image": f"example/app{DIGEST}"}}, "volumes": {"home": {}, "unused": {}}}
+        )
+        errors = _compile_errors(text, {"unused": _vol({})})
+        assert [e.code for e in errors] == ["persist_unmounted"] and errors[0].path == "volumes.unused"
+
+    def test_only_a_named_volume_can_be_persisted(self) -> None:
+        for name in ("/cache", "./data", "a b", ""):
+            with pytest.raises(ValidationError):
+                ContainerChannel.model_validate(_channel(volumes={name: {}}))
+
+    def test_a_file_volume_the_channel_does_not_name_is_untouched(self) -> None:
+        # `home` is declared and mounted in the file; the channel persists another volume only.
+        text = yaml.safe_dump(
+            {
+                "services": {"web": {"image": f"example/app{DIGEST}", "volumes": ["home:/home/app", "db:/var/db"]}},
+                "volumes": {"home": {}, "db": {}},
+            }
+        )
+        manifest = compile_instance_spec(text, _res(), volumes={"db": _vol({})}).manifest.services[0]
+        assert [p.path for p in manifest.persist or []] == ["/var/db"]
+        assert [s.path for s in manifest.scratch or []] == ["/home/app"]
+
+    def test_the_old_extension_in_the_file_is_refused_with_a_pointer(self) -> None:
+        text = yaml.safe_dump(
+            {
+                "services": {"web": {"image": f"example/app{DIGEST}", "volumes": ["home:/home/app"]}},
+                "volumes": {"home": {"x-unitysvc-persist": {}}},
+            }
+        )
+        report = validate_instance_spec(text)
+        assert [e.code for e in report.errors] == ["persist_in_file"]
+        assert "volumes.home" in report.errors[0].message and "type: persist" in report.errors[0].message
+
+    # -- folders, globs and owners the agent would refuse or mix up
+
+    def test_a_folder_inside_another_would_share_objects_and_is_refused(self) -> None:
+        text = yaml.safe_dump(
+            {
+                "services": {"web": {"image": f"example/app{DIGEST}", "volumes": ["a:/a", "b:/b"]}},
+                "volumes": {"a": {}, "b": {}},
+            }
+        )
+
+        def storage(folder: str) -> dict[str, Any]:
+            return _vol({"source": "{{ storage.path }}/" + folder})
+
+        for outer, inner in (("shared", "shared/db"), ("shared/db", "shared"), ("shared", "shared")):
+            errors = _compile_errors(text, {"a": storage(outer), "b": storage(inner)})
+            assert [e.code for e in errors] == ["duplicate_mount"], (outer, inner)
+        # siblings with a common prefix of characters, and the same folder in another store, are different places
+        ok = {"a": storage("shared"), "b": storage("shared-old")}
+        assert len(_persisted_all(text, ok)) == 2
+        assert len(_persisted_all(text, {"a": storage("shared"), "b": _vol({"source": "{{ home.path }}/shared"})})) == 2
+
+    def test_the_manifest_refuses_overlapping_folders_too(self) -> None:
+        def service(name: str, *folders: str) -> dict[str, Any]:
+            persist = [{"path": f"/d{i}", "store": "storage", "folder": f} for i, f in enumerate(folders)]
+            return {"name": name, "image": "i", "persist": persist}
+
+        NormalizedManifest.model_validate({"services": [service("a", "x", "y")]})
+        for services in (
+            [service("a", "shared", "shared/db")],
+            [service("a", "shared"), service("b", "shared/db")],  # across services
+            [service("a", "shared"), service("b", "shared")],
+        ):
+            with pytest.raises(ValidationError, match="overlap"):
+                NormalizedManifest.model_validate({"services": services})
+
+    @pytest.mark.parametrize("pattern", ["[]", "[^]", "[a", "[a-]", "[-a]", "a\\", "[\\", "x/[", "[]a]"])
+    def test_a_glob_the_agent_would_refuse_is_refused(self, pattern: str) -> None:
+        with pytest.raises(ValidationError):
+            ContainerChannel.model_validate(_channel(volumes={"home": _vol({"exclude": [pattern]})}))
+        assert _compile_errors(_persisting(), {"home": _vol({"exclude": [pattern]})})
+
+    @pytest.mark.parametrize("pattern", ["*.tmp", "cache/**", "[a-z]*", "[^0-9]x", "\\*", "**/*.log", "[a\\]]"])
+    def test_a_valid_glob_is_accepted(self, pattern: str) -> None:
+        assert _persisted(_persisting(), {"home": _vol({"exclude": [pattern]})})[0]["exclude"] == [pattern]
+
+    def test_the_owner_fits_the_agents_int64(self) -> None:
+        top = 2**63 - 1
+        assert _persisted(_persisting(), {"home": _vol({"uid": top, "gid": top})})[0]["uid"] == top
+        too_big = {"uid": 2**63, "gid": 0}
+        with pytest.raises(ValidationError):
+            ContainerChannel.model_validate(_channel(volumes={"home": _vol(too_big)}))
+        assert _compile_errors(_persisting(), {"home": _vol({"uid": 0, "gid": 2**63})})
+        entry = {"path": "/d", "store": "storage", "folder": "x"}
+        for owner in ({"uid": 2**63, "gid": 0}, {"uid": 0, "gid": 2**63}):
+            with pytest.raises(ValidationError):
+                NormalizedManifest.model_validate(
+                    {"services": [{"name": "a", "image": "i", "persist": [{**entry, **owner}]}]}
+                )
+
+    # -- mounts
+
+    def test_a_persistent_volume_cannot_be_mounted_twice(self) -> None:
+        text = _persisting(["home:/a", "home:/b"])
+        assert "duplicate_mount" in {e.code for e in _compile_errors(text, {"home": _vol({})})}
+
+    def test_a_persisted_path_cannot_be_mounted_twice(self) -> None:
+        text = _persisting(["home:/data", "/data"])
+        assert "duplicate_mount" in {e.code for e in _compile_errors(text, {"home": _vol({})})}
+
+    def test_two_volumes_cannot_share_a_folder(self) -> None:
+        text = yaml.safe_dump(
+            {
+                "services": {"web": {"image": f"example/app{DIGEST}", "volumes": ["a:/a", "b:/b"]}},
+                "volumes": {"a": {}, "b": {}},
+            }
+        )
+        same = {"source": "{{ storage.path }}/same"}
+        errors = _compile_errors(text, {"a": _vol(same), "b": _vol(same)})
+        assert [e.code for e in errors] == ["duplicate_mount"] and "overlap" in errors[0].message
+
+    def test_other_extensions_are_still_ignored_and_other_keys_still_rejected(self) -> None:
+        ok = yaml.safe_dump({"services": {"web": {"image": f"example/app{DIGEST}"}}, "volumes": {"v": {"x-other": 1}}})
+        assert validate_instance_spec(ok).ok
+        bad = yaml.safe_dump(
+            {"services": {"web": {"image": f"example/app{DIGEST}"}}, "volumes": {"v": {"driver": "nfs"}}}
+        )
+        report = validate_instance_spec(bad)
+        assert not report.ok and "only a plain volume" in report.errors[0].message
+
+    def test_the_manifest_schema_has_persist(self) -> None:
+        volumes = {
+            "home": _vol({"source": "{{ home.path }}/a", "mode": "ro", "exclude": ["*.tmp"], "uid": 1, "gid": 2})
+        }
+        manifest = compile_instance_spec(_persisting(), _res(), volumes=volumes).manifest.model_dump(
+            mode="json", exclude_none=True
+        )
+        assert list(Draft7Validator(MANIFEST_SCHEMA).iter_errors(manifest)) == []
+        assert manifest["services"][0]["persist"][0]["store"] == "home"
+        bad = {"services": [{"name": "a", "image": "i", "persist": [{"path": "/d", "store": "s3", "folder": "x"}]}]}
+        assert list(Draft7Validator(MANIFEST_SCHEMA).iter_errors(bad)) != []
+        with pytest.raises(ValidationError):
+            NormalizedManifest.model_validate(bad)
+
+    def test_the_model_refuses_what_the_agent_would(self) -> None:
+        def service(**persist: Any) -> dict[str, Any]:
+            entry = {"path": "/d", "store": "storage", "folder": "x", **persist}
+            return {"services": [{"name": "a", "image": "i", "persist": [entry]}]}
+
+        NormalizedManifest.model_validate(service())
+        for change in (
+            {"path": "d"},
+            {"path": "/"},
+            {"folder": "/x"},
+            {"folder": "../x"},
+            {"folder": ""},
+            {"mode": "wo"},
+            {"uid": 1},
+            {"exclude": ["/x"]},
+            {"colour": "red"},
+        ):
+            with pytest.raises(ValidationError):
+                NormalizedManifest.model_validate(service(**change))
+        with pytest.raises(ValidationError, match="distinct"):
+            NormalizedManifest.model_validate(
+                {
+                    "services": [
+                        {
+                            "name": "a",
+                            "image": "i",
+                            "persist": [
+                                {"path": "/d", "store": "storage", "folder": "x"},
+                                {"path": "/d", "store": "storage", "folder": "y"},
+                            ],
+                        }
+                    ]
+                }
+            )
+        with pytest.raises(ValidationError, match="distinct"):
+            NormalizedManifest.model_validate(
+                {
+                    "services": [
+                        {
+                            "name": "a",
+                            "image": "i",
+                            "scratch": [{"path": "/d"}],
+                            "persist": [{"path": "/d", "store": "storage", "folder": "x"}],
+                        }
+                    ]
+                }
+            )
+        with pytest.raises(ValidationError, match="overlap"):
+            NormalizedManifest.model_validate(
+                {
+                    "services": [
+                        {
+                            "name": "a",
+                            "image": "i",
+                            "persist": [
+                                {"path": "/d", "store": "storage", "folder": "x"},
+                                {"path": "/e", "store": "storage", "folder": "x"},
+                            ],
+                        }
+                    ]
+                }
+            )
+
+    def test_the_agents_wire_shape(self) -> None:
+        """The agent decodes strictly, with exactly these keys (unitysvc-compute-k8s intent.Persist)."""
+        entry = _persisted(_persisting(), {"home": _vol({"mode": "ro", "exclude": ["a"], "uid": 0, "gid": 0})})[0]
+        assert set(entry) == {"path", "store", "folder", "mode", "exclude", "uid", "gid"}

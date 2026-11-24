@@ -14,6 +14,8 @@ Deliberate differences from ``intent.go`` (listed in the PR that added it):
   modelled: core always writes the general ``resources`` form;
 * ``scratch`` (temporary storage mounts) is a core addition the agent does not decode yet; the agent repo
   vendors this schema when it adds it (unitysvc/unitysvc-core#107);
+* ``persist`` (directories restored from, and copied back to, the customer's storage) has the agent's
+  ``Persist`` shape exactly (unitysvc/unitysvc#3098; unitysvc-compute-k8s ``internal/intent/intent.go``);
 * the agent's ``Entry`` (with a ``hostname`` central assigns) is not part of the
   manifest; it travels beside it in the intent.
 """
@@ -21,6 +23,7 @@ Deliberate differences from ``intent.go`` (listed in the PR that added it):
 from __future__ import annotations
 
 import posixpath
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -98,6 +101,175 @@ class ManifestScratch(BaseModel):
         return value
 
 
+# A folder of the customer's storage, relative and normalized: segments of 1 to 255 characters from the
+# alphabet the platform's `service:home` grant uses for a folder (unitysvc/unitysvc key_authority.HOME_FOLDER).
+_FOLDER_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,254}$")
+MAX_FOLDER_LENGTH = 512
+MAX_EXCLUDES = 32
+# The agent decodes uid and gid as int64.
+MAX_OWNER = 2**63 - 1
+MAX_EXCLUDE_LENGTH = 256
+
+
+def check_folder(value: str) -> str:
+    """A persisted folder: relative (no leading slash), no empty, ``.`` or ``..`` segment, no trailing slash."""
+    if not value or len(value) > MAX_FOLDER_LENGTH:
+        raise ValueError(f"a folder is 1 to {MAX_FOLDER_LENGTH} characters")
+    if not all(_FOLDER_SEGMENT_RE.fullmatch(seg) and ".." not in seg for seg in value.split("/")):
+        raise ValueError(
+            f"{value!r} is not a folder: relative segments of letters, digits, '.', '_' and '-' (not starting with "
+            "'.'), no empty segment, no '..', no leading or trailing slash"
+        )
+    return value
+
+
+# `source` of a channel's persist entry: `{{ storage.path }}/<folder>` (the instance's enrollment folder in
+# the customer's storage, what `service:storage` grants) or `{{ home.path }}/<folder>` (a folder of the
+# customer's home).
+_PERSIST_SOURCE_RE = re.compile(r"^\{\{\s*(storage|home)\.path\s*\}\}/(.+)$")
+
+
+def parse_persist_source(source: object) -> tuple[str, str]:
+    """``(store, folder)`` of a persist ``source``, which is nothing else than a folder of one of two places."""
+    match = _PERSIST_SOURCE_RE.fullmatch(source) if isinstance(source, str) else None
+    if match is None:
+        raise ValueError(
+            "`source` must be `{{ storage.path }}/<folder>` (the instance's own storage) or "
+            "`{{ home.path }}/<folder>` (a folder of the customer's home): quote it, it starts with `{{`"
+        )
+    return match.group(1), check_folder(match.group(2))
+
+
+def _glob_error(pattern: str) -> str | None:
+    """Why ``pattern`` is not valid for Go's ``path.Match`` (which the agent validates every exclude with), or None.
+
+    The grammar: ``*`` and ``?`` match, ``\\c`` is the character ``c``, and ``[^]``-classes hold characters and
+    ``lo-hi`` ranges, each character or range at least one and the class closed; ``[]``, ``[^]``, ``[a-]``,
+    ``[a`` and a trailing backslash are malformed.
+    """
+    n = len(pattern)
+
+    def escaped(i: int) -> int | None:
+        """The index after one (possibly backslash-escaped) class character at ``i``, or None if it is malformed."""
+        if i >= n or pattern[i] in "-]":
+            return None
+        if pattern[i] == "\\":
+            i += 1
+            if i >= n:
+                return None
+        return i + 1 if i + 1 < n else None  # the class must still be closed
+
+    i = 0
+    while i < n:
+        c = pattern[i]
+        if c == "\\":
+            if i + 1 >= n:
+                return "it ends in a backslash"
+            i += 2
+        elif c == "[":
+            i += 1
+            if i < n and pattern[i] == "^":
+                i += 1
+            ranges = 0
+            while True:
+                if i < n and pattern[i] == "]" and ranges > 0:
+                    i += 1
+                    break
+                nxt = escaped(i)
+                if nxt is None:
+                    return "it has a malformed '[...]' class (empty, unclosed or a bad range)"
+                i = nxt
+                if i < n and pattern[i] == "-":
+                    nxt = escaped(i + 1)
+                    if nxt is None:
+                        return "it has a malformed '[...]' class (empty, unclosed or a bad range)"
+                    i = nxt
+                ranges += 1
+        else:
+            i += 1
+    return None
+
+
+def check_exclude(pattern: str) -> str:
+    """An exclude glob, relative to the persisted directory: ``*``, ``?``, ``[...]`` and ``**`` across folders."""
+    if not pattern or len(pattern) > MAX_EXCLUDE_LENGTH or pattern.startswith("/") or ".." in pattern:
+        raise ValueError(
+            f"exclude {pattern!r} must be a relative pattern of 1 to {MAX_EXCLUDE_LENGTH} characters, with no '..'"
+        )
+    if problem := _glob_error(pattern):
+        raise ValueError(f"exclude {pattern!r} is not a valid pattern: {problem}")
+    return pattern
+
+
+def folders_overlap(a: str, b: str) -> bool:
+    """Whether two folders of one store are the same, or one is inside the other: their files would share objects."""
+    return a == b or a.startswith(b + "/") or b.startswith(a + "/")
+
+
+def check_folders_disjoint(places: list[tuple[str, str]]) -> None:
+    """Refuse two ``(store, folder)`` places of which one is the other or inside it: ``shared`` and ``shared/db``
+    map ``/a/db/state`` and ``/b/state`` to the same object, and each overwrites the other."""
+    for index, (store, folder) in enumerate(places):
+        for other_store, other in places[index + 1 :]:
+            if store == other_store and folders_overlap(folder, other):
+                raise ValueError(f"persisted folders {folder!r} and {other!r} of {store!r} overlap")
+
+
+class ManifestPersist(BaseModel):
+    """A path in the container whose files outlive the instance (unitysvc/unitysvc#3098).
+
+    Before the service starts the agent restores ``folder`` of ``store`` into the directory, while it runs and
+    once more when it stops it copies new and changed files back (never deleting), and the same files are
+    there at the next start, on this cluster or another. ``store`` is ``storage`` (the instance's enrollment
+    folder, which the platform resolves from the enrollment, so the manifest names no enrollment) or ``home``
+    (a folder of the customer's home, which the customer must have granted).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(pattern=r"^/.", description="Normalized absolute path inside the container, below /")
+    store: Literal["storage", "home"] = Field(
+        description="`storage`: the instance's enrollment folder; `home`: a folder of the customer's home"
+    )
+    folder: str = Field(description="Relative folder inside the store, without a leading or trailing slash")
+    mode: Literal["rw", "ro"] = Field(
+        default="rw", description="`rw`: restored and copied back; `ro`: restored only, never copied back"
+    )
+    exclude: list[str] | None = Field(default=None, description="Globs, relative to the directory, left out both ways")
+    uid: int | None = Field(
+        default=None, ge=0, le=MAX_OWNER, description="Owner of the restored files; with gid, or neither"
+    )
+    gid: int | None = Field(default=None, ge=0, le=MAX_OWNER)
+
+    @field_validator("path")
+    @classmethod
+    def _normalized(cls, value: str) -> str:
+        if posixpath.normpath(value) != value or value == "/" or value.startswith("//"):
+            raise ValueError(f"{value!r} must be a normalized absolute path below /")
+        return value
+
+    @field_validator("folder")
+    @classmethod
+    def _folder(cls, value: str) -> str:
+        return check_folder(value)
+
+    @field_validator("exclude")
+    @classmethod
+    def _exclude(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None:
+            if len(value) > MAX_EXCLUDES:
+                raise ValueError(f"at most {MAX_EXCLUDES} exclude patterns")
+            for pattern in value:
+                check_exclude(pattern)
+        return value
+
+    @model_validator(mode="after")
+    def _owner(self) -> ManifestPersist:
+        if (self.uid is None) != (self.gid is None):
+            raise ValueError("give both uid and gid, or neither")
+        return self
+
+
 class ManifestService(BaseModel):
     """One container of an instance (the agent's ``Service``)."""
 
@@ -114,6 +286,9 @@ class ManifestService(BaseModel):
     health: ManifestHealth | None = None
     scratch: list[ManifestScratch] | None = Field(
         default=None, description="Temporary storage mounted in the container (an emptyDir each)"
+    )
+    persist: list[ManifestPersist] | None = Field(
+        default=None, description="Directories restored from and copied back to the customer's storage"
     )
 
     @field_validator("name")
@@ -143,6 +318,16 @@ class ManifestService(BaseModel):
         return value
 
     @model_validator(mode="after")
+    def _persist(self) -> ManifestService:
+        if not self.persist:
+            return self
+        paths = [p.path for p in self.persist]
+        if len(set(paths)) != len(paths) or set(paths) & {s.path for s in self.scratch or []}:
+            raise ValueError("persist paths must be distinct, and not also scratch")
+        check_folders_disjoint([(p.store, p.folder) for p in self.persist])
+        return self
+
+    @model_validator(mode="after")
     def _check_health_port(self) -> ManifestService:
         health = self.health
         if health is not None and health.port is not None and health.port not in (self.ports or []):
@@ -165,4 +350,5 @@ class NormalizedManifest(BaseModel):
         names = [s.name for s in value]
         if duplicates := sorted({n for n in names if names.count(n) > 1}):
             raise ValueError(f"service names must be unique: {', '.join(duplicates)}")
+        check_folders_disjoint([(p.store, p.folder) for s in value for p in s.persist or []])
         return value
