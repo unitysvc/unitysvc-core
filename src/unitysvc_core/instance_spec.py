@@ -35,6 +35,7 @@ from urllib.parse import urlsplit
 import yaml
 from pydantic import BaseModel, Field
 
+from .grants import parse_options
 from .models.channel import ContainerChannel
 from .models.container import DNS_LABEL_RE, ResourceSet, check_resolved
 from .models.manifest import (
@@ -403,6 +404,43 @@ class _Checker:
                     f"`{key}` is not allowed on a volume: only a plain scratch volume, or `{PERSIST_KEY}`",
                 )
         return {str(n) for n in volumes}
+
+    def _persist_requested(self, where: str, decl: dict[str, Any]) -> None:
+        """With the channel known, require that it asks the customer for what the persisted directory needs.
+
+        Both stores are the customer's, so the channel's ``customer_access_requests`` must hold a required
+        ``service:storage`` (the enrollment's own folder) or ``service:home`` (with a ``path`` covering the
+        folder) request with ``read``, and ``write`` too unless the directory is ``ro``. Without it the
+        customer is never asked, and every start would be refused for lack of the grant.
+        """
+        if self.channel is None:
+            return
+        service = "service:home" if decl["store"] == "home" else "service:storage"
+        permission = "read" if decl.get("mode") == "ro" else "write"
+        requests = self.channel.customer_access_requests or []
+        for entry in requests:
+            if (
+                not isinstance(entry, dict)
+                or entry.get("object") != service
+                or entry.get("required") is False
+                or permission not in (entry.get("permissions") or [])
+            ):
+                continue
+            if decl["store"] != "home":
+                return
+            try:
+                folders = parse_options("options", entry.get("options", "")).get("path", "").split(",")
+            except ValueError:
+                continue
+            if "*" in folders or any(f and f"{decl['folder']}/".startswith(f) for f in folders):
+                return
+        covered = " with a `path` that covers it" if decl["store"] == "home" else ""
+        self.error(
+            "persist_not_requested",
+            where,
+            f"the volume persists to {decl['store']}:{decl['folder']}, so the channel's `customer_access_requests` "
+            f"must ask the customer for a required {service} with `{permission}`{covered}",
+        )
 
     def _persist_declaration(self, volume: str, value: Any, at: str) -> dict[str, Any] | None:
         """Check ``x-unitysvc-persist`` on a volume; return what each mount of it becomes, or None if invalid.
@@ -943,6 +981,7 @@ class _Checker:
                     self.error("bad_value", where, str(exc).replace("\n", "; "))
                     continue
                 persisted_names[source] = (decl["store"], decl["folder"])
+                self._persist_requested(where, decl)
                 self.warn(
                     "persistent_volume",
                     where,

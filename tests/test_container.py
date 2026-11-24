@@ -1470,6 +1470,45 @@ def _persist_of(text: str) -> list[dict[str, Any]]:
     return [p.model_dump(exclude_none=True) for p in manifest.services[0].persist or []]
 
 
+STORAGE_REQUEST = {"object": "service:storage", "permissions": ["read", "write"], "required": True}
+HOME_REQUEST = {
+    "object": "service:home",
+    "permissions": ["read", "write"],
+    "options": "path=projects/",
+    "required": True,
+}
+
+
+def _persisted_errors(declaration: Any, requests: list[dict[str, Any]] | None) -> list[str]:
+    channel = ContainerChannel.model_validate(_channel(customer_access_requests=requests))
+    return [e.code for e in validate_instance_spec(_persisting(declaration), channel=channel).errors]
+
+
+class TestPersistedVolumesAreRequested:
+    def test_the_channel_must_ask_for_the_enrollments_storage(self) -> None:
+        assert _persisted_errors({}, None) == ["persist_not_requested"]
+        assert _persisted_errors({}, [STORAGE_REQUEST]) == []
+
+    def test_write_is_needed_unless_the_directory_is_read_only(self) -> None:
+        read = {**STORAGE_REQUEST, "permissions": ["read"]}
+        assert _persisted_errors({}, [read]) == ["persist_not_requested"]
+        assert _persisted_errors({"mode": "ro"}, [read]) == []
+
+    def test_an_optional_request_does_not_count(self) -> None:
+        assert _persisted_errors({}, [{**STORAGE_REQUEST, "required": False}]) == ["persist_not_requested"]
+
+    def test_a_home_folder_needs_a_request_whose_path_covers_it(self) -> None:
+        source = {"source": "{{ home.path }}/projects/a"}
+        assert _persisted_errors(source, [HOME_REQUEST]) == []
+        assert _persisted_errors(source, [{**HOME_REQUEST, "options": "path=*"}]) == []
+        assert _persisted_errors(source, [{**HOME_REQUEST, "options": "path=other/"}]) == ["persist_not_requested"]
+        assert _persisted_errors(source, [{**HOME_REQUEST, "options": ""}]) == ["persist_not_requested"]
+        assert _persisted_errors(source, [STORAGE_REQUEST]) == ["persist_not_requested"]
+
+    def test_without_a_channel_nothing_is_checked(self) -> None:
+        assert validate_instance_spec(_persisting({})).ok
+
+
 class TestPersistedVolumes:
     def test_the_declaration_defaults_to_the_enrollments_folder_named_like_the_volume(self) -> None:
         report = validate_instance_spec(_persisting({}))
