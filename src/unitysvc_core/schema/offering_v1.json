@@ -164,6 +164,80 @@
       "title": "ChannelParams",
       "type": "object"
     },
+    "ChannelPersist": {
+      "additionalProperties": false,
+      "description": "What a channel persists of one named volume of the instance spec (unitysvc/unitysvc#3098).\n\nThe file only says a directory is a volume (``volumes: [home:/home/app]``); whether its files outlive the\ninstance is the channel's offer, so one file can back a channel that persists (production) and one that\ndoes not (a demo). The key of ``ContainerChannel.persist`` is the volume's name, which the file must\ndeclare and some service must mount.",
+      "properties": {
+        "exclude": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Globs, relative to the directory, that are neither restored nor copied back",
+          "title": "Exclude"
+        },
+        "gid": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gid"
+        },
+        "mode": {
+          "default": "rw",
+          "description": "``rw``: restored and copied back; ``ro``: restored only, never copied back",
+          "enum": [
+            "rw",
+            "ro"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Where the files live: ``{{ enrollment.path }}/<folder>`` (the instance's own folder in the customer's storage; default: a folder named like the volume) or ``{{ home.path }}/<folder>`` (a folder of the customer's home, which the customer must grant). Nothing else is accepted.",
+          "title": "Source"
+        },
+        "uid": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Owner of the restored files; with gid, or neither",
+          "title": "Uid"
+        }
+      },
+      "title": "ChannelPersist",
+      "type": "object"
+    },
     "ChannelPriceData": {
       "additionalProperties": false,
       "description": "Channel-based pricing that selects a sub-price by the request's resolved channel.\n\nThe active channel is decided elsewhere — e.g. the gateway picks which keyed\n``upstream_access_config`` (upstream access channel) a request routes through\n(``\"managed\"``, ``\"byok\"``, ``\"byoe\"``, …) — and threads it into\n``calculate_cost(..., channel=...)``. The matching entry in ``channels`` is\nevaluated; when the channel is unknown or unset, the ``default`` channel is used.\n\nThere is no special-casing on the consumer side: every pricing type accepts\nan optional ``channel`` and a channel-independent price simply ignores it, so a\nplain price behaves identically for all channels. Channel-dependent pricing is\njust this one extra optional pricing type.\n\nEach ``channels`` value is itself any pricing object (flat, composite, tiered,\nor even nested channel-based), validated lazily — mirroring how tiered pricing\nholds per-tier prices.\n\nExample:\n    {\n        \"type\": \"channel\",\n        \"default\": \"managed\",\n        \"channels\": {\n            \"managed\": {\"type\": \"one_million_tokens\", \"input\": \"0.50\", \"output\": \"1.50\"},\n            \"byok\": {\"type\": \"constant\", \"price\": \"0\"}\n        }\n    }",
@@ -603,6 +677,22 @@
           "default": null,
           "description": "Body format sent upstream, e.g. msg",
           "title": "Payload Format"
+        },
+        "persist": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/ChannelPersist"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The volumes of the instance spec whose files outlive the instance, ``{volume: {source, mode, exclude, uid, gid}}`` (unitysvc/unitysvc#3098). Each key must be a top-level volume of the spec that a service mounts; a volume not named here is scratch. Needs the customer's ``service:storage`` (or ``service:home``) grant, requested in ``customer_access_requests``.",
+          "title": "Persist"
         },
         "rate_limit_refs": {
           "anyOf": [

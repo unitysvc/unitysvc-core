@@ -121,6 +121,23 @@ def check_folder(value: str) -> str:
     return value
 
 
+# `source` of a channel's persist entry: `{{ enrollment.path }}/<folder>` (the instance's enrollment folder in
+# the customer's storage) or `{{ home.path }}/<folder>` (a folder of the customer's home).
+_PERSIST_SOURCE_RE = re.compile(r"^\{\{\s*(enrollment|home)\.path\s*\}\}/(.+)$")
+_PERSIST_STORES = {"enrollment": "storage", "home": "home"}
+
+
+def parse_persist_source(source: object) -> tuple[str, str]:
+    """``(store, folder)`` of a persist ``source``, which is nothing else than a folder of one of two places."""
+    match = _PERSIST_SOURCE_RE.fullmatch(source) if isinstance(source, str) else None
+    if match is None:
+        raise ValueError(
+            "`source` must be `{{ enrollment.path }}/<folder>` (the instance's own storage) or "
+            "`{{ home.path }}/<folder>` (a folder of the customer's home): quote it, it starts with `{{`"
+        )
+    return _PERSIST_STORES[match.group(1)], check_folder(match.group(2))
+
+
 def check_exclude(pattern: str) -> str:
     """An exclude glob, relative to the persisted directory: ``*``, ``?``, ``[...]`` and ``**`` across folders."""
     if not pattern or len(pattern) > MAX_EXCLUDE_LENGTH or pattern.startswith("/") or ".." in pattern:

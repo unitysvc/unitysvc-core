@@ -33,10 +33,10 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from .grants import parse_options
-from .models.channel import ContainerChannel
+from .models.channel import ChannelPersist, ContainerChannel
 from .models.container import DNS_LABEL_RE, ResourceSet, check_resolved
 from .models.manifest import (
     ManifestHealth,
@@ -45,8 +45,6 @@ from .models.manifest import (
     ManifestScratch,
     ManifestService,
     NormalizedManifest,
-    check_exclude,
-    check_folder,
 )
 
 DEFAULT_FORMAT = "compose"
@@ -94,13 +92,8 @@ _REJECTED: dict[str, str] = {
     "mem_limit": "resources come from the channel's `resources`",
     "cpus": "resources come from the channel's `resources`",
 }
-# The extension on a top-level volume that makes it persistent (unitysvc/unitysvc#3098).
-PERSIST_KEY = "x-unitysvc-persist"
-_PERSIST_KEYS = frozenset({"source", "mode", "exclude", "uid", "gid"})
-# `source` names where the files live: `{{ enrollment.path }}/<folder>` (the instance's enrollment folder in
-# the customer's storage) or `{{ home.path }}/<folder>` (a folder of the customer's home).
-_PERSIST_SOURCE_RE = re.compile(r"^\{\{\s*(enrollment|home)\.path\s*\}\}/(.+)$")
-_PERSIST_STORES = {"enrollment": "storage", "home": "home"}
+# Persistence is the channel's offer, not the file's: the old extension on a volume is refused, with a pointer.
+_MOVED_PERSIST_KEY = "x-unitysvc-persist"
 _TOP_IGNORED = frozenset({"name", "version", "networks"})
 _TOP_ALLOWED = frozenset({"services", "volumes"}) | _TOP_IGNORED
 _HEALTHCHECK_KEYS = frozenset({"test", "interval", "timeout", "retries", "start_period", "start_interval", "disable"})
@@ -286,6 +279,15 @@ class _UniqueKeyLoader(yaml.SafeLoader):
         return super().construct_mapping(node, deep)
 
 
+def _first_problem(exc: ValueError) -> str:
+    """What is wrong, in one line: a pydantic error as ``field: message``, anything else as it reads."""
+    if isinstance(exc, ValidationError):
+        return "; ".join(
+            f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" if e["loc"] else e["msg"] for e in exc.errors()
+        )
+    return str(exc)
+
+
 def _parse(text: str) -> Any:
     return yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506 - a SafeLoader subclass
 
@@ -293,15 +295,16 @@ def _parse(text: str) -> Any:
 class _Checker:
     """One pass over a parsed Compose document, collecting errors, warnings and the compiled services."""
 
-    def __init__(self, channel: ContainerChannel | None, overlay: Any = None) -> None:
+    def __init__(self, channel: ContainerChannel | None, overlay: Any = None, persist: Any = None) -> None:
         self.channel = channel
         self.overlay = overlay
+        self.persist = persist
         self._overlay_checked: dict[str, dict[str, str]] | None = None
         self.report = InstanceSpecReport()
         self.dropped: list[DroppedKey] = []
         self.services: list[ManifestService] = []
         self.ports: dict[str, list[int]] = {}
-        # Volumes declared persistent: name -> {store, folder, mode, exclude, uid, gid}.
+        # Volumes the channel persists: name -> {store, folder, mode, exclude, uid, gid}.
         self.persisted: dict[str, dict[str, Any]] = {}
 
     # -- recording
@@ -338,6 +341,7 @@ class _Checker:
             self.error("no_services", "services", "the Compose file must define at least one service")
             return
         volumes = self._top_volumes(doc.get("volumes"))
+        self._persist_overlay(volumes)
         networks = doc.get("networks")
         declared_networks = set(networks) if isinstance(networks, dict) else set()
         used_volumes: dict[str, str] = {}
@@ -345,6 +349,13 @@ class _Checker:
         for name, service in services.items():
             self._service(str(name), service, volumes, used_volumes, declared_networks, service_networks, services)
         self._network_split(service_networks)
+        for volume in self.persisted:
+            if volume not in used_volumes:
+                self.error(
+                    "persist_unmounted",
+                    f"persist.{volume}",
+                    f"volume {volume!r} is not mounted by any service of the file, so there is nothing to persist",
+                )
         for service in self._overlay_env_services():
             if str(service) not in services:
                 self.error(
@@ -392,16 +403,20 @@ class _Checker:
             for key, value in volume.items():
                 if key == "driver" and value == "local":
                     continue
-                if key == PERSIST_KEY:
-                    if (decl := self._persist_declaration(str(name), value, f"{path}.{key}")) is not None:
-                        self.persisted[str(name)] = decl
+                if key == _MOVED_PERSIST_KEY:
+                    self.error(
+                        "persist_in_file",
+                        f"{path}.{key}",
+                        f"persistence is not declared in the file: set the channel's `persist.{name}`, so the same "
+                        "file can back a channel that persists and one that does not",
+                    )
                     continue
                 if isinstance(key, str) and key.startswith("x-"):
                     continue
                 self.error(
                     "rejected_key",
                     f"{path}.{key}",
-                    f"`{key}` is not allowed on a volume: only a plain scratch volume, or `{PERSIST_KEY}`",
+                    f"`{key}` is not allowed on a volume: only a plain volume",
                 )
         return {str(n) for n in volumes}
 
@@ -442,65 +457,46 @@ class _Checker:
             f"must ask the customer for a required {service} with `{permission}`{covered}",
         )
 
-    def _persist_declaration(self, volume: str, value: Any, at: str) -> dict[str, Any] | None:
-        """Check ``x-unitysvc-persist`` on a volume; return what each mount of it becomes, or None if invalid.
+    def _persist_overlay(self, volumes: set[str]) -> None:
+        """Check the channel's ``persist`` against the file: each key names a volume the file declares.
 
-        ``source`` is ``{{ enrollment.path }}/<folder>`` (default: the folder named like the volume) or
-        ``{{ home.path }}/<folder>``. It is resolved here, not by the platform: the enrollment's own folder
-        is implied by the key the instance syncs with, so the manifest never names an enrollment.
+        ``persist`` is ``{volume: {source, mode, exclude, uid, gid}}`` (a ``ChannelPersist``, or a mapping that
+        becomes one). The file keeps its plain ``home:/home/app`` mount whatever the channel does: a volume not
+        named here stays scratch, and one named here must be a top-level volume of the file (a mount of it is then
+        persisted, ``persist_unmounted`` when no service mounts it).
         """
-        if value is None or value is True:
-            value = {}
-        if not isinstance(value, dict):
-            self.error("bad_value", at, f"`{PERSIST_KEY}` must be a mapping (or empty)")
-            return None
-        before = len(self.report.errors)
-        for key in value:
-            if key not in _PERSIST_KEYS:
+        persist = self.persist
+        if persist is None:
+            return
+        if not isinstance(persist, Mapping):
+            self.error("bad_persist", "persist", "must be a mapping of volume name to what is persisted")
+            return
+        places: dict[tuple[str, str], str] = {}
+        for volume, share in persist.items():
+            at = f"persist.{volume}"
+            if volume not in volumes:
                 self.error(
-                    "unsupported_key",
-                    f"{at}.{key}",
-                    f"`{key}` is not supported on `{PERSIST_KEY}` (use {', '.join(sorted(_PERSIST_KEYS))})",
+                    "persist_volume",
+                    at,
+                    f"{volume!r} is not a volume of the file; its volumes are {', '.join(sorted(volumes)) or 'none'}",
                 )
-        source = value.get("source", "{{ enrollment.path }}/" + volume)
-        store, folder = "storage", ""
-        match = _PERSIST_SOURCE_RE.fullmatch(source) if isinstance(source, str) else None
-        if match is None:
-            self.error(
-                "bad_value",
-                f"{at}.source",
-                "`source` must be `{{ enrollment.path }}/<folder>` (the instance's own storage) or "
-                "`{{ home.path }}/<folder>` (a folder of the customer's home): quote it, it starts with `{{`",
-            )
-        else:
-            store, folder = _PERSIST_STORES[match.group(1)], match.group(2)
+                continue
             try:
-                check_folder(folder)
-            except ValueError as exc:
-                self.error("bad_value", f"{at}.source", str(exc))
-        mode = value.get("mode", "rw")
-        if mode not in ("rw", "ro"):
-            self.error(
-                "bad_value", f"{at}.mode", "`mode` must be `rw` (restored and copied back) or `ro` (restored only)"
-            )
-        exclude = value.get("exclude")
-        if exclude is not None:
-            if not isinstance(exclude, list) or not all(isinstance(e, str) for e in exclude) or len(exclude) > 32:
-                self.error("bad_value", f"{at}.exclude", "`exclude` must be a list of at most 32 patterns")
-            else:
-                for pattern in exclude:
-                    try:
-                        check_exclude(pattern)
-                    except ValueError as exc:
-                        self.error("bad_value", f"{at}.exclude", str(exc))
-        owner = {k: value.get(k) for k in ("uid", "gid")}
-        if any(v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < 0) for v in owner.values()):
-            self.error("bad_value", at, "`uid` and `gid` must be non-negative integers")
-        elif (owner["uid"] is None) != (owner["gid"] is None):
-            self.error("bad_value", at, "give both `uid` and `gid`, or neither")
-        if len(self.report.errors) > before:
-            return None
-        return {"store": store, "folder": folder, "mode": mode, "exclude": exclude, **owner}
+                model = share if isinstance(share, ChannelPersist) else ChannelPersist.model_validate(share or {})
+                decl = model.resolve(str(volume))
+            except (ValidationError, ValueError) as exc:
+                self.error("bad_value", at, _first_problem(exc))
+                continue
+            if other := places.setdefault((decl["store"], decl["folder"]), str(volume)):
+                if other != volume:
+                    self.error(
+                        "duplicate_mount",
+                        at,
+                        f"volumes {other!r} and {volume!r} persist to the same folder "
+                        f"({decl['store']}: {decl['folder']})",
+                    )
+                    continue
+            self.persisted[str(volume)] = decl
 
     # -- a service
     def _service(
@@ -890,11 +886,11 @@ class _Checker:
         self, name: str, volumes: Any, declared: set[str], used: dict[str, str]
     ) -> tuple[list[str], list[ManifestPersist]]:
         """Check a service's mounts; return the scratch paths (each an anonymous volume, or a named one that
-        is not persistent) and the persisted directories (each a mount of a volume with ``x-unitysvc-persist``)."""
+        is not persistent) and the persisted directories (each a mount of a volume the channel's ``persist`` names)."""
         at = f"services.{name}.volumes"
         scratch: list[str] = []
         persist: list[ManifestPersist] = []
-        persisted_names: dict[str, tuple[str, str]] = {}  # persistent volumes mounted so far, with their folders
+        persisted_names: set[str] = set()  # persistent volumes mounted so far
         if volumes is None:
             return scratch, persist
         if not isinstance(volumes, list):
@@ -965,22 +961,12 @@ class _Checker:
                         f"persistent volume {source!r} is mounted at two paths of this service",
                     )
                     continue
-                if clash := next(
-                    (v for v, (st, fo) in persisted_names.items() if (st, fo) == (decl["store"], decl["folder"])), None
-                ):
-                    self.error(
-                        "duplicate_mount",
-                        where,
-                        f"volumes {clash!r} and {source!r} persist to the same folder "
-                        f"({decl['store']}: {decl['folder']})",
-                    )
-                    continue
                 try:
                     persist.append(ManifestPersist(path=target, **decl))
                 except ValueError as exc:
                     self.error("bad_value", where, str(exc).replace("\n", "; "))
                     continue
-                persisted_names[source] = (decl["store"], decl["folder"])
+                persisted_names.add(source)
                 self._persist_requested(where, decl)
                 self.warn(
                     "persistent_volume",
@@ -1094,8 +1080,8 @@ class _Checker:
             self.error("size_missing", "resources", f"has no size for {', '.join(missing)}")
 
 
-def _check(text: str, fmt: str, channel: ContainerChannel | None, overlay: Any = None) -> _Checker:
-    checker = _Checker(channel, overlay)
+def _check(text: str, fmt: str, channel: ContainerChannel | None, overlay: Any = None, persist: Any = None) -> _Checker:
+    checker = _Checker(channel, overlay, persist)
     if fmt not in SUPPORTED_FORMATS:
         checker.error("unsupported_format", "", unsupported_format_message(fmt))
         return checker
@@ -1132,7 +1118,7 @@ def validate_instance_spec(
     *,
     format: str = DEFAULT_FORMAT,
     channel: ContainerChannel | None = None,
-    # (the channel's ``environment`` is read from ``channel``)
+    # (the channel's ``environment`` and ``persist`` are read from ``channel``)
 ) -> InstanceSpecReport:
     """Validate an instance spec's content, with the channel that runs it when known.
 
@@ -1140,10 +1126,13 @@ def validate_instance_spec(
     container-side ports, health checks, volumes, networks, service names). With
     ``channel``, also that every entry targets a declared service and port and
     that ``resources`` gives each service of the spec a size, and that each service in the
-    channel's ``environment`` exists in the file. Never raises on bad input: the problems
+    channel's ``environment`` exists in the file, and that each volume in its ``persist`` is a volume of the
+    file that a service mounts. Never raises on bad input: the problems
     are in the report.
     """
-    return _check(text, format, channel, channel.environment if channel else None).report
+    return _check(
+        text, format, channel, channel.environment if channel else None, channel.persist if channel else None
+    ).report
 
 
 def compile_instance_spec(
@@ -1152,6 +1141,7 @@ def compile_instance_spec(
     *,
     format: str = DEFAULT_FORMAT,
     environment: dict[str, dict[str, str]] | None = None,
+    persist: Mapping[str, ChannelPersist | Mapping[str, Any]] | None = None,
 ) -> CompiledInstanceSpec:
     """Compile a valid spec and the resources of each of its services into the agent's normalized manifest.
 
@@ -1164,10 +1154,14 @@ def compile_instance_spec(
     ``environment`` is the channel's ``environment``, merged here and only here: a value
     overrides the file's own ``environment`` for that name, and the Compose bytes are never edited.
 
+    ``persist`` is the channel's ``persist``: each volume it names (which the file must declare and a service
+    mount) becomes a ``persist`` directory of the manifest at each mount path, with the store, folder, mode,
+    exclude and owner it gives; any other volume stays scratch.
+
     PROPOSAL (unitysvc-core#105, open 3): that core compiles, rather than the
     agent, is not decided.
     """
-    checker = _check(text, format, None, environment)
+    checker = _check(text, format, None, environment, persist)
     report = checker.report
     names = list(checker.ports)
     for service in resources:

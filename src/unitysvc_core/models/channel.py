@@ -47,6 +47,7 @@ from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
 
 from .container import DNS_LABEL_RE, ContainerEntry, Sizes, check_sizes
+from .manifest import MAX_EXCLUDES, check_exclude, parse_persist_source
 from .validators import validate_channel_name
 
 # A string field that is a value or a template rendering to one.
@@ -397,7 +398,75 @@ class McpChannel(_ChannelBase):
 
 
 _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# A Compose volume name.
+_VOLUME_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 _PARAM_REFERENCE_RE = re.compile(r"\{\{\s*params\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}")
+
+
+class ChannelPersist(BaseModel):
+    """What a channel persists of one named volume of the instance spec (unitysvc/unitysvc#3098).
+
+    The file only says a directory is a volume (``volumes: [home:/home/app]``); whether its files outlive the
+    instance is the channel's offer, so one file can back a channel that persists (production) and one that
+    does not (a demo). The key of ``ContainerChannel.persist`` is the volume's name, which the file must
+    declare and some service must mount.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str | None = Field(
+        default=None,
+        description=(
+            "Where the files live: ``{{ enrollment.path }}/<folder>`` (the instance's own folder in the "
+            "customer's storage; default: a folder named like the volume) or ``{{ home.path }}/<folder>`` "
+            "(a folder of the customer's home, which the customer must grant). Nothing else is accepted."
+        ),
+    )
+    mode: Literal["rw", "ro"] = Field(
+        default="rw", description="``rw``: restored and copied back; ``ro``: restored only, never copied back"
+    )
+    exclude: list[str] | None = Field(
+        default=None, description="Globs, relative to the directory, that are neither restored nor copied back"
+    )
+    uid: int | None = Field(
+        default=None, ge=0, strict=True, description="Owner of the restored files; with gid, or neither"
+    )
+    gid: int | None = Field(default=None, ge=0, strict=True)
+
+    @field_validator("source")
+    @classmethod
+    def _check_source(cls, value: str | None) -> str | None:
+        if value is not None:
+            parse_persist_source(value)
+        return value
+
+    @field_validator("exclude")
+    @classmethod
+    def _check_exclude(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None:
+            if len(value) > MAX_EXCLUDES:
+                raise ValueError(f"at most {MAX_EXCLUDES} exclude patterns")
+            for pattern in value:
+                check_exclude(pattern)
+        return value
+
+    @model_validator(mode="after")
+    def _check_owner(self) -> "ChannelPersist":
+        if (self.uid is None) != (self.gid is None):
+            raise ValueError("give both uid and gid, or neither")
+        return self
+
+    def resolve(self, volume: str) -> dict[str, Any]:
+        """The manifest's ``persist`` fields, minus the mount path: the store and folder ``source`` names."""
+        store, folder = parse_persist_source(self.source or "{{ enrollment.path }}/" + volume)
+        return {
+            "store": store,
+            "folder": folder,
+            "mode": self.mode,
+            "exclude": self.exclude,
+            "uid": self.uid,
+            "gid": self.gid,
+        }
 
 
 class ContainerChannel(_ChannelBase):
@@ -435,6 +504,15 @@ class ContainerChannel(_ChannelBase):
             "starts (unitysvc/unitysvc#3023). Overrides the same name in the spec."
         ),
     )
+    persist: dict[str, ChannelPersist] | None = Field(
+        default=None,
+        description=(
+            "The volumes of the instance spec whose files outlive the instance, ``{volume: {source, mode, "
+            "exclude, uid, gid}}`` (unitysvc/unitysvc#3098). Each key must be a top-level volume of the spec that "
+            "a service mounts; a volume not named here is scratch. Needs the customer's ``service:storage`` "
+            "(or ``service:home``) grant, requested in ``customer_access_requests``."
+        ),
+    )
 
     @field_validator("resources", mode="before")
     @classmethod
@@ -454,6 +532,14 @@ class ContainerChannel(_ChannelBase):
                     raise ValueError(f"{service}.{key}: {key!r} is not a valid environment variable name")
                 if "{{" in _PARAM_REFERENCE_RE.sub("", text):
                     raise ValueError(f"{service}.{key}: the only template allowed is {{{{ params.NAME }}}}")
+        return value
+
+    @field_validator("persist")
+    @classmethod
+    def _check_persist(cls, value: dict[str, ChannelPersist] | None) -> dict[str, ChannelPersist] | None:
+        for volume in value or {}:
+            if not _VOLUME_NAME_RE.fullmatch(volume):
+                raise ValueError(f"{volume!r} is not a volume name")
         return value
 
     @model_validator(mode="after")
