@@ -417,7 +417,7 @@ class ChannelPersist(BaseModel):
     source: str | None = Field(
         default=None,
         description=(
-            "Where the files live: ``{{ enrollment.path }}/<folder>`` (the instance's own folder in the "
+            "Where the files live: ``{{ storage.path }}/<folder>`` (the instance's own folder in the "
             "customer's storage; default: a folder named like the volume) or ``{{ home.path }}/<folder>`` "
             "(a folder of the customer's home, which the customer must grant). Nothing else is accepted."
         ),
@@ -458,7 +458,7 @@ class ChannelPersist(BaseModel):
 
     def resolve(self, volume: str) -> dict[str, Any]:
         """The manifest's ``persist`` fields, minus the mount path: the store and folder ``source`` names."""
-        store, folder = parse_persist_source(self.source or "{{ enrollment.path }}/" + volume)
+        store, folder = parse_persist_source(self.source or "{{ storage.path }}/" + volume)
         return {
             "store": store,
             "folder": folder,

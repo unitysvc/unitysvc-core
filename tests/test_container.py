@@ -1580,7 +1580,7 @@ class TestPersistedVolumes:
         ]
 
     def test_the_source_may_be_spaced_and_names_a_subfolder_of_the_enrollment(self) -> None:
-        persist = {"home": {"source": "{{enrollment.path}}/state/db"}}
+        persist = {"home": {"source": "{{storage.path}}/state/db"}}
         assert _persisted(_persisting(), persist)[0]["folder"] == "state/db"
 
     def test_the_other_volumes_of_a_service_stay_scratch(self) -> None:
@@ -1591,13 +1591,14 @@ class TestPersistedVolumes:
 
     BAD = [
         ({"source": "s3://bucket/x"}, "source"),
-        ({"source": "{{ enrollment.path }}"}, "source"),  # a folder is required
-        ({"source": "{{ enrollment.path }}/"}, "source"),
-        ({"source": "{{ enrollment.path }}/../other"}, "source"),
-        ({"source": "{{ enrollment.path }}/a//b"}, "source"),
-        ({"source": "{{ enrollment.path }}/a b"}, "source"),
-        ({"source": "{{ enrollment.path }}/.hidden"}, "source"),
-        ({"source": "{{ enrollment.path }}/a..b"}, "source"),
+        ({"source": "{{ storage.path }}"}, "source"),  # a folder is required
+        ({"source": "{{ storage.path }}/"}, "source"),
+        ({"source": "{{ storage.path }}/../other"}, "source"),
+        ({"source": "{{ storage.path }}/a//b"}, "source"),
+        ({"source": "{{ storage.path }}/a b"}, "source"),
+        ({"source": "{{ storage.path }}/.hidden"}, "source"),
+        ({"source": "{{ storage.path }}/a..b"}, "source"),
+        ({"source": "{{ enrollment.path }}/x"}, "source"),  # it is `storage`, as the service:storage grant
         ({"source": "{{ service_name }}/x"}, "source"),
         ({"source": "{{ params.X }}/x"}, "source"),
         ({"source": 5}, "source"),
@@ -1687,7 +1688,7 @@ class TestPersistedVolumes:
                 "volumes": {"a": {}, "b": {}},
             }
         )
-        same = {"source": "{{ enrollment.path }}/same"}
+        same = {"source": "{{ storage.path }}/same"}
         errors = _compile_errors(text, {"a": same, "b": same})
         assert [e.code for e in errors] == ["duplicate_mount"] and "same folder" in errors[0].message
 

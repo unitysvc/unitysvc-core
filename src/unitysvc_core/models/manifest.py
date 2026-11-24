@@ -121,10 +121,10 @@ def check_folder(value: str) -> str:
     return value
 
 
-# `source` of a channel's persist entry: `{{ enrollment.path }}/<folder>` (the instance's enrollment folder in
-# the customer's storage) or `{{ home.path }}/<folder>` (a folder of the customer's home).
-_PERSIST_SOURCE_RE = re.compile(r"^\{\{\s*(enrollment|home)\.path\s*\}\}/(.+)$")
-_PERSIST_STORES = {"enrollment": "storage", "home": "home"}
+# `source` of a channel's persist entry: `{{ storage.path }}/<folder>` (the instance's enrollment folder in
+# the customer's storage, what `service:storage` grants) or `{{ home.path }}/<folder>` (a folder of the
+# customer's home).
+_PERSIST_SOURCE_RE = re.compile(r"^\{\{\s*(storage|home)\.path\s*\}\}/(.+)$")
 
 
 def parse_persist_source(source: object) -> tuple[str, str]:
@@ -132,10 +132,10 @@ def parse_persist_source(source: object) -> tuple[str, str]:
     match = _PERSIST_SOURCE_RE.fullmatch(source) if isinstance(source, str) else None
     if match is None:
         raise ValueError(
-            "`source` must be `{{ enrollment.path }}/<folder>` (the instance's own storage) or "
+            "`source` must be `{{ storage.path }}/<folder>` (the instance's own storage) or "
             "`{{ home.path }}/<folder>` (a folder of the customer's home): quote it, it starts with `{{`"
         )
-    return _PERSIST_STORES[match.group(1)], check_folder(match.group(2))
+    return match.group(1), check_folder(match.group(2))
 
 
 def check_exclude(pattern: str) -> str:
@@ -155,8 +155,8 @@ class ManifestPersist(BaseModel):
     Before the service starts the agent restores ``folder`` of ``store`` into the directory, while it runs and
     once more when it stops it copies new and changed files back (never deleting), and the same files are
     there at the next start, on this cluster or another. ``store`` is ``storage`` (the instance's enrollment
-    folder, which the key the agent hands the sync derives from the enrollment, so the manifest names no
-    enrollment) or ``home`` (a folder of the customer's home, which the customer must have granted).
+    folder, which the platform resolves from the enrollment, so the manifest names no enrollment) or ``home``
+    (a folder of the customer's home, which the customer must have granted).
     """
 
     model_config = ConfigDict(extra="forbid")

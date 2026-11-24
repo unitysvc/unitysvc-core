@@ -133,7 +133,7 @@
     },
     "ManifestPersist": {
       "additionalProperties": false,
-      "description": "A path in the container whose files outlive the instance (unitysvc/unitysvc#3098).\n\nBefore the service starts the agent restores ``folder`` of ``store`` into the directory, while it runs and\nonce more when it stops it copies new and changed files back (never deleting), and the same files are\nthere at the next start, on this cluster or another. ``store`` is ``storage`` (the instance's enrollment\nfolder, which the key the agent hands the sync derives from the enrollment, so the manifest names no\nenrollment) or ``home`` (a folder of the customer's home, which the customer must have granted).",
+      "description": "A path in the container whose files outlive the instance (unitysvc/unitysvc#3098).\n\nBefore the service starts the agent restores ``folder`` of ``store`` into the directory, while it runs and\nonce more when it stops it copies new and changed files back (never deleting), and the same files are\nthere at the next start, on this cluster or another. ``store`` is ``storage`` (the instance's enrollment\nfolder, which the platform resolves from the enrollment, so the manifest names no enrollment) or ``home``\n(a folder of the customer's home, which the customer must have granted).",
       "properties": {
         "exclude": {
           "anyOf": [
