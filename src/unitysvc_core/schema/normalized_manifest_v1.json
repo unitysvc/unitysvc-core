@@ -131,6 +131,92 @@
       "title": "ManifestHealth",
       "type": "object"
     },
+    "ManifestPersist": {
+      "additionalProperties": false,
+      "description": "A path in the container whose files outlive the instance (unitysvc/unitysvc#3098).\n\nBefore the service starts the agent restores ``folder`` of ``store`` into the directory, while it runs and\nonce more when it stops it copies new and changed files back (never deleting), and the same files are\nthere at the next start, on this cluster or another. ``store`` is ``storage`` (the instance's enrollment\nfolder, which the key the agent hands the sync derives from the enrollment, so the manifest names no\nenrollment) or ``home`` (a folder of the customer's home, which the customer must have granted).",
+      "properties": {
+        "exclude": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Globs, relative to the directory, left out both ways",
+          "title": "Exclude"
+        },
+        "folder": {
+          "description": "Relative folder inside the store, without a leading or trailing slash",
+          "title": "Folder",
+          "type": "string"
+        },
+        "gid": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gid"
+        },
+        "mode": {
+          "default": "rw",
+          "description": "`rw`: restored and copied back; `ro`: restored only, never copied back",
+          "enum": [
+            "rw",
+            "ro"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "path": {
+          "description": "Normalized absolute path inside the container, below /",
+          "pattern": "^/.",
+          "title": "Path",
+          "type": "string"
+        },
+        "store": {
+          "description": "`storage`: the instance's enrollment folder; `home`: a folder of the customer's home",
+          "enum": [
+            "storage",
+            "home"
+          ],
+          "title": "Store",
+          "type": "string"
+        },
+        "uid": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Owner of the restored files; with gid, or neither",
+          "title": "Uid"
+        }
+      },
+      "required": [
+        "path",
+        "store",
+        "folder"
+      ],
+      "title": "ManifestPersist",
+      "type": "object"
+    },
     "ManifestResources": {
       "additionalProperties": false,
       "description": "What a service asks for and may use: resource name to Kubernetes quantity.",
@@ -258,6 +344,22 @@
           "description": "A DNS label; the Service name siblings reach it by",
           "title": "Name",
           "type": "string"
+        },
+        "persist": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ManifestPersist"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Directories restored from and copied back to the customer's storage",
+          "title": "Persist"
         },
         "ports": {
           "anyOf": [

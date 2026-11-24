@@ -1450,3 +1450,220 @@ class TestVersion0311Shapes:
         del doc["file_path"]
         doc["external_url"] = "https://raw.githubusercontent.com/o/r/" + "a" * 40 + "/compose.yaml"
         assert _errors(validator, offering) == []
+
+
+# --- persisted volumes (unitysvc/unitysvc#3098) ----------------------------------------------------------
+
+
+def _persisting(
+    declaration: Any = None, *, volumes: list[Any] | None = None, extra: dict[str, Any] | None = None
+) -> str:
+    """A one-service file whose volume ``home`` carries ``x-unitysvc-persist: declaration``."""
+    base = {"image": f"example/app{DIGEST}", "ports": ["8080"], "volumes": volumes or ["home:/home/app"]}
+    base.update(extra or {})
+    volume = {} if declaration is None else {"x-unitysvc-persist": declaration}
+    return yaml.safe_dump({"services": {"web": base}, "volumes": {"home": volume}})
+
+
+def _persist_of(text: str) -> list[dict[str, Any]]:
+    manifest = compile_instance_spec(text, _res()).manifest
+    return [p.model_dump(exclude_none=True) for p in manifest.services[0].persist or []]
+
+
+class TestPersistedVolumes:
+    def test_the_declaration_defaults_to_the_enrollments_folder_named_like_the_volume(self) -> None:
+        report = validate_instance_spec(_persisting({}))
+        assert report.ok, report.errors
+        assert _persist_of(_persisting({})) == [
+            {"path": "/home/app", "store": "storage", "folder": "home", "mode": "rw"}
+        ]
+
+    def test_a_persisted_volume_is_not_scratch(self) -> None:
+        text = _persisting({})
+        report = validate_instance_spec(text)
+        assert not [w for w in report.warnings if w.code == "scratch_volume"]
+        warning = next(w for w in report.warnings if w.code == "persistent_volume")
+        assert not warning.loud and "outlive the instance" in warning.message
+        assert compile_instance_spec(text, _res()).manifest.services[0].scratch is None
+
+    def test_every_field(self) -> None:
+        text = _persisting(
+            {
+                "source": "{{ home.path }}/projects/a",
+                "mode": "ro",
+                "exclude": ["cache/**", "*.tmp"],
+                "uid": 1000,
+                "gid": 1000,
+            }
+        )
+        assert _persist_of(text) == [
+            {
+                "path": "/home/app",
+                "store": "home",
+                "folder": "projects/a",
+                "mode": "ro",
+                "exclude": ["cache/**", "*.tmp"],
+                "uid": 1000,
+                "gid": 1000,
+            }
+        ]
+
+    def test_the_source_may_be_spaced_and_names_a_subfolder_of_the_enrollment(self) -> None:
+        assert _persist_of(_persisting({"source": "{{enrollment.path}}/state/db"}))[0]["folder"] == "state/db"
+
+    def test_an_empty_or_true_declaration_persists(self) -> None:
+        assert _persist_of(_persisting(True))[0]["store"] == "storage"
+
+    def test_the_other_volumes_of_a_service_stay_scratch(self) -> None:
+        text = _persisting({}, volumes=["home:/home/app", "/cache"])
+        manifest = compile_instance_spec(text, _res()).manifest
+        assert [p.path for p in manifest.services[0].persist or []] == ["/home/app"]
+        assert [s.path for s in manifest.services[0].scratch or []] == ["/cache"]
+
+    @pytest.mark.parametrize(
+        ("declaration", "path"),
+        [
+            ({"source": "s3://bucket/x"}, "source"),
+            ({"source": "{{ enrollment.path }}"}, "source"),  # a folder is required
+            ({"source": "{{ enrollment.path }}/"}, "source"),
+            ({"source": "{{ enrollment.path }}/../other"}, "source"),
+            ({"source": "{{ enrollment.path }}/a//b"}, "source"),
+            ({"source": "{{ enrollment.path }}/a b"}, "source"),
+            ({"source": "{{ enrollment.path }}/.hidden"}, "source"),
+            ({"source": "{{ enrollment.path }}/a..b"}, "source"),
+            ({"source": "{{ service_name }}/x"}, "source"),
+            ({"source": "{{ params.X }}/x"}, "source"),
+            ({"source": 5}, "source"),
+            ({"mode": "wo"}, "mode"),
+            ({"exclude": "cache"}, "exclude"),
+            ({"exclude": ["/etc"]}, "exclude"),
+            ({"exclude": ["../x"]}, "exclude"),
+            ({"exclude": ["[a"]}, "exclude"),
+            ({"exclude": [f"p{i}" for i in range(33)]}, "exclude"),
+            ({"uid": 1000}, ""),
+            ({"uid": -1, "gid": 0}, ""),
+            ({"uid": True, "gid": 1}, ""),
+            ({"colour": "red"}, "colour"),
+        ],
+    )
+    def test_a_bad_declaration_is_an_error(self, declaration: dict[str, Any], path: str) -> None:
+        report = validate_instance_spec(_persisting(declaration))
+        assert not report.ok
+        assert all(i.path.startswith("volumes.home.x-unitysvc-persist") for i in report.errors), report.errors
+        assert any(path in i.path for i in report.errors)
+
+    def test_the_declaration_must_be_a_mapping(self) -> None:
+        assert "bad_value" in _codes(validate_instance_spec(_persisting(["a"])))
+
+    def test_a_persistent_volume_cannot_be_mounted_twice(self) -> None:
+        text = _persisting({}, volumes=["home:/a", "home:/b"])
+        assert "duplicate_mount" in _codes(validate_instance_spec(text))
+
+    def test_a_persisted_path_cannot_be_mounted_twice(self) -> None:
+        text = yaml.safe_dump(
+            {
+                "services": {"web": {"image": f"example/app{DIGEST}", "volumes": ["home:/data", "/data"]}},
+                "volumes": {"home": {"x-unitysvc-persist": {}}},
+            }
+        )
+        assert "duplicate_mount" in _codes(validate_instance_spec(text))
+
+    def test_two_volumes_cannot_share_a_folder(self) -> None:
+        text = yaml.safe_dump(
+            {
+                "services": {"web": {"image": f"example/app{DIGEST}", "volumes": ["a:/a", "b:/b"]}},
+                "volumes": {
+                    "a": {"x-unitysvc-persist": {"source": "{{ enrollment.path }}/same"}},
+                    "b": {"x-unitysvc-persist": {"source": "{{ enrollment.path }}/same"}},
+                },
+            }
+        )
+        report = validate_instance_spec(text)
+        assert "duplicate_mount" in _codes(report) and "same folder" in report.errors[0].message
+
+    def test_other_extensions_are_still_ignored_and_other_keys_still_rejected(self) -> None:
+        ok = yaml.safe_dump({"services": {"web": {"image": f"example/app{DIGEST}"}}, "volumes": {"v": {"x-other": 1}}})
+        assert validate_instance_spec(ok).ok
+        bad = yaml.safe_dump(
+            {"services": {"web": {"image": f"example/app{DIGEST}"}}, "volumes": {"v": {"driver": "nfs"}}}
+        )
+        report = validate_instance_spec(bad)
+        assert not report.ok and "x-unitysvc-persist" in report.errors[0].message
+
+    def test_the_manifest_schema_has_persist(self) -> None:
+        text = _persisting({"source": "{{ home.path }}/a", "mode": "ro", "exclude": ["*.tmp"], "uid": 1, "gid": 2})
+        manifest = compile_instance_spec(text, _res()).manifest.model_dump(mode="json", exclude_none=True)
+        assert list(Draft7Validator(MANIFEST_SCHEMA).iter_errors(manifest)) == []
+        assert manifest["services"][0]["persist"][0]["store"] == "home"
+        bad = {"services": [{"name": "a", "image": "i", "persist": [{"path": "/d", "store": "s3", "folder": "x"}]}]}
+        assert list(Draft7Validator(MANIFEST_SCHEMA).iter_errors(bad)) != []
+        with pytest.raises(ValidationError):
+            NormalizedManifest.model_validate(bad)
+
+    def test_the_model_refuses_what_the_agent_would(self) -> None:
+        def service(**persist: Any) -> dict[str, Any]:
+            entry = {"path": "/d", "store": "storage", "folder": "x", **persist}
+            return {"services": [{"name": "a", "image": "i", "persist": [entry]}]}
+
+        NormalizedManifest.model_validate(service())
+        for change in (
+            {"path": "d"},
+            {"path": "/"},
+            {"folder": "/x"},
+            {"folder": "../x"},
+            {"folder": ""},
+            {"mode": "wo"},
+            {"uid": 1},
+            {"exclude": ["/x"]},
+            {"colour": "red"},
+        ):
+            with pytest.raises(ValidationError):
+                NormalizedManifest.model_validate(service(**change))
+        with pytest.raises(ValidationError, match="distinct"):
+            NormalizedManifest.model_validate(
+                {
+                    "services": [
+                        {
+                            "name": "a",
+                            "image": "i",
+                            "persist": [
+                                {"path": "/d", "store": "storage", "folder": "x"},
+                                {"path": "/d", "store": "storage", "folder": "y"},
+                            ],
+                        }
+                    ]
+                }
+            )
+        with pytest.raises(ValidationError, match="distinct"):
+            NormalizedManifest.model_validate(
+                {
+                    "services": [
+                        {
+                            "name": "a",
+                            "image": "i",
+                            "scratch": [{"path": "/d"}],
+                            "persist": [{"path": "/d", "store": "storage", "folder": "x"}],
+                        }
+                    ]
+                }
+            )
+        with pytest.raises(ValidationError, match="share a folder"):
+            NormalizedManifest.model_validate(
+                {
+                    "services": [
+                        {
+                            "name": "a",
+                            "image": "i",
+                            "persist": [
+                                {"path": "/d", "store": "storage", "folder": "x"},
+                                {"path": "/e", "store": "storage", "folder": "x"},
+                            ],
+                        }
+                    ]
+                }
+            )
+
+    def test_the_agents_wire_shape(self) -> None:
+        """The agent decodes strictly, with exactly these keys (unitysvc-compute-k8s intent.Persist)."""
+        entry = _persist_of(_persisting({"mode": "ro", "exclude": ["a"], "uid": 0, "gid": 0}))[0]
+        assert set(entry) == {"path", "store", "folder", "mode", "exclude", "uid", "gid"}

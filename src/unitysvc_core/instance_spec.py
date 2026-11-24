@@ -39,10 +39,13 @@ from .models.channel import ContainerChannel
 from .models.container import DNS_LABEL_RE, ResourceSet, check_resolved
 from .models.manifest import (
     ManifestHealth,
+    ManifestPersist,
     ManifestResources,
     ManifestScratch,
     ManifestService,
     NormalizedManifest,
+    check_exclude,
+    check_folder,
 )
 
 DEFAULT_FORMAT = "compose"
@@ -90,6 +93,13 @@ _REJECTED: dict[str, str] = {
     "mem_limit": "resources come from the channel's `resources`",
     "cpus": "resources come from the channel's `resources`",
 }
+# The extension on a top-level volume that makes it persistent (unitysvc/unitysvc#3098).
+PERSIST_KEY = "x-unitysvc-persist"
+_PERSIST_KEYS = frozenset({"source", "mode", "exclude", "uid", "gid"})
+# `source` names where the files live: `{{ enrollment.path }}/<folder>` (the instance's enrollment folder in
+# the customer's storage) or `{{ home.path }}/<folder>` (a folder of the customer's home).
+_PERSIST_SOURCE_RE = re.compile(r"^\{\{\s*(enrollment|home)\.path\s*\}\}/(.+)$")
+_PERSIST_STORES = {"enrollment": "storage", "home": "home"}
 _TOP_IGNORED = frozenset({"name", "version", "networks"})
 _TOP_ALLOWED = frozenset({"services", "volumes"}) | _TOP_IGNORED
 _HEALTHCHECK_KEYS = frozenset({"test", "interval", "timeout", "retries", "start_period", "start_interval", "disable"})
@@ -290,6 +300,8 @@ class _Checker:
         self.dropped: list[DroppedKey] = []
         self.services: list[ManifestService] = []
         self.ports: dict[str, list[int]] = {}
+        # Volumes declared persistent: name -> {store, folder, mode, exclude, uid, gid}.
+        self.persisted: dict[str, dict[str, Any]] = {}
 
     # -- recording
     def error(self, code: str, path: str, message: str) -> None:
@@ -379,12 +391,78 @@ class _Checker:
             for key, value in volume.items():
                 if key == "driver" and value == "local":
                     continue
+                if key == PERSIST_KEY:
+                    if (decl := self._persist_declaration(str(name), value, f"{path}.{key}")) is not None:
+                        self.persisted[str(name)] = decl
+                    continue
                 if isinstance(key, str) and key.startswith("x-"):
                     continue
                 self.error(
-                    "rejected_key", f"{path}.{key}", f"`{key}` is not allowed on a volume: only a plain scratch volume"
+                    "rejected_key",
+                    f"{path}.{key}",
+                    f"`{key}` is not allowed on a volume: only a plain scratch volume, or `{PERSIST_KEY}`",
                 )
         return {str(n) for n in volumes}
+
+    def _persist_declaration(self, volume: str, value: Any, at: str) -> dict[str, Any] | None:
+        """Check ``x-unitysvc-persist`` on a volume; return what each mount of it becomes, or None if invalid.
+
+        ``source`` is ``{{ enrollment.path }}/<folder>`` (default: the folder named like the volume) or
+        ``{{ home.path }}/<folder>``. It is resolved here, not by the platform: the enrollment's own folder
+        is implied by the key the instance syncs with, so the manifest never names an enrollment.
+        """
+        if value is None or value is True:
+            value = {}
+        if not isinstance(value, dict):
+            self.error("bad_value", at, f"`{PERSIST_KEY}` must be a mapping (or empty)")
+            return None
+        before = len(self.report.errors)
+        for key in value:
+            if key not in _PERSIST_KEYS:
+                self.error(
+                    "unsupported_key",
+                    f"{at}.{key}",
+                    f"`{key}` is not supported on `{PERSIST_KEY}` (use {', '.join(sorted(_PERSIST_KEYS))})",
+                )
+        source = value.get("source", "{{ enrollment.path }}/" + volume)
+        store, folder = "storage", ""
+        match = _PERSIST_SOURCE_RE.fullmatch(source) if isinstance(source, str) else None
+        if match is None:
+            self.error(
+                "bad_value",
+                f"{at}.source",
+                "`source` must be `{{ enrollment.path }}/<folder>` (the instance's own storage) or "
+                "`{{ home.path }}/<folder>` (a folder of the customer's home): quote it, it starts with `{{`",
+            )
+        else:
+            store, folder = _PERSIST_STORES[match.group(1)], match.group(2)
+            try:
+                check_folder(folder)
+            except ValueError as exc:
+                self.error("bad_value", f"{at}.source", str(exc))
+        mode = value.get("mode", "rw")
+        if mode not in ("rw", "ro"):
+            self.error(
+                "bad_value", f"{at}.mode", "`mode` must be `rw` (restored and copied back) or `ro` (restored only)"
+            )
+        exclude = value.get("exclude")
+        if exclude is not None:
+            if not isinstance(exclude, list) or not all(isinstance(e, str) for e in exclude) or len(exclude) > 32:
+                self.error("bad_value", f"{at}.exclude", "`exclude` must be a list of at most 32 patterns")
+            else:
+                for pattern in exclude:
+                    try:
+                        check_exclude(pattern)
+                    except ValueError as exc:
+                        self.error("bad_value", f"{at}.exclude", str(exc))
+        owner = {k: value.get(k) for k in ("uid", "gid")}
+        if any(v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < 0) for v in owner.values()):
+            self.error("bad_value", at, "`uid` and `gid` must be non-negative integers")
+        elif (owner["uid"] is None) != (owner["gid"] is None):
+            self.error("bad_value", at, "give both `uid` and `gid`, or neither")
+        if len(self.report.errors) > before:
+            return None
+        return {"store": store, "folder": folder, "mode": mode, "exclude": exclude, **owner}
 
     # -- a service
     def _service(
@@ -448,7 +526,7 @@ class _Checker:
         command = self._words(f"{at}.entrypoint", service.get("entrypoint"))
         args = self._words(f"{at}.command", service.get("command"))
         health = self._healthcheck(name, service.get("healthcheck"), ports)
-        scratch = self._volumes(name, service.get("volumes"), volumes, used_volumes)
+        scratch, persist = self._volumes(name, service.get("volumes"), volumes, used_volumes)
         self._depends_on(name, service.get("depends_on"), all_services)
         self._networks(name, service.get("networks"), declared_networks, service_networks)
         for key, check in (("working_dir", str), ("user", (str, int)), ("read_only", bool)):
@@ -473,6 +551,7 @@ class _Checker:
                         args=args or None,
                         health=health,
                         scratch=[ManifestScratch(path=path) for path in scratch] or None,
+                        persist=persist or None,
                     )
                 )
             except ValueError as exc:
@@ -769,15 +848,20 @@ class _Checker:
             self.error("bad_value", at, str(exc).replace("\n", "; "))
             return None
 
-    def _volumes(self, name: str, volumes: Any, declared: set[str], used: dict[str, str]) -> list[str]:
-        """Check a service's mounts; return the scratch paths (each a named or anonymous volume mount)."""
+    def _volumes(
+        self, name: str, volumes: Any, declared: set[str], used: dict[str, str]
+    ) -> tuple[list[str], list[ManifestPersist]]:
+        """Check a service's mounts; return the scratch paths (each an anonymous volume, or a named one that
+        is not persistent) and the persisted directories (each a mount of a volume with ``x-unitysvc-persist``)."""
         at = f"services.{name}.volumes"
         scratch: list[str] = []
+        persist: list[ManifestPersist] = []
+        persisted_names: dict[str, tuple[str, str]] = {}  # persistent volumes mounted so far, with their folders
         if volumes is None:
-            return scratch
+            return scratch, persist
         if not isinstance(volumes, list):
             self.error("bad_value", at, "`volumes` must be a list")
-            return scratch
+            return scratch, persist
         for index, item in enumerate(volumes):
             where = f"{at}[{index}]"
             source: Any
@@ -831,8 +915,42 @@ class _Checker:
             if target == "/":
                 self.error("bad_value", where, "a volume cannot be mounted at the container's root")
                 continue
-            if target in scratch:
+            if target in scratch or any(p.path == target for p in persist):
                 self.error("duplicate_mount", where, f"{target} is mounted twice in this service")
+                continue
+            if source is not None and source in self.persisted:
+                decl = self.persisted[source]
+                if source in persisted_names:
+                    self.error(
+                        "duplicate_mount",
+                        where,
+                        f"persistent volume {source!r} is mounted at two paths of this service",
+                    )
+                    continue
+                if clash := next(
+                    (v for v, (st, fo) in persisted_names.items() if (st, fo) == (decl["store"], decl["folder"])), None
+                ):
+                    self.error(
+                        "duplicate_mount",
+                        where,
+                        f"volumes {clash!r} and {source!r} persist to the same folder "
+                        f"({decl['store']}: {decl['folder']})",
+                    )
+                    continue
+                try:
+                    persist.append(ManifestPersist(path=target, **decl))
+                except ValueError as exc:
+                    self.error("bad_value", where, str(exc).replace("\n", "; "))
+                    continue
+                persisted_names[source] = (decl["store"], decl["folder"])
+                self.warn(
+                    "persistent_volume",
+                    where,
+                    f"volume {source!r} at {target} is persisted: its files are restored before the service starts "
+                    "and copied back while it runs and when it stops, so they outlive the instance. Nothing is "
+                    "deleted from storage; empty files, symlinks and files over 1 GiB are not stored; a crash can "
+                    "lose the last 30 seconds of writes",
+                )
                 continue
             scratch.append(target)
             label = f"volume {source!r}" if source else "an anonymous volume"
@@ -843,7 +961,7 @@ class _Checker:
                 "ephemeral-storage): its data survives a container restart but not a replacement of the instance",
                 loud=True,
             )
-        return scratch
+        return scratch, persist
 
     def _depends_on(self, name: str, depends_on: Any, all_services: dict[Any, Any]) -> None:
         at = f"services.{name}.depends_on"
