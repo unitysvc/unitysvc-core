@@ -1473,9 +1473,9 @@ HOME_REQUEST = {
 GRANTS = [STORAGE_REQUEST, {**HOME_REQUEST, "options": "path=*"}]
 
 
-def _vol(persist: Any = None) -> dict[str, Any]:
-    """A channel's ``volumes`` entry for ``home`` that persists it as ``persist`` says (``None``: no kind)."""
-    return {"persist": persist} if persist is not None else {}
+def _vol(options: dict[str, Any] | None = None) -> dict[str, Any]:
+    """A channel's ``volumes`` entry that persists the volume with these options."""
+    return {"type": "persist", **(options or {})}
 
 
 def _persist_channel(volumes: Any, requests: list[dict[str, Any]] | None = None) -> ContainerChannel:
@@ -1553,8 +1553,6 @@ class TestPersistedVolumes:
         assert _persisted(_persisting(), {"home": _vol({})}) == [
             {"path": "/home/app", "store": "storage", "folder": "home", "mode": "rw"}
         ]
-        assert _persisted(_persisting(), {"home": {"persist": None}}) == []
-        assert _persisted(_persisting(), {"home": None}) == []
 
     def test_a_persisted_volume_is_not_scratch(self) -> None:
         text = _persisting()
@@ -1636,14 +1634,19 @@ class TestPersistedVolumes:
 
     def test_a_volume_without_a_kind_is_scratch(self) -> None:
         text = _persisting()
-        for volumes in ({"home": {}}, {"home": None}, {"home": {"persist": None}}, {}):
+        for volumes in ({"home": {}}, {"home": None}, {"home": {"type": "scratch"}}, {}):
             manifest = compile_instance_spec(text, _res(), volumes=volumes).manifest.services[0]
             assert manifest.persist is None and [s.path for s in manifest.scratch or []] == ["/home/app"]
 
     def test_the_channel_refuses_a_kind_it_does_not_know(self) -> None:
         with pytest.raises(ValidationError):
-            ContainerChannel.model_validate(_channel(volumes={"home": {"block": {"size": "10Gi"}}}))
-        assert any("block" in e.message for e in _compile_errors(_persisting(), {"home": {"block": {}}}))
+            ContainerChannel.model_validate(_channel(volumes={"home": {"type": "block", "size": "10Gi"}}))
+        errors = _compile_errors(_persisting(), {"home": {"type": "block", "size": "10Gi"}})
+        assert errors and all(e.path == "volumes.home" for e in errors)
+        with pytest.raises(ValidationError):  # persist options on a scratch volume
+            ContainerChannel.model_validate(_channel(volumes={"home": {"type": "scratch", "mode": "ro"}}))
+        with pytest.raises(ValidationError):  # the old nested form
+            ContainerChannel.model_validate(_channel(volumes={"home": {"persist": {}}}))
 
     def test_a_persisted_name_must_be_a_volume_of_the_file(self) -> None:
         errors = _compile_errors(_persisting(), {"data": _vol({})})
@@ -1656,7 +1659,7 @@ class TestPersistedVolumes:
             {"services": {"web": {"image": f"example/app{DIGEST}"}}, "volumes": {"home": {}, "unused": {}}}
         )
         errors = _compile_errors(text, {"unused": _vol({})})
-        assert [e.code for e in errors] == ["persist_unmounted"] and errors[0].path == "volumes.unused.persist"
+        assert [e.code for e in errors] == ["persist_unmounted"] and errors[0].path == "volumes.unused"
 
     def test_only_a_named_volume_can_be_persisted(self) -> None:
         for name in ("/cache", "./data", "a b", ""):
@@ -1684,7 +1687,7 @@ class TestPersistedVolumes:
         )
         report = validate_instance_spec(text)
         assert [e.code for e in report.errors] == ["persist_in_file"]
-        assert "volumes.home.persist" in report.errors[0].message
+        assert "volumes.home" in report.errors[0].message and "type: persist" in report.errors[0].message
 
     # -- mounts
 

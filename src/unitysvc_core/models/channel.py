@@ -403,15 +403,28 @@ _VOLUME_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 _PARAM_REFERENCE_RE = re.compile(r"\{\{\s*params\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}")
 
 
-class ChannelPersist(BaseModel):
-    """How the files of a volume outlive the instance (unitysvc/unitysvc#3098).
+class ScratchVolume(BaseModel):
+    """A volume that is temporary space (the default): an ``emptyDir`` that survives a container restart, not a
+    replacement of the instance. A volume the channel does not name is this too."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["scratch"] = "scratch"
+
+
+class PersistVolume(BaseModel):
+    """A volume whose files outlive the instance (unitysvc/unitysvc#3098).
 
     The file only says a directory is a volume (``volumes: [home:/home/app]``); whether its files outlive the
     instance is the channel's offer, so one file can back a channel that persists (production) and one that
-    does not (a demo). They are copied to and from the customer's storage.
+    does not (a demo). They are copied to and from the customer's storage: restored before the service starts,
+    copied back while it runs and when it stops. Needs the customer's ``service:storage`` (or ``service:home``)
+    grant, requested in ``customer_access_requests``, and a service of the spec that mounts the volume.
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    type: Literal["persist"]
 
     source: str | None = Field(
         default=None,
@@ -450,7 +463,7 @@ class ChannelPersist(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _check_owner(self) -> "ChannelPersist":
+    def _check_owner(self) -> "PersistVolume":
         if (self.uid is None) != (self.gid is None):
             raise ValueError("give both uid and gid, or neither")
         return self
@@ -468,24 +481,23 @@ class ChannelPersist(BaseModel):
         }
 
 
-class ChannelVolume(BaseModel):
-    """How the channel backs one named volume of the instance spec.
+def _volume_type(value: Any) -> str:
+    """``type`` of a volume entry; scratch when it is not written."""
+    if isinstance(value, dict):
+        kind = value.get("type", "scratch")
+        return kind if isinstance(kind, str) else ""
+    return getattr(value, "type", "")
 
-    A volume the channel does not name, or names without a kind, is scratch (an ``emptyDir``: it survives a
-    container restart, not a replacement of the instance). ``persist`` is the one kind so far; another (a block
-    volume, say) would be a sibling key, and a volume has at most one.
-    """
 
-    model_config = ConfigDict(extra="forbid")
-
-    persist: ChannelPersist | None = Field(
-        default=None,
-        description=(
-            "Copy the volume's files to and from the customer's storage, so they outlive the instance. Needs "
-            "the customer's ``service:storage`` (or ``service:home``) grant, requested in "
-            "``customer_access_requests``, and a service of the spec that mounts the volume."
-        ),
-    )
+ChannelVolume = Annotated[
+    Annotated[ScratchVolume, Tag("scratch")] | Annotated[PersistVolume, Tag("persist")],
+    Discriminator(
+        _volume_type,
+        custom_error_type="invalid_volume_type",
+        custom_error_message="a volume's type must be one of 'scratch', 'persist'",
+    ),
+]
+"""How the channel backs one named volume of the instance spec; ``type`` (default ``scratch``) selects it."""
 
 
 class ContainerChannel(_ChannelBase):
@@ -526,9 +538,10 @@ class ContainerChannel(_ChannelBase):
     volumes: dict[str, ChannelVolume] | None = Field(
         default=None,
         description=(
-            "How each named volume of the instance spec is backed, ``{volume: {persist: {...}}}`` "
-            "(unitysvc/unitysvc#3098). Each key must be a top-level volume of the spec. A volume not named "
-            "here is scratch, so one file can back a channel that persists a volume and one that does not."
+            "How each named volume of the instance spec is backed, ``{volume: {type: persist, ...}}`` "
+            "(unitysvc/unitysvc#3098); ``type`` is ``scratch`` (the default) or ``persist``. Each key must be "
+            "a top-level volume of the spec. A volume not named here is scratch, so one file can back a channel "
+            "that persists a volume and one that does not."
         ),
     )
 

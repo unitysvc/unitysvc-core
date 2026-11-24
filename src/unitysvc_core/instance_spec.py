@@ -33,10 +33,10 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from .grants import parse_options
-from .models.channel import ChannelVolume, ContainerChannel
+from .models.channel import ChannelVolume, ContainerChannel, PersistVolume, ScratchVolume
 from .models.container import DNS_LABEL_RE, ResourceSet, check_resolved
 from .models.manifest import (
     ManifestHealth,
@@ -279,6 +279,9 @@ class _UniqueKeyLoader(yaml.SafeLoader):
         return super().construct_mapping(node, deep)
 
 
+_VOLUME: TypeAdapter[Any] = TypeAdapter(ChannelVolume)
+
+
 def _first_problem(exc: ValueError) -> str:
     """What is wrong, in one line: a pydantic error as ``field: message``, anything else as it reads."""
     if isinstance(exc, ValidationError):
@@ -304,7 +307,7 @@ class _Checker:
         self.dropped: list[DroppedKey] = []
         self.services: list[ManifestService] = []
         self.ports: dict[str, list[int]] = {}
-        # Volumes the channel persists (its `volumes.<name>.persist`): name -> {store, folder, mode, exclude, uid, gid}.
+        # Volumes the channel persists (`volumes.<name>` of type `persist`): name -> {store, folder, mode, ...}.
         self.persisted: dict[str, dict[str, Any]] = {}
 
     # -- recording
@@ -353,7 +356,7 @@ class _Checker:
             if volume not in used_volumes:
                 self.error(
                     "persist_unmounted",
-                    f"volumes.{volume}.persist",
+                    f"volumes.{volume}",
                     f"volume {volume!r} is not mounted by any service of the file, so there is nothing to persist",
                 )
         for service in self._overlay_env_services():
@@ -407,9 +410,9 @@ class _Checker:
                     self.error(
                         "persist_in_file",
                         f"{path}.{key}",
-                        "persistence is not declared in the file: set the channel's "
-                        f"`volumes.{name}.persist`, so the same file can back a channel that persists and one "
-                        "that does not",
+                        "persistence is not declared in the file: give the volume `type: persist` in the "
+                        f"channel's `volumes.{name}`, so the same file can back a channel that persists and "
+                        "one that does not",
                     )
                     continue
                 if isinstance(key, str) and key.startswith("x-"):
@@ -461,10 +464,10 @@ class _Checker:
     def _volumes_overlay(self, declared: set[str]) -> None:
         """Check the channel's ``volumes`` against the file: each key names a volume the file declares.
 
-        ``volumes`` is ``{volume: {persist: {source, mode, exclude, uid, gid}}}`` (a ``ChannelVolume``, or a
-        mapping that becomes one). The file keeps its plain ``home:/home/app`` mount whatever the channel does:
-        a volume not named here, or named without ``persist``, stays scratch; one with ``persist`` has each mount
-        of it persisted (``persist_unmounted`` when no service mounts it).
+        ``volumes`` is ``{volume: {type: persist, source, mode, exclude, uid, gid}}`` (a ``ScratchVolume`` or
+        ``PersistVolume``, or a mapping that becomes one). The file keeps its plain ``home:/home/app`` mount
+        whatever the channel does: a volume not named here, or of type ``scratch`` (the default), stays scratch;
+        one of type ``persist`` has each mount of it persisted (``persist_unmounted`` when no service mounts it).
         """
         volumes = self.volumes
         if volumes is None:
@@ -483,8 +486,10 @@ class _Checker:
                 )
                 continue
             try:
-                model = spec if isinstance(spec, ChannelVolume) else ChannelVolume.model_validate(spec or {})
-                decl = model.persist.resolve(str(volume)) if model.persist else None
+                model = (
+                    spec if isinstance(spec, (ScratchVolume, PersistVolume)) else _VOLUME.validate_python(spec or {})
+                )
+                decl = model.resolve(str(volume)) if isinstance(model, PersistVolume) else None
             except (ValidationError, ValueError) as exc:
                 self.error("bad_value", at, _first_problem(exc))
                 continue
@@ -889,7 +894,7 @@ class _Checker:
         self, name: str, volumes: Any, declared: set[str], used: dict[str, str]
     ) -> tuple[list[str], list[ManifestPersist]]:
         """Check a service's mounts; return the scratch paths (each an anonymous volume, or a named one that
-        is not persistent) and the persisted directories (each a mount of a volume the channel gives a ``persist``)."""
+        is not persistent) and the persisted directories (each a mount of a volume of type ``persist``)."""
         at = f"services.{name}.volumes"
         scratch: list[str] = []
         persist: list[ManifestPersist] = []
@@ -1130,7 +1135,7 @@ def validate_instance_spec(
     ``channel``, also that every entry targets a declared service and port and
     that ``resources`` gives each service of the spec a size, and that each service in the
     channel's ``environment`` exists in the file, and that each volume in its ``volumes`` is a volume of the
-    file (and, with ``persist``, one that a service mounts). Never raises on bad input: the problems
+    file (and, of type ``persist``, one that a service mounts). Never raises on bad input: the problems
     are in the report.
     """
     return _check(
@@ -1144,7 +1149,7 @@ def compile_instance_spec(
     *,
     format: str = DEFAULT_FORMAT,
     environment: dict[str, dict[str, str]] | None = None,
-    volumes: Mapping[str, ChannelVolume | Mapping[str, Any] | None] | None = None,
+    volumes: Mapping[str, ScratchVolume | PersistVolume | Mapping[str, Any] | None] | None = None,
 ) -> CompiledInstanceSpec:
     """Compile a valid spec and the resources of each of its services into the agent's normalized manifest.
 
@@ -1157,7 +1162,7 @@ def compile_instance_spec(
     ``environment`` is the channel's ``environment``, merged here and only here: a value
     overrides the file's own ``environment`` for that name, and the Compose bytes are never edited.
 
-    ``volumes`` is the channel's ``volumes``: each volume it gives a ``persist`` (which the file must declare and
+    ``volumes`` is the channel's ``volumes``: each volume it gives ``type: persist`` (which the file must declare and
     a service mount) becomes a ``persist`` directory of the manifest at each mount path, with the store, folder,
     mode, exclude and owner it gives; any other volume stays scratch.
 
