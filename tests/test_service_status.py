@@ -47,3 +47,10 @@ def test_full_identity_record_round_trips() -> None:
     assert sd.status == "revision_created"
     assert sd.name == "acme/widget"
     assert sd.display_name == "ACME Widget"
+
+
+def test_test_task_id_round_trips_and_defaults_to_none() -> None:
+    assert ServiceStatus().test_task_id is None
+    sd = ServiceStatus.model_validate({"service_id": _SID, "test_task_id": "7b0c6c2e-1f0e-4a0b-9d55-0f1d5e0a1c11"})
+    assert sd.test_task_id == "7b0c6c2e-1f0e-4a0b-9d55-0f1d5e0a1c11"
+    assert ServiceStatus.model_validate(sd.model_dump(mode="json")).test_task_id == sd.test_task_id

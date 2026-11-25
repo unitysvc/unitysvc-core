@@ -171,6 +171,16 @@ class ServiceStatus(BaseModel):
         description="Service identity status as resolved by the last ingest.",
     )
 
+    test_task_id: str | None = Field(
+        default=None,
+        description=(
+            "Output only. Task id of the activation tests this ingest queued (``--submit``), "
+            "so a caller can wait for the platform's decision. Absent when no tests were queued: "
+            "the upload was not submitted, the content was unchanged, or the revision was merged "
+            "into the live service without tests."
+        ),
+    )
+
     name: str | None = Field(
         default=None,
         description="Backend-derived service name (from listing/offering).",
