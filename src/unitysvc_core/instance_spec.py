@@ -47,6 +47,7 @@ from .models.manifest import (
     NormalizedManifest,
     folders_overlap,
 )
+from .parameter_usage import secret_parameters
 
 DEFAULT_FORMAT = "compose"
 SUPPORTED_FORMATS = ("compose",)
@@ -104,6 +105,15 @@ _INTERPOLATION_RE = re.compile(r"\$(\{[^}]*\}|[A-Za-z_])")
 # A parameter reference belongs in the channel's ``environment``, not in the portable Compose file (which
 # must run as it is with Docker): ``{{ params`` anywhere in the file is refused.
 _PARAM_TEMPLATE_RE = re.compile(r"\{\{\s*params\b")
+# One enrollment parameter read by name: ``{{ params.NAME }}``.
+_PARAM_NAME_RE = re.compile(r"\{\{\s*params\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+# What a variable reference in an environment value means, and how a customer's credential does reach
+# a container (unitysvc/unitysvc#3108, which settles unitysvc-core#105 open 4).
+_INTERPOLATION_HINT = (
+    "contains a variable reference, kept as written: the container is given this text, nothing is "
+    'substituted. To give it a credential of the customer, declare a parameter with "writeOnly": true in '
+    "the channel's params.schema and make the channel's environment value {{ params.NAME }}"
+)
 _MAX_DURATION_SECONDS = 86400.0  # far above any bound the agent accepts; keeps float overflow out of ceil()
 _DURATION_RE = re.compile(r"^(?:\d+(?:\.\d+)?(?:us|ms|s|m|h))+$")
 _DURATION_PART_RE = re.compile(r"(\d+(?:\.\d+)?)(us|ms|s|m|h)")
@@ -736,6 +746,8 @@ class _Checker:
         if not isinstance(overlay, dict):
             self.error("bad_overlay", where, "must be a mapping of service name to a mapping of NAME to value")
             return {}
+        params = self.channel.params if self.channel else None
+        secrets = secret_parameters(params.json_schema if params else None)
         result: dict[str, dict[str, str]] = {}
         for service, values in overlay.items():
             at = f"{where}.{service}"
@@ -750,14 +762,18 @@ class _Checker:
                     self.error("bad_env", f"{at}.{key}", "an environment value must be a string")
                 else:
                     clean[key] = value
-                    if _INTERPOLATION_RE.search(value):
-                        self.warn(
-                            "interpolation",
+                    kept = sorted(set(_PARAM_NAME_RE.findall(value)) & secrets)
+                    if kept and not _PARAM_NAME_RE.fullmatch(value.strip()):
+                        # The platform keeps such a parameter as a customer secret and delivers its value
+                        # apart from the rest of the environment, so it cannot be spliced into other text.
+                        self.error(
+                            "secret_param_composed",
                             f"{at}.{key}",
-                            "contains a variable reference, kept as written; only {{ params.NAME }} is bound per "
-                            "instance, how any other secret is bound is not decided yet "
-                            "(unitysvc-core#105, open 4)",
+                            f"reads {{{{ params.{kept[0]} }}}}, a parameter kept as a secret, inside other text; "
+                            "such a parameter must be the whole environment value",
                         )
+                    if _INTERPOLATION_RE.search(value):
+                        self.warn("interpolation", f"{at}.{key}", _INTERPOLATION_HINT)
             result[str(service)] = clean
         return result
 
@@ -809,12 +825,7 @@ class _Checker:
                 text = ("true" if value else "false") if isinstance(value, bool) else str(value)
                 env[key] = text
                 if _INTERPOLATION_RE.search(text):
-                    self.warn(
-                        "interpolation",
-                        where,
-                        "contains a variable reference, kept as written; how a customer secret or parameter is bound "
-                        "to it is not decided yet (unitysvc-core#105, open 4)",
-                    )
+                    self.warn("interpolation", where, _INTERPOLATION_HINT)
         return env
 
     def _words(self, where: str, value: Any) -> list[str]:

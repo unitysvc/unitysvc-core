@@ -1323,6 +1323,50 @@ class TestEnvironmentOverlay:
         report = validate_instance_spec(text, channel=ContainerChannel.model_validate(_channel(environment=overlay)))
         assert report.ok and "interpolation" in _codes(report, "warnings")
 
+    def test_the_warning_says_how_a_customer_credential_does_reach_a_container(self) -> None:
+        """unitysvc-core#105 open 4 is decided (unitysvc/unitysvc#3108): a writeOnly parameter."""
+        overlay = {"web": {"API_KEY": "${SECRET_KEY}"}}
+        report = validate_instance_spec(
+            _compose(environment={"OTHER": "$HOME"}),
+            channel=ContainerChannel.model_validate(_channel(environment=overlay)),
+        )
+        hints = [w.message for w in report.warnings if w.code == "interpolation"]
+        assert len(hints) == 2
+        for hint in hints:
+            assert "writeOnly" in hint and "{{ params.NAME }}" in hint
+            assert "not decided" not in hint
+
+    def test_a_parameter_kept_as_a_secret_is_the_whole_environment_value(self) -> None:
+        params = {
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "API_KEY": {"type": "string", "writeOnly": True},
+                    "REGION": {"type": "string"},
+                },
+            }
+        }
+
+        def check(value: str) -> Any:
+            channel = _channel(environment={"web": {"VALUE": value}}, params=params)
+            return validate_instance_spec(_compose(), channel=ContainerChannel.model_validate(channel))
+
+        for whole in ("{{ params.API_KEY }}", "{{params.API_KEY}}", "  {{ params.API_KEY }} "):
+            report = check(whole)
+            assert report.ok, report.errors
+            assert "interpolation" not in _codes(report, "warnings")
+        # An ordinary parameter may be part of a longer value.
+        assert check("https://{{ params.REGION }}.example").ok
+        for composed in (
+            "Bearer {{ params.API_KEY }}",
+            "{{ params.API_KEY }}:{{ params.REGION }}",
+            "{{ params.REGION }}-{{ params.API_KEY }}",
+        ):
+            report = check(composed)
+            assert _codes(report) == {"secret_param_composed"}, composed
+            [error] = report.errors
+            assert error.path == "environment.web.VALUE" and "params.API_KEY" in error.message
+
     def test_a_service_the_file_lacks_is_an_error(self) -> None:
         ghost = ContainerChannel.model_validate(_channel(environment={"ghost": {"A": "1"}}))
         report = validate_instance_spec(self.compose(), channel=ghost)
