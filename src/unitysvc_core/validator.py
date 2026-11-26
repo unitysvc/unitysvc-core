@@ -272,6 +272,9 @@ class DataValidator:
         - '${ secrets.VAR_NAME }' — seller-owned secret
         - '${ customer_secrets.VAR_NAME }' — customer-owned secret (BYOK)
         - '${ customer_secrets.{{ param }} }' — customer secret via Jinja2 indirection (BYOE)
+        - '{{ params.NAME }}' — the customer supplies the key as an enrollment parameter,
+          when the channel's ``params.schema`` marks ``NAME`` ``"writeOnly": true``. The
+          platform keeps such a parameter as a customer secret (unitysvc/unitysvc#3108).
 
         This applies to:
         - upstream_access_config.<name>.api_key (and each server's)
@@ -290,8 +293,29 @@ class DataValidator:
         # Customer secrets: ${ customer_secrets.VAR_NAME } or ${ customer_secrets.{{ jinja }} }
         customer_secrets_pattern = re.compile(r"^\$\{\s*customer_secrets\..+\s*\}$")
 
+        # The whole value is one enrollment parameter: {{ params.NAME }}
+        param_pattern = re.compile(r"^\{\{\s*params\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$")
+
         # Paths where api_key is a parameter's schema definition or UI config, not an actual key
         skip_pattern = re.compile(r"\.params\.(schema|ui_schema)\.")
+
+        def secret_params(path: str) -> set[str]:
+            """The string parameters the channel of ``path`` keeps as secrets."""
+            parts = path.split(".")
+            if len(parts) < 3 or parts[0] != "upstream_access_config":
+                return set()
+            channels = data.get("upstream_access_config")
+            channel = channels.get(parts[1]) if isinstance(channels, dict) else None
+            params = channel.get("params") if isinstance(channel, dict) else None
+            schema = params.get("schema") if isinstance(params, dict) else None
+            properties = schema.get("properties") if isinstance(schema, dict) else None
+            if not isinstance(properties, dict):
+                return set()
+            return {
+                name
+                for name, prop in properties.items()
+                if isinstance(prop, dict) and prop.get("type") == "string" and prop.get("writeOnly") is True
+            }
 
         def check_api_key(obj: Any, path: str = "") -> None:
             if isinstance(obj, dict):
@@ -320,6 +344,13 @@ class DataValidator:
                             # params.testing_defaults api_key) still falls through to the
                             # secrets-format check below and is rejected.
                             pass
+                        elif ".params." not in new_path and (param := param_pattern.match(value)):
+                            if param.group(1) not in secret_params(new_path):
+                                errors.append(
+                                    f"Invalid api_key at '{new_path}': parameter '{param.group(1)}' holds a "
+                                    f'credential, so mark it "writeOnly": true (and "type": "string") in the '
+                                    f"channel's params.schema; the platform then keeps it as a customer secret."
+                                )
                         elif not seller_secrets_pattern.match(value) and not customer_secrets_pattern.match(value):
                             # Allow Jinja2 conditional templates (rendered at enrollment time)
                             if "{%" not in value:

@@ -383,6 +383,50 @@ class TestApiKeySecretsValidation:
             assert len(errors) == 1
             assert "upstream_access_config.plus.params.testing_defaults.api_key" in errors[0]
 
+    def test_a_write_only_parameter_may_be_the_api_key(self, schema_dir, example_data_dir):
+        """The customer supplies the key as a parameter the platform keeps as a secret (unitysvc#3108)."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        params = {"schema": {"properties": {"api_key": {"type": "string", "writeOnly": True}}}}
+        channel = {"base_url": "https://u", "api_key": "{{ params.api_key }}", "params": params}
+        assert validator.validate_api_key_secrets({"upstream_access_config": {"plus": channel}}) == []
+
+        servers = [{"name": "a", "base_url": "https://a", "api_key": "{{params.api_key}}"}]
+        data = {"upstream_access_config": {"plus": {"servers": servers, "params": params}}}
+        assert validator.validate_api_key_secrets(data) == []
+
+    def test_a_parameter_used_as_the_api_key_must_be_write_only(self, schema_dir, example_data_dir):
+        """A plain parameter would be stored as given; one from another channel is not this channel's."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        write_only = {"schema": {"properties": {"api_key": {"type": "string", "writeOnly": True}}}}
+        for params in (
+            None,
+            {"schema": {"properties": {"api_key": {"type": "string"}}}},
+            {"schema": {"properties": {"api_key": {"type": "string", "format": "password"}}}},
+            {"schema": {"properties": {"api_key": {"type": "integer", "writeOnly": True}}}},
+            {"schema": {"properties": {"other": {"type": "string", "writeOnly": True}}}},
+        ):
+            channel = {"base_url": "https://u", "api_key": "{{ params.api_key }}"}
+            if params is not None:
+                channel["params"] = params
+            other = {"base_url": "https://o", "params": write_only}
+            data = {"upstream_access_config": {"plus": channel, "other": other}}
+            errors = validator.validate_api_key_secrets(data)
+            assert len(errors) == 1, params
+            assert "upstream_access_config.plus.api_key" in errors[0]
+            assert "writeOnly" in errors[0]
+
+    def test_a_parameter_is_not_a_test_value_for_an_api_key(self, schema_dir, example_data_dir):
+        """``testing_defaults.api_key`` stays a secret reference: a test has no enrollment to read."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        params = {
+            "schema": {"properties": {"api_key": {"type": "string", "writeOnly": True}}},
+            "testing_defaults": {"api_key": "{{ params.api_key }}"},
+        }
+        data = {"upstream_access_config": {"plus": {"base_url": "https://u", "params": params}}}
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 1
+        assert "secrets reference format" in errors[0]
+
     def test_valid_secrets_format_with_spaces(self, schema_dir, example_data_dir):
         """Test that api_key with spaces in secrets format is valid."""
         validator = DataValidator(example_data_dir, schema_dir)
