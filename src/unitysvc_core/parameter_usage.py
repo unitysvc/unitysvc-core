@@ -16,6 +16,7 @@ consumers: the channel itself and document content. Metadata such as
 reference there does not count (unitysvc/unitysvc#2649).
 """
 
+import re
 from typing import Any
 
 from jinja2 import Environment, TemplateSyntaxError, nodes
@@ -209,6 +210,16 @@ def validate_channel_parameters(offering: dict[str, Any]) -> list[str]:
         if defaults is not None and not isinstance(defaults, dict):
             errors.append(f"{at}.testing_defaults must be an object")
             continue
+        # A test value that is a secret is written like a customer's own,
+        # ``${ customer_secrets.NAME }``: the platform's test customer owns no
+        # secrets, so the seller's secret NAME stands in for it. An enrollment
+        # parameter never names a seller secret, and the gateways refuse one.
+        for name, value in (defaults or {}).items():
+            if isinstance(value, str) and re.search(r"\$\{\s*secrets\.", value):
+                errors.append(
+                    f"{at}.testing_defaults.{name}: a parameter cannot name a seller secret. Write the test "
+                    f"value as '${{ customer_secrets.NAME }}'; your own secret NAME stands in for it during tests."
+                )
         if missing := [r for r in required if r not in (defaults or {})]:
             errors.append(
                 f"{where}: required parameter(s) {', '.join(missing)} need a value in "

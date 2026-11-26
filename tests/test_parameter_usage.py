@@ -256,6 +256,16 @@ def test_dynamic_use_also_needs_a_declaration():
     assert any("upstream_access_config.other" in e for e in errors), errors
 
 
+def test_a_test_value_names_a_customer_secret_never_a_seller_secret():
+    """The seller's secret of the same name stands in during tests, so a
+    parameter never holds ``${ secrets.X }`` (unitysvc/unitysvc#3108)."""
+    ok = _offering(plus=_plus(testing_defaults={"folder": "${ customer_secrets.TEST_FOLDER }"}))
+    assert validate_channel_parameters(ok) == []
+    for value in ("${ secrets.TEST_FOLDER }", "${secrets.TEST_FOLDER ?? x}", "a/${ secrets.TEST_FOLDER }"):
+        errors = validate_channel_parameters(_offering(plus=_plus(testing_defaults={"folder": value})))
+        assert any("testing_defaults.folder: a parameter cannot name a seller secret" in e for e in errors), value
+
+
 def test_required_parameters_need_ops_values():
     errors = validate_channel_parameters(_offering(plus=_plus(testing_defaults={})))
     assert any("folder need a value in upstream_access_config.plus.params.testing_defaults" in e for e in errors)
