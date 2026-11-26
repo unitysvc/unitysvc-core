@@ -299,21 +299,21 @@ class DataValidator:
         # Paths where api_key is a parameter's schema definition or UI config, not an actual key
         skip_pattern = re.compile(r"\.params\.(schema|ui_schema)\.")
 
-        def secret_params(path: str) -> set[str]:
-            """The string parameters the channel of ``path`` keeps as secrets."""
-            parts = path.split(".")
-            if len(parts) < 3 or parts[0] != "upstream_access_config":
-                return set()
-            channels = data.get("upstream_access_config")
-            channel = channels.get(parts[1]) if isinstance(channels, dict) else None
+        def channel_secret_params(channel: Any) -> frozenset[str]:
+            """The string parameters ``channel`` keeps as secrets."""
             params = channel.get("params") if isinstance(channel, dict) else None
             schema = params.get("schema") if isinstance(params, dict) else None
-            return secret_parameters(schema if isinstance(schema, dict) else None)
+            return frozenset(secret_parameters(schema if isinstance(schema, dict) else None))
 
-        def check_api_key(obj: Any, path: str = "") -> None:
+        # ``secret_params`` are those of the channel being walked. They are carried down from the
+        # channel object itself: ``path`` is for messages only, and cannot be split back into a
+        # channel name, which may contain dots.
+        def check_api_key(obj: Any, path: str = "", secret_params: frozenset[str] = frozenset()) -> None:
             if isinstance(obj, dict):
                 for key, value in obj.items():
                     new_path = f"{path}.{key}" if path else key
+                    if path == "upstream_access_config":
+                        secret_params = channel_secret_params(value)
 
                     # Check if this is an api_key field with a non-null value
                     if key == "api_key" and value is not None:
@@ -338,7 +338,7 @@ class DataValidator:
                             # secrets-format check below and is rejected.
                             pass
                         elif ".params." not in new_path and (param := param_pattern.match(value)):
-                            if param.group(1) not in secret_params(new_path):
+                            if param.group(1) not in secret_params:
                                 errors.append(
                                     f"Invalid api_key at '{new_path}': parameter '{param.group(1)}' holds a "
                                     f'credential, so mark it "writeOnly": true (and "type": "string") in the '
@@ -355,12 +355,12 @@ class DataValidator:
 
                     # Recurse into nested objects
                     if isinstance(value, dict | list):
-                        check_api_key(value, new_path)
+                        check_api_key(value, new_path, secret_params)
 
             elif isinstance(obj, list):
                 for i, item in enumerate(obj):
                     if isinstance(item, dict | list):
-                        check_api_key(item, f"{path}[{i}]")
+                        check_api_key(item, f"{path}[{i}]", secret_params)
 
         check_api_key(data)
         return errors

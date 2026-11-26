@@ -415,6 +415,43 @@ class TestApiKeySecretsValidation:
             assert "upstream_access_config.plus.api_key" in errors[0]
             assert "writeOnly" in errors[0]
 
+    def test_a_parameter_is_looked_up_on_its_own_channel_when_names_have_dots(self, schema_dir, example_data_dir):
+        """A channel name may contain dots; the channel is the object walked, never a split path."""
+        validator = DataValidator(example_data_dir, schema_dir)
+        write_only = {"schema": {"properties": {"token": {"type": "string", "writeOnly": True}}}}
+        plain = {"schema": {"properties": {"token": {"type": "string"}}}}
+
+        def config(plus: dict, plus_v2: dict) -> dict:
+            return {
+                "upstream_access_config": {
+                    "plus": {"base_url": "https://u", "params": plus},
+                    "plus.v2": {"base_url": "https://u", "api_key": "{{ params.token }}", "params": plus_v2},
+                }
+            }
+
+        # Marked on ``plus.v2`` itself: accepted, whatever ``plus`` declares.
+        assert validator.validate_api_key_secrets(config(plain, write_only)) == []
+        # Marked only on the sibling ``plus``: this channel's parameter would be stored as given.
+        errors = validator.validate_api_key_secrets(config(write_only, plain))
+        assert len(errors) == 1
+        assert "upstream_access_config.plus.v2.api_key" in errors[0]
+        assert "writeOnly" in errors[0]
+
+    def test_a_channels_secret_parameters_do_not_leak_to_the_next_channel(self, schema_dir, example_data_dir):
+        validator = DataValidator(example_data_dir, schema_dir)
+        write_only = {"schema": {"properties": {"token": {"type": "string", "writeOnly": True}}}}
+        data = {
+            "upstream_access_config": {
+                "a": {"base_url": "https://u", "api_key": "{{ params.token }}", "params": write_only},
+                "b": {"base_url": "https://u", "api_key": "{{ params.token }}"},
+            },
+            "user_access_interfaces": {"http": {"api_key": "{{ params.token }}"}},
+        }
+        errors = validator.validate_api_key_secrets(data)
+        assert len(errors) == 2
+        assert "upstream_access_config.b.api_key" in errors[0]
+        assert "user_access_interfaces.http.api_key" in errors[1]
+
     def test_a_parameter_is_not_a_test_value_for_an_api_key(self, schema_dir, example_data_dir):
         """``testing_defaults.api_key`` stays a secret reference: a test has no enrollment to read."""
         validator = DataValidator(example_data_dir, schema_dir)
