@@ -19,7 +19,7 @@ from .instance_spec import (
     instance_spec_format,
     validate_instance_spec,
 )
-from .parameter_usage import validate_channel_parameters, validate_required_parameter_usage
+from .parameter_usage import secret_parameters, validate_channel_parameters, validate_required_parameter_usage
 from .utils import SCHEMA_TO_STEM, is_hidden_path, load_data_file, schema_for_path
 
 # ``details.model``: a provider-neutral model name (``glm-5.2``, not
@@ -272,6 +272,9 @@ class DataValidator:
         - '${ secrets.VAR_NAME }' — seller-owned secret
         - '${ customer_secrets.VAR_NAME }' — customer-owned secret (BYOK)
         - '${ customer_secrets.{{ param }} }' — customer secret via Jinja2 indirection (BYOE)
+        - '{{ params.NAME }}' — the customer supplies the key as an enrollment parameter,
+          when the channel's ``params.schema`` marks ``NAME`` ``"writeOnly": true``. The
+          platform keeps such a parameter as a customer secret (unitysvc/unitysvc#3108).
 
         This applies to:
         - upstream_access_config.<name>.api_key (and each server's)
@@ -290,13 +293,27 @@ class DataValidator:
         # Customer secrets: ${ customer_secrets.VAR_NAME } or ${ customer_secrets.{{ jinja }} }
         customer_secrets_pattern = re.compile(r"^\$\{\s*customer_secrets\..+\s*\}$")
 
+        # The whole value is one enrollment parameter: {{ params.NAME }}
+        param_pattern = re.compile(r"^\{\{\s*params\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$")
+
         # Paths where api_key is a parameter's schema definition or UI config, not an actual key
         skip_pattern = re.compile(r"\.params\.(schema|ui_schema)\.")
 
-        def check_api_key(obj: Any, path: str = "") -> None:
+        def channel_secret_params(channel: Any) -> frozenset[str]:
+            """The string parameters ``channel`` keeps as secrets."""
+            params = channel.get("params") if isinstance(channel, dict) else None
+            schema = params.get("schema") if isinstance(params, dict) else None
+            return frozenset(secret_parameters(schema if isinstance(schema, dict) else None))
+
+        # ``secret_params`` are those of the channel being walked. They are carried down from the
+        # channel object itself: ``path`` is for messages only, and cannot be split back into a
+        # channel name, which may contain dots.
+        def check_api_key(obj: Any, path: str = "", secret_params: frozenset[str] = frozenset()) -> None:
             if isinstance(obj, dict):
                 for key, value in obj.items():
                     new_path = f"{path}.{key}" if path else key
+                    if path == "upstream_access_config":
+                        secret_params = channel_secret_params(value)
 
                     # Check if this is an api_key field with a non-null value
                     if key == "api_key" and value is not None:
@@ -320,6 +337,13 @@ class DataValidator:
                             # params.testing_defaults api_key) still falls through to the
                             # secrets-format check below and is rejected.
                             pass
+                        elif ".params." not in new_path and (param := param_pattern.match(value)):
+                            if param.group(1) not in secret_params:
+                                errors.append(
+                                    f"Invalid api_key at '{new_path}': parameter '{param.group(1)}' holds a "
+                                    f'credential, so mark it "writeOnly": true (and "type": "string") in the '
+                                    f"channel's params.schema; the platform then keeps it as a customer secret."
+                                )
                         elif not seller_secrets_pattern.match(value) and not customer_secrets_pattern.match(value):
                             # Allow Jinja2 conditional templates (rendered at enrollment time)
                             if "{%" not in value:
@@ -331,12 +355,12 @@ class DataValidator:
 
                     # Recurse into nested objects
                     if isinstance(value, dict | list):
-                        check_api_key(value, new_path)
+                        check_api_key(value, new_path, secret_params)
 
             elif isinstance(obj, list):
                 for i, item in enumerate(obj):
                     if isinstance(item, dict | list):
-                        check_api_key(item, f"{path}[{i}]")
+                        check_api_key(item, f"{path}[{i}]", secret_params)
 
         check_api_key(data)
         return errors

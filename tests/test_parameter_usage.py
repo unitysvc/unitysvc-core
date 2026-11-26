@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from unitysvc_core.parameter_usage import referenced_param_names, validate_required_parameter_usage
+from unitysvc_core.parameter_usage import (
+    SECRET_PARAMETER_KEYWORD,
+    referenced_param_names,
+    secret_parameters,
+    validate_required_parameter_usage,
+)
 from unitysvc_core.validator import DataValidator
 
 
@@ -397,3 +402,28 @@ def test_the_file_validator_checks_channel_parameters(tmp_path):
     is_valid, errors = DataValidator(tmp_path, schema_dir).validate_data_file(service / "offering.json")
     assert not is_valid
     assert any("testing_defaults" in e for e in errors), errors
+
+
+def test_secret_parameters_are_the_write_only_string_parameters():
+    """One definition of "keep as secret", shared with the backend (unitysvc/unitysvc#3108)."""
+    assert SECRET_PARAMETER_KEYWORD == "writeOnly"
+    schema = {
+        "type": "object",
+        "properties": {
+            "api_key": {"type": "string", "writeOnly": True},
+            "token": {"type": "string", "writeOnly": True, "default": ""},
+            "city": {"type": "string"},
+            "generated": {"type": "string", "format": "password"},  # masked in the form, stored as given
+            "port": {"type": "integer", "writeOnly": True},
+            "off": {"type": "string", "writeOnly": False},
+            "truthy": {"type": "string", "writeOnly": "yes"},
+            "nested": {"type": "object", "properties": {"key": {"type": "string", "writeOnly": True}}},
+            "broken": "not a schema",
+        },
+    }
+    assert secret_parameters(schema) == {"api_key", "token"}
+
+
+@pytest.mark.parametrize("schema", [None, {}, {"properties": None}, {"properties": ["api_key"]}])
+def test_secret_parameters_of_a_schema_without_properties(schema):
+    assert secret_parameters(schema) == set()
