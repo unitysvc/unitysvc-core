@@ -19,7 +19,7 @@ from .instance_spec import (
     instance_spec_format,
     validate_instance_spec,
 )
-from .parameter_usage import validate_channel_parameters, validate_required_parameter_usage
+from .parameter_usage import secret_parameters, validate_channel_parameters, validate_required_parameter_usage
 from .utils import SCHEMA_TO_STEM, is_hidden_path, load_data_file, schema_for_path
 
 # ``details.model``: a provider-neutral model name (``glm-5.2``, not
@@ -308,14 +308,7 @@ class DataValidator:
             channel = channels.get(parts[1]) if isinstance(channels, dict) else None
             params = channel.get("params") if isinstance(channel, dict) else None
             schema = params.get("schema") if isinstance(params, dict) else None
-            properties = schema.get("properties") if isinstance(schema, dict) else None
-            if not isinstance(properties, dict):
-                return set()
-            return {
-                name
-                for name, prop in properties.items()
-                if isinstance(prop, dict) and prop.get("type") == "string" and prop.get("writeOnly") is True
-            }
+            return secret_parameters(schema if isinstance(schema, dict) else None)
 
         def check_api_key(obj: Any, path: str = "") -> None:
             if isinstance(obj, dict):

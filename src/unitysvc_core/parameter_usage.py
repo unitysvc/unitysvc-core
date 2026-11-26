@@ -26,6 +26,31 @@ from .grants import _find_reference
 
 _ENV = Environment()
 
+# The JSON Schema keyword that marks a parameter "keep as secret"
+# (unitysvc/unitysvc#3108): a value that is written and never read back.
+SECRET_PARAMETER_KEYWORD = "writeOnly"
+
+
+def secret_parameters(parameters_schema: dict[str, Any] | None) -> set[str]:
+    """The top-level string parameters ``parameters_schema`` keeps as secrets.
+
+    A parameter declared ``"type": "string"`` with ``"writeOnly": true`` is never
+    stored as the customer gives it: the platform saves a pasted value as a
+    customer secret and the enrollment holds ``${ customer_secrets.NAME }``. This
+    is the one definition of that mark, shared by seller validation (a channel's
+    ``api_key`` may read such a parameter) and the backend (which does the
+    conversion). ``"format": "password"`` is not the mark: it only masks the
+    input, and its value is stored as given.
+    """
+    properties = (parameters_schema or {}).get("properties")
+    if not isinstance(properties, dict):
+        return set()
+    return {
+        name
+        for name, prop in properties.items()
+        if isinstance(prop, dict) and prop.get("type") == "string" and prop.get(SECRET_PARAMETER_KEYWORD) is True
+    }
+
 
 def referenced_param_names(value: Any) -> set[str] | None:
     """Names read from ``params`` in Jinja, or None for dynamic/whole-map use.
